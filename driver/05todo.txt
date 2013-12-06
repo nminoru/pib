@@ -1,0 +1,45 @@
+- ソケットのバッファサイズを増やす。
+
+- pib_util_get_srq のロック条件を見直せ
+
+- RDMA READ で responder 側の PSN を増加させること。
+
+- RDMA READ の responder 側の acknowledge 処理を実装すること。
+
+- Responder が RDMA READ Request を最初に受け取った時に MR をチェックすること。
+
+- LTH:PktLen & BTH:PdCnt で決まるパケット長と recvmsg の長さは全ての箇所で確認すること。
+
+- MAC アドレスから GID を合成する
+
+- 11.4.2.2 Request Completion Notification
+  - SEND
+  - RDMA WRITE w/Immediate Data
+  - BTH の solicited event が立っているもの
+  - Unsuccessful WC
+
+- BTH の solicited event 
+  - only or last packet
+
+- Multicast 対応
+
+- WC をインサートした時の失敗のチェック
+
+- LMC 
+
+- req_notify_cq のコールバックは ib_req_notify_cq() の関数ヘッダーに合わせろ
+
+- 9.5 Transaction Ordering
+  - エラーになった場合、キューの前にいる WR が処理されるまで待機。特に reliable service で注意。
+  - requester の ACK 受信は coalescing が効く。
+    ただし RDMA READ と ATOMIC 操作のレスポンスは別。 
+  - Receiver 側は SEND と RDMA WRITE w/Imm は順番通りに処理するが、fence がついてない限り RDMA
+    READ の completion は暗黙的である。
+  - fence がついた処理は、前にある RDMA READ と Atomic 操作が全て終わるまでブロックされる。
+
+- Protection domain のチェック(QP、SRQ、MR、AH)
+  - QP と SRQ のチェック
+  - UD-QP と AH のチェック
+
+- 非同期イベント
+  - IBV_EVENT_SQ_DRAINED

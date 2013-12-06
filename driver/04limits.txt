@@ -1,0 +1,9 @@
+・IBV_WR_SEND_WITH_IMM を使っても imm_data のフィールドが常に 0 になる。
+
+  これは  uverbs_cmd.c の ib_uverbs_post_send 内で UD 時に user_wr->ex.imm_data をコピーしていないのが原因。
+  パッチ取り込み待ち。
+
+  http://permalink.gmane.org/gmane.linux.drivers.rdma/17792
+
+  
+

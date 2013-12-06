@@ -1,0 +1,32 @@
+・ロックの優先順位
+
+  dev → qp → srq → pd → cq
+
+・MR
+
+  MR の L_Key と R_Key は PD に設けられた mr_table[] のインデックス値とする。
+  ただし配列のインデックスとして使うのは下位ビットで、上位ビットは PD ごと
+  に設定する乱数値とする。
+
+・GID
+
+  イーサネットの MAC アドレスをベースに生成する
+
+・輻輳制御
+
+
+・送信処理は Send WR を submitted(未送信)、sending(送信中)、waiting(ACK待ち) の 3 つのキューで処理する。
+
+  - Send Drain(SQD) 属性になった場合は、submitted キューにあるのものは送信しない。
+  - 1回分の送信が完了すれば sending キューのエントリは waiting キューに送る。
+  - 送信が失敗(NAK受信など)になると wainting キューにある全エントリは sending キューに戻した上で、
+    全ての未 ACK パケット分をクリアする。
+
+  - ACK は sending キューと waiting キューにある場合の二通りが考えられる。
+
+  - UD with SRQ で responder 側に length error が起きても Aborted Error Completion は発生させない。
+    May casuse Aborted Error completion
+
+
+ 
+  

@@ -1,0 +1,31 @@
+○ ゴール
+
+・単体で動く UD/RC
+・複数ノードにまたがって動かす。
+・代替パス
+・OpenSM
+・IPoIB を動かす
+・RMDA CM を動かす。
+・SDP を動かす。
+・XRC
+
+○ Verfication
+
+- receiver の平行動作
+- CQ オーバーフローの動作を選択可能に(IBV_EVENT_CQ_ERR か mellanox 準拠か)
+- RESET 時の送受信
+- QP 番号のランダム性の制御
+- タイマー精度の制御
+- RC 通信で意図しない相手からの QPN をチェック？
+- エラー時の WC に opcode を含めるか？
+- SRQ のシャッフル
+- QP に WR を登録できないステートでも、mlx は登録できる。
+  実際に送受信可能になるのは RTR / RTS 以降。
+- WQE も CQE も設定以上に存在数することがある。
+
+○ Violation check
+
+- RC 通信で dest_qp 以外の QP からパケットが到着した。
+- RC 通信で dest_qp 以外の QP からパケットを受信した。
+- RESET 時に ibv_post_send または ibv_post_recv を実行した。
+- RESET への遷移で WQE/CQE が失われた。
