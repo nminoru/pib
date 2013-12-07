@@ -237,12 +237,14 @@ static int kthread_routine(void *data)
 		init_completion(&dev->thread.completion);
 
 		while (dev->thread.flags) {
+			schedule();
+
 			if (test_and_clear_bit(PIB_THREAD_READY_TO_DATA, &dev->thread.flags)) {
 				int i, ret;
 				for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
 					do {
 						ret = process_incoming_message(dev, i);
-					} while (ret != 0);
+					} while (ret == 0);
 				}
 			}
 
@@ -554,11 +556,12 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	ret = kernel_recvmsg(dev->ports[port_index].socket, &msghdr,
 			     &iov, 1, iov.iov_len, msghdr.msg_flags);
 
-	if (ret == -EAGAIN)
-		return 0;
-
-	if (ret < 0)
+	if (ret < 0) {
+		if (ret == -EINTR)
+			set_bit(PIB_THREAD_READY_TO_DATA, &dev->thread.flags);
 		return ret;
+	} else if (ret == 0)
+		return -EAGAIN;
 
 	/* Analyze Local Route Hedaer */
 	if (ret < sizeof(struct pib_packet_lrh))
@@ -604,11 +607,6 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 
 	/* LRH: check port LID and DLID of incoming packet */
 	if (lrh->DLID != dev->ports[port_index].ib_port_attr.lid) {
-		up_read(&dev->rwsem);
-		goto silently_drop;
-	}
-
-	if (pib_get_maxium_packet_length(dev->ports[port_index].ib_port_attr.active_mtu) < ret) {
 		up_read(&dev->rwsem);
 		goto silently_drop;
 	}

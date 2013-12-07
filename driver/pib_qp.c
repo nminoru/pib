@@ -15,6 +15,8 @@ static int qp_init_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_i
 static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *cap, int use_srq);
 static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp *qp, const struct ib_qp_attr *attr, int attr_mask);
 static void get_ready_to_send(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
+static void reset_qp(struct pib_ib_qp *qp);
+static void reset_qp_attr(struct pib_ib_qp *qp);
 
 
 struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num)
@@ -164,7 +166,23 @@ static void reset_qp(struct pib_ib_qp *qp)
 	if (qp->send_cq != qp->recv_cq)
 		pib_util_remove_cq(qp->recv_cq, qp);
 
+	reset_qp_attr(qp);
+
 	pib_util_reschedule_qp(qp);
+}
+
+
+static void reset_qp_attr(struct pib_ib_qp *qp)
+{
+	memset(&qp->requester, 0, sizeof(qp->requester));
+	memset(&qp->responder, 0, sizeof(qp->responder));
+
+	qp->responder.last_opcode = IB_OPCODE_SEND_ONLY; /* dummy opcode */
+
+	qp->push_rcqe              = 0;
+	qp->issue_comm_est         = 0;
+	qp->issue_sq_drained       = 0;
+	qp->issue_last_wqe_reached = 0;
 }
 
 
@@ -223,6 +241,8 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 	INIT_LIST_HEAD(&qp->recv_wqe_head);
 	INIT_LIST_HEAD(&qp->new_send_wr_qp_list);
 
+	reset_qp_attr(qp);
+
 	switch (qp->qp_type) {
 
 	case IB_QPT_SMI:
@@ -247,6 +267,7 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 				break;
 		}
 		qp->ib_qp.qp_num = qp_num;
+		dev->last_qp_num = qp_num;
 		insert_qp(dev, qp);
 		up_write(&dev->rwsem);
 		break;
@@ -469,13 +490,6 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		switch (new_state) {
 
 		case IB_QPS_RESET:
-			qp->push_rcqe = 0;
-			qp->responder.last_opcode = IB_OPCODE_SEND_ONLY; /* dummy opcode */
-			
-			qp->responder.slot_index      = 0;
-			qp->responder.slot_index_sent = 0;
-			memset(qp->responder.slots, 0, sizeof(qp->responder.slots));
-
 			reset_qp(qp);
 			break;
 

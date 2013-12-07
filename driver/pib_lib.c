@@ -244,6 +244,43 @@ int pib_opcode_is_acknowledge(int opcode)
 	return (attr_opcode[opcode] & PIB_ACKNOWLEDGE_OPCODE) == PIB_ACKNOWLEDGE_OPCODE;
 }
 
+enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode opcode)
+{
+	switch (opcode) {
+	case IB_WR_RDMA_WRITE:
+	case IB_WR_RDMA_WRITE_WITH_IMM:
+		return IB_WC_RDMA_WRITE;
+	case IB_WR_SEND:
+	case IB_WR_SEND_WITH_IMM:
+		return IB_WC_SEND;
+	case IB_WR_RDMA_READ:
+		return IB_WC_RDMA_READ;
+	case IB_WR_ATOMIC_CMP_AND_SWP:
+		return IB_WC_COMP_SWAP;
+	case IB_WR_ATOMIC_FETCH_AND_ADD:
+		return IB_WC_FETCH_ADD;
+	case IB_WR_LOCAL_INV:
+		return IB_WC_LOCAL_INV;
+	case IB_WR_LSO:
+		return IB_WC_LSO;
+	case IB_WR_FAST_REG_MR:
+		return IB_WC_FAST_REG_MR;
+	case IB_WR_MASKED_ATOMIC_CMP_AND_SWP:
+		return IB_WC_MASKED_COMP_SWAP;
+	case IB_WR_MASKED_ATOMIC_FETCH_AND_ADD:
+		return IB_WC_MASKED_FETCH_ADD;
+#if 0
+	case IB_WR_BIND_MW:
+		return IB_WC_BIND_MW;
+
+	case IB_WR_SEND_WITH_INV,
+	case IB_WR_RDMA_READ_WITH_INV:
+#endif
+	default:
+		BUG();
+	}
+}
+
 
 int pib_opcode_is_in_order_sequence(int opcode, int last_opcode)
 {

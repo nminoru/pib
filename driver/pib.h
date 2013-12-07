@@ -554,6 +554,7 @@ extern u32 pib_get_maxium_packet_length(enum ib_mtu mtu);
 extern int pib_is_recv_ok(enum ib_qp_state state);
 extern int pib_opcode_is_acknowledge(int opcode);
 extern int pib_opcode_is_in_order_sequence(int opcode, int last_opcode);
+enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode);
 extern u32 pib_get_num_of_packets(struct pib_ib_qp *qp, u32 length);
 extern u32 pib_get_rnr_nak_time(int timeout);
 extern u32 pib_get_local_ack_time(int timeout);
