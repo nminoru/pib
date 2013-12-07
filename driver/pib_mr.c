@@ -186,7 +186,7 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 	for (i=0 ; i<num_sge ; i++) {
 		struct ib_sge sge = sge_array[i];
 		struct pib_ib_mr *mr;
-		u64 range;
+		u64 range, diff;
 
 		mr = pd->mr_table[sge.lkey & PIB_IB_MR_INDEX_MASK];
 
@@ -211,8 +211,10 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 		    (sge.addr + range <= mr->start) || (mr->start + mr->length <  sge.addr + range))
 			continue;
 
+		diff = sge.addr - mr->start;
+
 		if (offset < range) {
-			mr_copy_data(mr, buffer, offset, range - offset, 0, 0, direction);
+			mr_copy_data(mr, buffer, offset + diff, range - offset, 0, 0, direction);
 			size -= range - offset;
 		}
 
@@ -261,7 +263,7 @@ copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u
 		return IB_WC_LOC_PROT_ERR;
 
 	if (!check_only) {
-		if (mr_copy_data(mr, buffer, address, size, 0, 0, direction))
+		if (mr_copy_data(mr, buffer, address - mr->start, size, 0, 0, direction))
 			return IB_WC_LOC_PROT_ERR;
 	}
 
@@ -285,11 +287,11 @@ pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 co
 	if ((mr->access_flags & IB_ACCESS_REMOTE_ATOMIC) != IB_ACCESS_REMOTE_ATOMIC)
 		return IB_WC_LOC_PROT_ERR;
 
-	if ((address     <  mr->start) || (mr->start + 8 <= address) ||
-	    (address + 8 <= mr->start) || (mr->start + 8 <  address + 8))
+	if ((address     <  mr->start) || (mr->start + mr->length <= address) ||
+	    (address + 8 <= mr->start) || (mr->start + mr->length <  address + 8))
 		return IB_WC_LOC_PROT_ERR;
 
-	if (mr_copy_data(mr, result, address, 8, swap, compare,
+	if (mr_copy_data(mr, result, address - mr->start, 8, swap, compare,
 			 (direction == PIB_MR_FETCHADD) ? PIB_MR_FETCHADD : PIB_MR_CAS))
 		return IB_WC_LOC_PROT_ERR;
 
@@ -342,7 +344,7 @@ mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap,
 					return 0;
 
 				case PIB_MR_FETCHADD:
-					*(u64*)buffer = atomic64_add_return(swap, (atomic64_t*)target_vaddr);
+					*(u64*)buffer = atomic64_add_return(compare, (atomic64_t*)target_vaddr);
 					return 0;
 				}
 
