@@ -659,9 +659,9 @@ void pib_util_reschedule_qp(struct pib_ib_qp *qp)
 	/************************************************************/
 
 	spin_lock_irqsave(&dev->schedule.lock, flags);
-	if (qp->on_schedule) {
-		qp->on_schedule = 0;
-		rb_erase(&qp->schedule_node, &dev->schedule.rb_root);
+	if (qp->schedule.on) {
+		qp->schedule.on = 0;
+		rb_erase(&qp->schedule.rb_node, &dev->schedule.rb_root);
 	}
 	spin_unlock_irqrestore(&dev->schedule.lock, flags);
 
@@ -696,7 +696,8 @@ skip:
 	if (schedule_time == now + PIB_SCHED_TIMEOUT)
 		return;
 
-	qp->schedule_time = schedule_time;
+	qp->schedule.time = schedule_time;
+	qp->schedule.tid  = dev->schedule.master_tid;
 
 	/************************************************************/
 	/* Red/Black tree への登録                                  */
@@ -704,25 +705,31 @@ skip:
 	spin_lock_irqsave(&dev->schedule.lock, flags);
 	link = &dev->schedule.rb_root.rb_node;
 	while (*link) {
+		int cond;
 		struct pib_ib_qp *qp_tmp;
 
 		parent = *link;
-		qp_tmp = rb_entry(parent, struct pib_ib_qp, schedule_node);
+		qp_tmp = rb_entry(parent, struct pib_ib_qp, schedule.rb_node);
 
-		if (time_after(qp_tmp->schedule_time, schedule_time))
+		if (qp_tmp->schedule.time != schedule_time)
+			cond = time_after(qp_tmp->schedule.time, schedule_time);
+		else
+			cond = ((long)(qp_tmp->schedule.tid - qp->schedule.tid) > 0);
+
+		if (cond)
 			link = &parent->rb_left;
 		else
 			link = &parent->rb_right;
 	}
-	rb_link_node(&qp->schedule_node, parent, link);
-	rb_insert_color(&qp->schedule_node, &dev->schedule.rb_root);
-	qp->on_schedule = 1;
+	rb_link_node(&qp->schedule.rb_node, parent, link);
+	rb_insert_color(&qp->schedule.rb_node, &dev->schedule.rb_root);
+	qp->schedule.on = 1;
 
 	/* calculate the most early time  */
 	rb_node = rb_first(&dev->schedule.rb_root);
 	BUG_ON(rb_node == NULL);
-	qp = rb_entry(rb_node, struct pib_ib_qp, schedule_node);
-	dev->schedule.wakeup_time = qp->schedule_time;
+	qp = rb_entry(rb_node, struct pib_ib_qp, schedule.rb_node);
+	dev->schedule.wakeup_time = qp->schedule.time;
 
 	spin_unlock_irqrestore(&dev->schedule.lock, flags);
 
@@ -743,7 +750,7 @@ struct pib_ib_qp *pib_util_get_first_scheduling_qp(struct pib_ib_dev *dev)
 	if (rb_node == NULL)
 		goto done;
 
-	qp = rb_entry(rb_node, struct pib_ib_qp, schedule_node);
+	qp = rb_entry(rb_node, struct pib_ib_qp, schedule.rb_node);
 done:
 
 	spin_unlock_irqrestore(&dev->schedule.lock, flags);

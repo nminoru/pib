@@ -53,7 +53,7 @@ static int send_atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struct p
 static int _send_acknowledge(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn, enum pib_ib_syndrome syndrome, int with_atomiceth, u64 res);
 
 static struct pib_ib_send_wqe *match_send_wqe(struct pib_ib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_swqe_pp);
-static void issue_comm_est(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
+static void issue_comm_est(struct pib_ib_qp *qp);
 
 
 /******************************************************************************/
@@ -459,7 +459,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 	opcode = bth->OpCode;
 	psn    = bth->PSN;
 
-	issue_comm_est(dev, qp);
+	issue_comm_est(qp);
 
 	psn_diff = get_psn_diff(psn, qp->responder.psn);
 
@@ -912,7 +912,7 @@ nak_invalid_request:
 	return -1;
 
 asynchronous_error:
-	pib_util_insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
+	pib_util_insert_async_qp_error(qp, IB_EVENT_QP_ACCESS_ERR);
 
 	abort_active_rwqe(dev, qp);
 
@@ -941,73 +941,6 @@ common_error:
 
 	qp->state = IB_QPS_ERR;
 	pib_util_flush_qp(qp, 0);
-
-	return -1;
-}
-
-
-static int
-receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct pib_ib_qp *qp, void *buffer, int size, int new_request, int slot_index)
-{
-	struct pib_packet_reth *reth;
-	u64 remote_addr;
-	u32 rkey;
-	u32 dmalen;
-	u32 num_packets;
-	struct pib_ib_rd_atom_slot slot;
-
-	if (size != sizeof(struct pib_packet_reth))
-		goto nak_invalid_request;
-
-	reth    = (struct pib_packet_reth*)buffer;
-
-	remote_addr = ((u64)reth->VA_hi << 32) | reth->VA_lo;
-	rkey        = reth->R_Key;
-	dmalen      = reth->DMALen;
-
-	num_packets = pib_get_num_of_packets(qp, dmalen);
-
-	if (new_request) {
-		/* new RMDA READ Request */
-
-		slot.opcode                  = IB_OPCODE_RDMA_READ_REQUEST;
-		slot.psn                     = qp->responder.psn;
-		slot.expected_psn            = qp->responder.psn + num_packets; /* @todo */
-		slot.data.rdma_read.vaddress = remote_addr;
-		slot.data.rdma_read.rkey     = rkey;
-		slot.data.rdma_read.dmalen   = dmalen;
-		slot.data.rdma_read.offset   = 0;
-
-		qp->responder.slots[(qp->responder.slot_index++) % PIB_IB_MAX_RD_ATOM] = slot;
-		
-	} else {
-		/* Retried RMDA READ Request */
-
-		u32 offset;
-
-		slot = qp->responder.slots[slot_index];
-
-		offset = (get_psn_diff(psn, slot.psn) * 128U << qp->ib_qp_attr.path_mtu);
-
-		if ((slot.data.rdma_read.rkey != rkey) ||
-		    (slot.data.rdma_read.vaddress + offset != remote_addr) ||
-		    (slot.data.rdma_read.dmalen   - offset != dmalen))
-		    goto nak_invalid_request;
-
-		qp->responder.slots[slot_index].data.rdma_read.offset = offset;
-	}
-
-	/* @todo schedule */
-
-	send_acknowledge(dev, port_num, qp, psn, PIB_IB_ACK_CODE);
-
-	return 0;
-
-nak_invalid_request:
-	send_acknowledge(dev, port_num, qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
-
-	/* Invalid Request Local Work Queue Error */
-	insert_async_qp_error(dev, qp, IB_EVENT_QP_REQ_ERR);
 
 	return -1;
 }
@@ -1072,6 +1005,99 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, enum ib_wr_
 }
 
 
+static int
+receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct pib_ib_qp *qp, void *buffer, int size, int new_request, int slot_index)
+{
+	struct pib_packet_reth *reth;
+	u64 remote_addr;
+	u32 rkey;
+	u32 dmalen;
+	u32 num_packets;
+	struct pib_ib_rd_atom_slot slot;
+	struct pib_ib_pd *pd;
+	enum ib_wc_status status = IB_WC_SUCCESS;
+
+	if (size != sizeof(struct pib_packet_reth))
+		goto nak_invalid_request;
+
+	reth    = (struct pib_packet_reth*)buffer;
+
+	remote_addr = ((u64)reth->VA_hi << 32) | reth->VA_lo;
+	rkey        = reth->R_Key;
+	dmalen      = reth->DMALen;
+
+	/* Pre-check */
+
+	pd = to_ppd(qp->ib_qp.pd);
+
+	down_read(&pd->rwsem);
+	status = pib_util_mr_validate_rkey(pd, rkey, remote_addr, dmalen, IB_ACCESS_REMOTE_READ);
+	up_read(&pd->rwsem);
+
+	if (status != IB_WC_SUCCESS) {
+		/* Local Access Violation Work Queue Error */
+		send_acknowledge(dev, port_num, qp, psn, PIB_IB_NAK_CODE_REM_ACCESS_ERR);
+		insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
+		return -1;
+	}
+
+	num_packets = pib_get_num_of_packets(qp, dmalen);
+
+	if (new_request) {
+		/* new RMDA READ Request */
+
+		slot.opcode                  = IB_OPCODE_RDMA_READ_REQUEST;
+		slot.psn                     = qp->responder.psn;
+		slot.expected_psn            = qp->responder.psn + num_packets; /* @todo */
+		slot.data.rdma_read.vaddress = remote_addr;
+		slot.data.rdma_read.rkey     = rkey;
+		slot.data.rdma_read.dmalen   = dmalen;
+		slot.data.rdma_read.offset   = 0;
+
+		qp->responder.slots[(qp->responder.slot_index++) % PIB_IB_MAX_RD_ATOM] = slot;
+		
+	} else {
+		/* Retried RMDA READ Request */
+
+		u32 offset;
+
+		slot = qp->responder.slots[slot_index];
+
+		offset = (get_psn_diff(psn, slot.psn) * 128U << qp->ib_qp_attr.path_mtu);
+
+		if ((slot.data.rdma_read.rkey != rkey) ||
+		    (slot.data.rdma_read.vaddress + offset != remote_addr) ||
+		    (slot.data.rdma_read.dmalen   - offset != dmalen))
+		    goto nak_invalid_request;
+
+		qp->responder.slots[slot_index].data.rdma_read.offset = offset;
+	}
+
+	/* @todo schedule */
+
+	send_acknowledge(dev, port_num, qp, psn, PIB_IB_ACK_CODE);
+
+	return 0;
+
+nak_invalid_request:
+	send_acknowledge(dev, port_num, qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+
+	/* Invalid Request Local Work Queue Error */
+	insert_async_qp_error(dev, qp, IB_EVENT_QP_REQ_ERR);
+
+	return -1;
+}
+
+/*----------------------------------------------------------------------------*/
+/* Responder: Generating RDMA READ Acknowledge Packets                        */
+/*----------------------------------------------------------------------------*/
+
+int pib_generate_RDMA_READ_response(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
+{
+	return 0;
+}
+
+
 /******************************************************************************/
 /* Requester: Receiving Responses                                             */
 /******************************************************************************/
@@ -1079,6 +1105,7 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, enum ib_wr_
 static int
 receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth)
 {
+	int ret;
 	u32 psn;
 	unsigned long rnr_nak_timeout = 0;
 	struct pib_packet_aeth *aeth;
@@ -1087,9 +1114,8 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 	/* response's PSN */
 	psn = bth->PSN;
 
-	if (bth->OpCode == IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE) {
+	if (bth->OpCode == IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE)
 		return receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
-	}
 
 	if (size < sizeof(struct pib_packet_aeth))
 		/* @todo これはエラーにとらないでいいか？ */
@@ -1149,22 +1175,30 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 	switch (bth->OpCode) {
 
 	case IB_OPCODE_ACKNOWLEDGE:
-		return receive_ACK_response(dev, port_num, qp, psn);
+		ret = receive_ACK_response(dev, port_num, qp, psn);
+		break;
 
 	case IB_OPCODE_RDMA_READ_RESPONSE_FIRST:
 	case IB_OPCODE_RDMA_READ_RESPONSE_LAST:
 	case IB_OPCODE_RDMA_READ_RESPONSE_ONLY:
-		return receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
+		ret = receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
+		break;
 
 	case IB_OPCODE_ATOMIC_ACKNOWLEDGE:
-		return receive_Atomic_response(dev, port_num, qp, psn, buffer, size);
+		ret =receive_Atomic_response(dev, port_num, qp, psn, buffer, size);
+		break;
 
 	default:
 		BUG();
-		break;
 	}
 
-	return -1;
+	if ((qp->state == IB_QPS_SQD) && !qp->issue_sq_drained)
+		if (list_empty(&qp->sending_swqe_head) && list_empty(&qp->waiting_swqe_head)) {
+			pib_util_insert_async_qp_event(qp, IB_EVENT_SQ_DRAINED);
+			qp->issue_sq_drained = 1;
+		}
+
+	return ret;
 
 retry_send:
 	/* waiting list から sending list へ戻す */
@@ -1232,6 +1266,14 @@ set_send_wqe_to_error(struct pib_ib_qp *qp, u32 psn, enum ib_wc_status status)
 }
 
 
+enum {
+	RET_BAD_RESPONSE = -2,
+	RET_ERROR        = -1,
+	RET_CONTINUE     =  0,
+	RET_STOP         =  1
+};
+
+
 static int
 receive_ACK_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn)
 {
@@ -1243,18 +1285,18 @@ restart:
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->waiting_swqe_head, list) {
 
 		switch (process_acknowledge(dev, qp, send_wqe, psn, &qp->nr_waiting_swqe)) {
-		case -2:
+		case RET_BAD_RESPONSE:
 			goto restart;
 
-		case -1: /* error */
+		case RET_ERROR:
 			list_del_init(&send_wqe->list);
 			qp->nr_waiting_swqe--;
 			goto completion_error;
 			
-		case 0: /* continue */
+		case RET_CONTINUE:
 			break;
 
-		case 1: /* stop */
+		case RET_STOP:
 			return -1;
 		}
 	}
@@ -1263,18 +1305,18 @@ restart:
 
 		switch (process_acknowledge(dev, qp, send_wqe, psn, &qp->nr_sending_swqe)) {
 
-		case -2:
+		case RET_BAD_RESPONSE:
 			goto restart;
 
-		case -1: /* error */
+		case RET_ERROR:
 			list_del_init(&send_wqe->list);
 			qp->nr_sending_swqe--;
 			goto completion_error;
 			
-		case 0: /* continue */
+		case RET_CONTINUE:
 			break;
 
-		case 1: /* stop */
+		case RET_STOP:
 			return -1;
 		}
 	}
@@ -1299,10 +1341,7 @@ completion_error:
 
 
 /*
- *  -2 bad response
- *  -1 stop
- *   0 continue
- *   1 stop
+ *
  */
 static int
 process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, u32 psn, int *nr_swqe_p)
@@ -1312,20 +1351,20 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 
 	if (send_wqe->processing.status != IB_WC_SUCCESS) {
 		(*nr_swqe_p)--;
-		return -1;
+		return RET_ERROR;
 	}
 
 	psn_diff = get_psn_diff(psn, send_wqe->processing.based_psn);
 
 	if (psn_diff < 0)
 		/* Ignore ghost acknowledge */
-		return 1;
+		return RET_STOP;
 
 	no_packets = send_wqe->processing.all_packets - psn_diff;
 		
 	if (no_packets < send_wqe->processing.ack_packets)
 		/* Ignore duplicated acknowledge */
-		return 1;
+		return RET_STOP;
 
 	switch (send_wqe->opcode) {
 
@@ -1335,7 +1374,7 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 		send_wqe->processing.status = IB_WC_BAD_RESP_ERR;
 		list_del_init(&send_wqe->list);
 		(*nr_swqe_p)--;
-		return -2;
+		return RET_BAD_RESPONSE;
 
 	default:
 		break;
@@ -1344,7 +1383,7 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 	if (no_packets < send_wqe->processing.all_packets) {
 		/* Left packets to send */
 		send_wqe->processing.ack_packets = no_packets;
-		return 1;
+		return RET_STOP;
 	}
 
 	/* Complete to send */
@@ -1370,7 +1409,7 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 
 	kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
 
-	return 0;
+	return RET_CONTINUE;
 }
 
 
@@ -1411,15 +1450,17 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 				       PIB_MR_COPY_TO);
 	up_read(&pd->rwsem);
 
-	if (status == IB_WC_SUCCESS) {
-		send_wqe->processing.sent_packets++;
-	} else {
+	if (status != IB_WC_SUCCESS) {
 		send_wqe->processing.status = status;
 		return 0;
 	}
 
+	send_wqe->processing.sent_packets++;
+
 	if (send_wqe->processing.sent_packets < send_wqe->processing.all_packets)
 		return 0;
+
+	/* Completed RDMA READ operation */
 
 	if ((qp->ib_qp_init_attr.sq_sig_type == IB_SIGNAL_ALL_WR) || 
 	    (send_wqe->send_flags & IB_SEND_SIGNALED)) {
@@ -1529,7 +1570,7 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 static void
 insert_async_qp_error(struct pib_ib_dev *dev, struct pib_ib_qp *qp, enum ib_event_type event)
 {
-	pib_util_insert_async_qp_error(dev, qp, event);
+	pib_util_insert_async_qp_error(qp, event);
 
 	abort_active_rwqe(dev, qp);
 
@@ -1674,12 +1715,12 @@ match_send_wqe(struct pib_ib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_sw
 
 
 static void
-issue_comm_est(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
+issue_comm_est(struct pib_ib_qp *qp)
 {
 	if ((qp->state != IB_QPS_RTR) || (qp->issue_comm_est != 0))
 		return;
 
-	pib_util_insert_async_qp_error(dev, qp, IB_EVENT_COMM_EST);
+	pib_util_insert_async_qp_event(qp, IB_EVENT_COMM_EST);
 
 	qp->issue_comm_est = 1;
 }

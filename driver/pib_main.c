@@ -140,6 +140,36 @@ static int pib_ib_mmap(struct ib_ucontext *context, struct vm_area_struct *vma)
 }
 
 
+static ssize_t show_behavior(struct device *device, struct device_attribute *attr,
+			     char *buf)
+{
+	struct pib_ib_dev *ibdev =
+		container_of(device, struct pib_ib_dev, ib_dev.dev);
+
+	return sprintf(buf, "%u\n", ibdev->behavior);
+}
+
+
+static ssize_t show_imm_data_lkey(struct device *device, struct device_attribute *attr,
+			     char *buf)
+{
+	struct pib_ib_dev *ibdev =
+		container_of(device, struct pib_ib_dev, ib_dev.dev);
+
+	return sprintf(buf, "0x%08x\n", ibdev->imm_data_lkey);
+}
+
+
+static DEVICE_ATTR(behavior,      S_IRUGO, show_behavior,      NULL);
+static DEVICE_ATTR(imm_data_lkey, S_IRUGO, show_imm_data_lkey, NULL);
+
+
+static struct device_attribute *pib_class_attributes[] = {
+	&dev_attr_behavior,
+	&dev_attr_imm_data_lkey,
+};
+
+
 static void *pib_ib_add(int ib_dev_id)
 {
 	int i;
@@ -380,13 +410,24 @@ static void *pib_ib_add(int ib_dev_id)
 			cpu_to_be64((0xDeadBeafULL << 32) | (ib_dev_id << 8) | i);
 	}
 
+	ibdev->behavior      = 0U;
+	ibdev->imm_data_lkey = PIB_IB_IMM_DATA_LKEY;
+
 	if (pib_create_kthread(ibdev))
 	    goto err_create_kthread;
 
 	if (ib_register_device(&ibdev->ib_dev, NULL))
 		goto err_register_ibdev;
 
+	for (i = 0; i < ARRAY_SIZE(pib_class_attributes); i++) {
+		if (device_create_file(&ibdev->ib_dev.dev, pib_class_attributes[i]))
+			goto err_create_file;
+	}
+
 	return ibdev;
+
+err_create_file:
+	ib_unregister_device(&ibdev->ib_dev);
 
 err_register_ibdev:
 	pib_release_kthread(ibdev);

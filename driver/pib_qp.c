@@ -116,16 +116,7 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 	
 	/* Last WQE Reached event */
 	if (qp->ib_qp_init_attr.srq && qp->push_rcqe && !qp->issue_last_wqe_reached) {
-		struct ib_event ev;
-
-		ev.event      = IB_EVENT_QP_LAST_WQE_REACHED;
-		ev.device     = qp->ib_qp.device;
-		ev.element.qp = &qp->ib_qp;
-
-		local_bh_disable();
-		qp->ib_qp.event_handler(&ev, qp->ib_qp.qp_context);
-		local_bh_enable();
-
+		pib_util_insert_async_qp_event(qp, IB_EVENT_QP_LAST_WQE_REACHED);
 		qp->issue_last_wqe_reached = 1;
 	}
 
@@ -365,6 +356,7 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 {
 	int ret;
 	int pending_send_wr = 0;
+	int issue_sq_drained = 0;
 	struct pib_ib_qp *qp;
 	struct pib_ib_dev *dev;
 	enum ib_qp_state cur_state, new_state;
@@ -424,7 +416,7 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 	if (attr_mask & IB_QP_AV)
 		qp->ib_qp_attr.ah_attr     = attr->ah_attr;
-	
+
 	if (attr_mask & IB_QP_PKEY_INDEX)
 		qp->ib_qp_attr.pkey_index  = attr->pkey_index;
 
@@ -433,7 +425,7 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 	if (attr_mask & IB_QP_MAX_QP_RD_ATOMIC)
 		qp->ib_qp_attr.max_rd_atomic = attr->max_rd_atomic;
-		;
+
 	if (attr_mask & IB_QP_MAX_DEST_RD_ATOMIC)
 		qp->ib_qp_attr.max_dest_rd_atomic = attr->max_dest_rd_atomic;
 
@@ -505,7 +497,7 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		case IB_QPS_SQD:
 			/* @todo */
 			/* en_sqd_async_notify */
-			/* issue_sq_drained */
+			issue_sq_drained = list_empty(&qp->sending_swqe_head) && list_empty(&qp->waiting_swqe_head);
 			break;
 
 		case IB_QPS_SQE:
@@ -519,6 +511,14 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		default:
 			break;
 		}
+
+		if (issue_sq_drained) {
+			pib_util_insert_async_qp_event(qp, IB_EVENT_SQ_DRAINED);
+			qp->issue_sq_drained = 1;
+		}
+
+		if ((cur_state == IB_QPS_SQD) && (new_state != IB_QPS_SQD))
+			qp->issue_sq_drained = 0;
 	}
 
 	up(&qp->sem);
@@ -608,8 +608,6 @@ int pib_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_
 {
 	struct pib_ib_qp *qp;
 
-	debug_printk("pib_ib_query_qp\n");
-
 	if (!ibqp || !qp_attr || !qp_init_attr)
 		return -EINVAL;
 
@@ -648,7 +646,8 @@ int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 	struct pib_ib_send_wqe *send_wqe;
 	struct pib_ib_qp *qp;
 	enum pib_result_type res = PIB_RES_SCCUESS;
-	u32 total_length = 0;
+	u64 total_length = 0;
+	u32 imm_data;
 
 	if (!ibqp || !ibwr)
 		return -EINVAL;
@@ -663,6 +662,24 @@ int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 	down(&qp->sem);
 
 next_wr:
+	imm_data = ibwr->ex.imm_data;
+
+	/*
+	 * If sg_list[i] is equals to PIB_IB_IMM_DATA_LKEY, sg_list[i] is
+	 * a special s/g entry.
+	 */
+	for (i = ibwr->num_sge - 1 ; i >= 0 ; i--) {
+		if (ibwr->sg_list[i].lkey == PIB_IB_IMM_DATA_LKEY) {
+			int j;
+			imm_data = ibwr->sg_list[i].length;
+			for (j = i ; j < ibwr->num_sge - 1 ; j++) {
+				ibwr->sg_list[j] = ibwr->sg_list[j+1];
+			} 
+			ibwr->num_sge--;
+			break;
+		}		
+	}
+
 	if ((ibwr->num_sge < 1) || (qp->ib_qp_init_attr.cap.max_send_sge < ibwr->num_sge)) {
 		ret = -EINVAL;
 		goto done;
@@ -679,12 +696,17 @@ next_wr:
 	send_wqe->wr_id      = ibwr->wr_id;
 	send_wqe->opcode     = ibwr->opcode;
 	send_wqe->send_flags = ibwr->send_flags;
-	send_wqe->imm_data   = ibwr->ex.imm_data;
+	send_wqe->imm_data   = imm_data;
 	send_wqe->num_sge    = ibwr->num_sge;
 
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		send_wqe->sge_array[i] = ibwr->sg_list[i];
-		total_length += ibwr->sg_list[i].length; /* @todo overflow */
+
+		if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+			if (ibwr->sg_list[i].length == 0)
+				ibwr->sg_list[i].length = PIB_IB_MAX_PAYLOAD_LEN;
+
+		total_length += ibwr->sg_list[i].length;
 	}
 
 	if ((send_wqe->opcode == IB_WR_ATOMIC_CMP_AND_SWP) || (send_wqe->opcode == IB_WR_ATOMIC_FETCH_AND_ADD)) {
@@ -692,7 +714,10 @@ next_wr:
 		total_length = 8;
 	}
 
-	send_wqe->total_length = total_length;
+	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) 
+		; /* @todo */
+
+	send_wqe->total_length = (u32)total_length;
 
 	switch (qp->qp_type) {
 	case IB_QPT_RC:
@@ -811,13 +836,16 @@ int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 		     struct ib_recv_wr **bad_wr)
 {
 	int i, ret;
+	struct pib_ib_dev *dev;
 	struct pib_ib_recv_wqe *recv_wqe;
 	struct pib_ib_qp *qp;
 	enum pib_result_type res = PIB_RES_SCCUESS;
-	u32 total_length = 0;
+	u64 total_length = 0;
 
 	if (!ibqp || !ibwr)
 		return -EINVAL;
+
+	dev = to_pdev(ibqp->device);
 
 	qp = to_pqp(ibqp);
 
@@ -846,10 +874,18 @@ next_wr:
 
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		recv_wqe->sge_array[i] = ibwr->sg_list[i];
-		total_length += ibwr->sg_list[i].length; /* @todo overflow */
+
+		if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+			if (ibwr->sg_list[i].length == 0)
+				ibwr->sg_list[i].length = PIB_IB_MAX_PAYLOAD_LEN;
+
+		total_length += ibwr->sg_list[i].length;
 	}
 	
-	recv_wqe->total_length = total_length;
+	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) 
+		; /* @todo */
+
+	recv_wqe->total_length = (u32)total_length;
 
 	down(&qp->sem);
 
@@ -933,7 +969,7 @@ static void get_ready_to_send(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 }
 
 
-void pib_util_insert_async_qp_error(struct pib_ib_dev *dev, struct pib_ib_qp *qp, enum ib_event_type event)
+void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type event)
 {
 	struct ib_event ev;
 
@@ -941,10 +977,16 @@ void pib_util_insert_async_qp_error(struct pib_ib_dev *dev, struct pib_ib_qp *qp
 		return;
 
 	ev.event      = event;
-	ev.device     = &dev->ib_dev;
+	ev.device     = qp->ib_qp.device;
 	ev.element.qp = &qp->ib_qp;
 
 	local_bh_disable();
 	qp->ib_qp.event_handler(&ev, qp->ib_qp.qp_context);
 	local_bh_enable();
+}
+
+
+void pib_util_insert_async_qp_event(struct pib_ib_qp *qp, enum ib_event_type event)
+{
+	pib_util_insert_async_qp_error(qp, event);
 }

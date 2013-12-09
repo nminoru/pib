@@ -37,6 +37,10 @@ found:
 	mr->ib_mr.lkey = (u32)i | mr->lkey_prefix;
 	mr->ib_mr.rkey = (u32)i | mr->rkey_prefix;
 
+	/* Hack */
+	if (mr->ib_mr.lkey == PIB_IB_IMM_DATA_LKEY)
+		goto found;
+
 	pd->nr_mr++;
 
 	up_write(&pd->rwsem);
@@ -199,12 +203,6 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 		if ((mr->access_flags & access_flags) != access_flags)
 			return IB_WC_LOC_PROT_ERR;
 
-#if 1
-		/* Mellanox */
-		if (sge.length == 0)
-			return IB_WC_LOC_LEN_ERR;
-#endif
-
 		range = min_t(u64, sge.length, offset + size);
 
 		if ((sge.addr         <  mr->start) || (mr->start + mr->length <= sge.addr) ||
@@ -229,9 +227,9 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 
 
 enum ib_wc_status
-pib_util_mr_validate_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction)
+pib_util_mr_validate_rkey(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 size, int access_flags)
 {
-	return copy_data_with_rkey(pd, rkey, buffer, address, size, access_flags, direction, 1);
+	return copy_data_with_rkey(pd, rkey, NULL, address, size, access_flags, PIB_MR_CHECK, 1);
 }
 
 
@@ -346,6 +344,9 @@ mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap,
 				case PIB_MR_FETCHADD:
 					*(u64*)buffer = atomic64_add_return(compare, (atomic64_t*)target_vaddr);
 					return 0;
+
+				default:
+					BUG();
 				}
 
 				offset += range;

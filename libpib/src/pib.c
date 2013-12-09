@@ -5,10 +5,18 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
+#include <alloca.h>
 #include <errno.h>
 #include <infiniband/verbs.h>
 #include <infiniband/driver.h>
+
+
+struct pib_ibv_device {
+	struct ibv_device	base;
+	uint32_t		imm_data_lkey;
+};
 
 
 static int pib_query_device(struct ibv_context *context,
@@ -319,10 +327,59 @@ static int pib_destroy_qp(struct ibv_qp *qp)
 	return ret;
 }
 
+static int ud_qp_post_send_with_imm(struct ibv_qp *qp, struct ibv_send_wr *wr,
+				    struct ibv_send_wr **bad_wr, uint32_t imm_data_lkey)
+{
+	int i;
+	struct ibv_send_wr wr_temp = *wr;
+
+	wr_temp.next    = NULL;
+
+	if (wr_temp.opcode != IBV_WR_SEND_WITH_IMM)
+		goto done;
+
+	/* Add special a s/g entry */
+
+	wr_temp.sg_list = (struct ibv_sge*)alloca(sizeof(struct ibv_sge) * (wr_temp.num_sge + 1));
+
+	for (i=0 ; i<wr_temp.num_sge ; i++)
+		wr_temp.sg_list[i] = wr->sg_list[i];
+
+	wr_temp.sg_list[i].addr   = 0; 
+	wr_temp.sg_list[i].length = wr->imm_data;
+	wr_temp.sg_list[i].lkey   = imm_data_lkey;
+		
+	wr_temp.num_sge++;
+
+done:
+	return ibv_cmd_post_send(qp, &wr_temp, bad_wr);
+}
+
 static int pib_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr,
 			 struct ibv_send_wr **bad_wr)
 {
+	uint32_t imm_data_lkey;
+	struct ibv_send_wr *i;
+
+	if (qp->qp_type == IBV_QPT_UD && qp->context->device) {
+		imm_data_lkey = ((struct pib_ibv_device*)qp->context->device)->imm_data_lkey;
+		if (imm_data_lkey)
+			goto hack_imm_data_lkey;
+	}
+
 	return ibv_cmd_post_send(qp, wr, bad_wr);
+
+hack_imm_data_lkey:
+	for (i = wr; i ; i = i->next) {
+		int ret;
+		ret = ud_qp_post_send_with_imm(qp, i, bad_wr, imm_data_lkey);
+		if (ret) {
+			*bad_wr = i;
+			return ret;
+		}
+	}
+
+	return 0;
 }
 
 static int pib_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr,
@@ -457,7 +514,9 @@ static struct ibv_device_ops pib_dev_ops = {
 static struct ibv_device *pib_driver_init(const char *uverbs_sys_path, int abi_version)
 {
 	char device_name[24];
-	struct ibv_device *dev;
+	struct pib_ibv_device *dev;
+	char ibdev_path[IBV_SYSFS_PATH_MAX];
+	char attr[41];
 
 	if (ibv_read_sysfs_file(uverbs_sys_path, "ibdev",
 				device_name, sizeof device_name) < 0)
@@ -471,11 +530,23 @@ static struct ibv_device *pib_driver_init(const char *uverbs_sys_path, int abi_v
 		return NULL;
 	}
 
-	dev->ops            = pib_dev_ops;
-	dev->node_type      = IBV_NODE_CA;
-	dev->transport_type = IBV_TRANSPORT_IB;
+	dev->base.ops            = pib_dev_ops;
+	dev->base.node_type      = IBV_NODE_CA;
+	dev->base.transport_type = IBV_TRANSPORT_IB;
 
-	return dev;
+	snprintf(ibdev_path, sizeof ibdev_path,
+		 "%s/class/infiniband/%s", ibv_get_sysfs_path(),
+		 device_name);
+	
+	if (ibv_read_sysfs_file(ibdev_path, "imm_data_lkey",
+				attr, sizeof attr) < 0)
+		goto done;
+
+	if (sscanf(attr, "0x%08x", &dev->imm_data_lkey) != 1)
+		dev->imm_data_lkey = 0U;
+
+done:
+	return &dev->base;
 }
 
 static __attribute__((constructor)) void pib_register_driver(void)

@@ -50,6 +50,9 @@
 #define PIB_IB_MR_INDEX_MASK          (PIB_IB_MAX_MR_PER_PD - 1)
 #define PIB_IB_PACKET_BUFFER          (8192)
 #define PIB_IB_GID_PER_PORT           (16)
+#define PIB_IB_MAX_PAYLOAD_LEN        (0x80000000)
+
+#define PIB_IB_IMM_DATA_LKEY          (0xA0B0C0D0)
 
 #define PIB_SCHED_TIMEOUT             (0x3FFFFFFF) /* 1/4 of max value of unsigned long */
 
@@ -60,12 +63,20 @@ enum pib_behavior {
 	 *  The behavior that the UD-QP's PD doesn't match the PD of AH is
 	 *  whether an immediate error or a completion error(IBV_WC_LOC_QP_OP_ERR).
 	 */
-	PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR             = 0,
+	PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR             = 1,
 
 	/*
 	 *  IBA Spec. Vol.1 10.7.2.2 C10-87
 	 */
-	PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR = 1
+	PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR = 2,
+
+	/*
+	 *  If the length of a scatter/gather list is zero in bytes,
+	 *  it consider as 2^31 in bytes.
+	 */
+	PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN     = 3,
+
+	PIB_BEHAVIOR_SRQ_SHUFFLE                          = 4,
 };
 
 
@@ -102,7 +113,8 @@ enum pib_mr_direction {
 	PIB_MR_COPY_FROM,
 	PIB_MR_COPY_TO,
 	PIB_MR_CAS,
-	PIB_MR_FETCHADD
+	PIB_MR_FETCHADD,
+	PIB_MR_CHECK
 };
 
 struct pib_dev {
@@ -137,6 +149,7 @@ struct pib_ib_dev {
 	struct {
 		spinlock_t	lock;
 		unsigned long   wakeup_time; /* in jiffies */
+		unsigned long   master_tid;
 		struct rb_root  rb_root;
 	} schedule;
 
@@ -146,7 +159,8 @@ struct pib_ib_dev {
 	int                     nr_cq;
 	struct list_head        cq_head;
 
-	unsigned long           behavior_flags;
+	unsigned int            behavior;
+	u32                     imm_data_lkey;
 
 	struct {
 		struct task_struct     *task;
@@ -309,9 +323,12 @@ struct pib_ib_qp {
 	int                     has_new_send_wr;
 	struct list_head        new_send_wr_qp_list;
 
-	int                     on_schedule;
-	unsigned long           schedule_time;
-	struct rb_node          schedule_node;
+	struct {
+		int             on;
+		unsigned long   time;
+		unsigned long   tid;     /* order by inserting into scheduler */
+		struct rb_node  rb_node;
+	} schedule;
 
 	int                     push_rcqe;
 	int                     issue_comm_est; /* set 1 when the async event of COMM_EST is issue */
@@ -452,7 +469,7 @@ static inline struct pib_ib_cq *to_pcq(struct ib_cq *ibcq)
 
 static inline int pib_ib_get_behavior(const struct pib_ib_dev *dev, enum pib_behavior behavior)
 {
-	return (dev->behavior_flags & (1UL << behavior)) != 0;
+	return (dev->behavior & (1UL << behavior)) != 0;
 }
  
 
@@ -479,7 +496,7 @@ extern struct ib_fast_reg_page_list *pib_ib_alloc_fast_reg_page_list(struct ib_d
 extern void pib_ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
 
 enum ib_wc_status pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction);
-enum ib_wc_status pib_util_mr_validate_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
+enum ib_wc_status pib_util_mr_validate_rkey(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
 enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
 enum ib_wc_status pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
 
@@ -509,7 +526,8 @@ extern int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
 			     struct ib_recv_wr **bad_wr);
 extern struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num);
 extern void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only);
-extern void pib_util_insert_async_qp_error(struct pib_ib_dev *dev, struct pib_ib_qp *qp, enum ib_event_type event);
+extern void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type event);
+extern void pib_util_insert_async_qp_event(struct pib_ib_qp *qp, enum ib_event_type event);
 
 extern void pib_util_reschedule_qp(struct pib_ib_qp *qp);
 extern struct pib_ib_qp *pib_util_get_first_scheduling_qp(struct pib_ib_dev *dev);

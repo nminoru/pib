@@ -43,5 +43,9 @@ rm -rf $RPM_BUILD_ROOT
 %doc AUTHORS COPYING README
 
 %changelog
-* Tue Oct 30 2013 NAKAMURA Minoru <nminoru@nminoru.jp> - 0.0.2
+* Tue Dec 08 2013 Minoru NAKAMURA <nminoru@nminoru.jp> - 0.0.4
+- Hack for the IB/core bug to Pass imm_data from ib_uverbs_send_wr to
+  ib_send_wr correctly when sending UD messages.
+
+* Tue Oct 30 2013 Minoru NAKAMURA <nminoru@nminoru.jp> - 0.0.2
 - Initial spec file

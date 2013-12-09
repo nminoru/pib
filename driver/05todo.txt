@@ -1,14 +1,16 @@
+- UD IMM_DATA
+
+- delayed WC
+
+- RDMA READ 実装
+  - RDMA READ で responder 側の PSN を増加させること。
+  - RDMA READ の responder 側の acknowledge 処理を実装すること。
+
+- Requester 側で RDMA READ と Atomic 操作の outstanding 数をチェックする操作。
+
 - ソケットのバッファサイズを増やす。
 
 - pib_util_get_srq のロック条件を見直せ
-
-- RDMA READ で responder 側の PSN を増加させること。
-
-- RDMA READ の responder 側の acknowledge 処理を実装すること。
-
-- Responder が RDMA READ Request を最初に受け取った時に MR をチェックすること。
-
-- LTH:PktLen & BTH:PdCnt で決まるパケット長と recvmsg の長さは全ての箇所で確認すること。
 
 - MAC アドレスから GID を合成する
 
@@ -40,6 +42,3 @@
 - Protection domain のチェック(QP、SRQ、MR、AH)
   - QP と SRQ のチェック
   - UD-QP と AH のチェック
-
-- 非同期イベント
-  - IBV_EVENT_SQ_DRAINED

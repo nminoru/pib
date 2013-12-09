@@ -119,12 +119,15 @@ int pib_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
 			 struct ib_recv_wr **bad_wr)
 {
 	int i, ret;
+	struct pib_ib_dev *dev;
 	struct pib_ib_recv_wqe *recv_wqe;
 	struct pib_ib_srq *srq;
-	u32 total_length = 0;
+	u64 total_length = 0;
 
 	if (!ibsrq || !ibwr)
 		return -EINVAL;
+
+	dev = to_pdev(ibsrq->device);
 
 	srq = to_psrq(ibsrq);
 
@@ -147,10 +150,18 @@ next_wr:
 
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		recv_wqe->sge_array[i] = ibwr->sg_list[i];
-		total_length += ibwr->sg_list[i].length; /* @todo overflow */
+
+		if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+			if (ibwr->sg_list[i].length == 0)
+				ibwr->sg_list[i].length = PIB_IB_MAX_PAYLOAD_LEN;
+
+		total_length += ibwr->sg_list[i].length;
 	}
 
-	recv_wqe->total_length = total_length;
+	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) 
+		; /* @todo */
+
+	recv_wqe->total_length = (u32)total_length;
 
 	down(&srq->sem);
 
@@ -161,11 +172,16 @@ next_wr:
 		goto err;
 	}
 
-	/* shuffle WRs */
-	if ((post_srq_recv_counter++ % 2) == 0)
+	if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_SRQ_SHUFFLE)) {
+		/* shuffle WRs */
+		if ((post_srq_recv_counter++ % 2) == 0)
+			list_add_tail(&recv_wqe->list, &srq->recv_wqe_head);
+		else
+			list_add(&recv_wqe->list, &srq->recv_wqe_head);
+	} else {
+		/* in order */
 		list_add_tail(&recv_wqe->list, &srq->recv_wqe_head);
-	else
-		list_add(&recv_wqe->list, &srq->recv_wqe_head);
+	}
 
 	srq->nr_recv_wqe++;
 	up(&srq->sem);
@@ -193,7 +209,7 @@ pib_util_get_srq(struct pib_ib_srq *srq)
 
 	if (list_empty(&srq->recv_wqe_head))
 		goto skip;
-	
+
 	recv_wqe = list_first_entry(&srq->recv_wqe_head, struct pib_ib_recv_wqe, list);
 	list_del_init(&recv_wqe->list);
 	srq->nr_recv_wqe--;
