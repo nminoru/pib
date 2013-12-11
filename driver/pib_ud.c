@@ -177,7 +177,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	qp->ib_qp_attr.sq_psn++;
 
 	list_del_init(&send_wqe->list);
-	qp->nr_sending_swqe--;
+	qp->requester.nr_sending_swqe--;
 	send_wqe->processing.list_type = PIB_SWQE_FREE;
 
 	if (!push_wc)
@@ -204,7 +204,7 @@ completion_error:
 
 	BUG_ON(send_wqe->processing.list_type != PIB_SWQE_SENDING);
 	list_del_init(&send_wqe->list);
-	qp->nr_sending_swqe--;
+	qp->requester.nr_sending_swqe--;
 	send_wqe->processing.list_type = PIB_SWQE_FREE;
 
 	pib_util_flush_qp(qp, 1);
@@ -275,12 +275,12 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 
 	} else {
 
-		if (list_empty(&qp->recv_wqe_head))
+		if (list_empty(&qp->responder.recv_wqe_head))
 			goto silently_drop;
 
-		recv_wqe = list_first_entry(&qp->recv_wqe_head, struct pib_ib_recv_wqe, list);
+		recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_ib_recv_wqe, list);
 		list_del_init(&recv_wqe->list);
-		qp->nr_recv_wqe--;
+		qp->responder.nr_recv_wqe--;
 	}
 
 	if (recv_wqe->total_length < size)

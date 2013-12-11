@@ -2,9 +2,7 @@ Introduction
 ============
 
 libpib is a userspace driver for Pseudo InfiniBand HCA.
-It is a plug-in module for libibverbs that allows programs to use
-Mellanox hardware directly from userspace.  See the libibverbs package
-for more information.
+It is a plug-in module for libibverbs for Pseudo InfiniBand driver(pib)
 
 Using libpib
 ==============

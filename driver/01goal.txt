@@ -4,14 +4,17 @@
 ・複数ノードにまたがって動かす。
 ・代替パス
 ・OpenSM
+・Multicast 対応
 ・IPoIB を動かす
 ・RMDA CM を動かす。
 ・SDP を動かす。
 ・XRC
+・IPv6 対応
 
 ○ Verfication
 
-- receiver の平行動作
+- Receiver の平行動作
+- Delayed WC
 - CQ オーバーフローの動作を選択可能に(IBV_EVENT_CQ_ERR か mellanox 準拠か)
 - RESET 時の送受信
 - QP 番号のランダム性の制御

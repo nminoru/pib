@@ -239,9 +239,9 @@ int pib_is_recv_ok(enum ib_qp_state state)
 }
 
 
-int pib_opcode_is_acknowledge(int opcode)
+int pib_opcode_is_acknowledge(int OpCode)
 {
-	return (attr_opcode[opcode] & PIB_ACKNOWLEDGE_OPCODE) == PIB_ACKNOWLEDGE_OPCODE;
+	return (attr_opcode[OpCode] & PIB_ACKNOWLEDGE_OPCODE) == PIB_ACKNOWLEDGE_OPCODE;
 }
 
 enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode opcode)
@@ -282,33 +282,33 @@ enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode opcode)
 }
 
 
-int pib_opcode_is_in_order_sequence(int opcode, int last_opcode)
+int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 {
-	int cur_opcode_attr;
+	int cur_OpCode_attr;
 
-	cur_opcode_attr = attr_opcode[opcode] ;
+	cur_OpCode_attr = attr_opcode[OpCode] ;
 
-	if ((cur_opcode_attr & (PIB_STARTING_OPCODE | PIB_MIDDLE_OPCODE |PIB_ENDING_OPCODE)) == 0)
+	if ((cur_OpCode_attr & (PIB_STARTING_OPCODE | PIB_MIDDLE_OPCODE |PIB_ENDING_OPCODE)) == 0)
 		return 0;
 
-	if (cur_opcode_attr & PIB_STARTING_OPCODE)
-		return (attr_opcode[last_opcode] & PIB_ENDING_OPCODE);
+	if (cur_OpCode_attr & PIB_STARTING_OPCODE)
+		return (attr_opcode[last_OpCode] & PIB_ENDING_OPCODE);
 
-	switch (opcode) {
+	switch (OpCode) {
 
 	case IB_OPCODE_SEND_MIDDLE:
 	case IB_OPCODE_SEND_LAST:
 	case IB_OPCODE_SEND_LAST_WITH_IMMEDIATE:
-		if ((last_opcode == IB_OPCODE_SEND_FIRST) ||
-		    (last_opcode == IB_OPCODE_SEND_MIDDLE))
+		if ((last_OpCode == IB_OPCODE_SEND_FIRST) ||
+		    (last_OpCode == IB_OPCODE_SEND_MIDDLE))
 			return 1;
 		break;
 
 	case IB_OPCODE_RDMA_WRITE_MIDDLE:
 	case IB_OPCODE_RDMA_WRITE_LAST:
 	case IB_OPCODE_RDMA_WRITE_LAST_WITH_IMMEDIATE:
-		if ((last_opcode == IB_OPCODE_RDMA_WRITE_FIRST) || 
-		    (last_opcode == IB_OPCODE_RDMA_WRITE_MIDDLE))
+		if ((last_OpCode == IB_OPCODE_RDMA_WRITE_FIRST) || 
+		    (last_OpCode == IB_OPCODE_RDMA_WRITE_MIDDLE))
 			return 1;
 		break;
 

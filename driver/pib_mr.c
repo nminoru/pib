@@ -37,9 +37,10 @@ found:
 	mr->ib_mr.lkey = (u32)i | mr->lkey_prefix;
 	mr->ib_mr.rkey = (u32)i | mr->rkey_prefix;
 
-	/* Hack */
+#ifdef PIB_HACK_IMM_DATA_LKEY 
 	if (mr->ib_mr.lkey == PIB_IB_IMM_DATA_LKEY)
 		goto found;
+#endif
 
 	pd->nr_mr++;
 
@@ -300,7 +301,7 @@ pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 co
 static int
 mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction)
 {
-	u64 addr;
+	u64 addr, res;
 	struct ib_umem *umem;
 	struct ib_umem_chunk *chunk;
 
@@ -342,7 +343,8 @@ mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap,
 					return 0;
 
 				case PIB_MR_FETCHADD:
-					*(u64*)buffer = atomic64_add_return(compare, (atomic64_t*)target_vaddr);
+					res = atomic64_add_return(compare, (atomic64_t*)target_vaddr);
+					*(u64*)buffer = res - compare;
 					return 0;
 
 				default:

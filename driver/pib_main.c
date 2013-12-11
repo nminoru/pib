@@ -18,15 +18,10 @@
 #include "pib.h"
 
 
-#define DRV_VERSION   "0.02"
-/* IB_USER_VERBS_ABI_VERSION */
-#define PIB_IB_UVERBS_ABI_VERSION  (6)
-
-
 MODULE_AUTHOR("Minoru NAKAMURA");
 MODULE_DESCRIPTION("Pseudo InfiniBand HCA driver");
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_VERSION(DRV_VERSION);
+MODULE_VERSION(PIB_DRIVER_VERSION);
 
 
 struct kmem_cache *pib_ib_ah_cachep;
@@ -36,6 +31,7 @@ struct kmem_cache *pib_ib_cq_cachep;
 struct kmem_cache *pib_ib_srq_cachep;
 struct kmem_cache *pib_ib_send_wqe_cachep;
 struct kmem_cache *pib_ib_recv_wqe_cachep;
+struct kmem_cache *pib_ib_ack_cachep;
 struct kmem_cache *pib_ib_cqe_cachep;
 
 
@@ -150,6 +146,7 @@ static ssize_t show_behavior(struct device *device, struct device_attribute *att
 }
 
 
+#ifdef PIB_HACK_IMM_DATA_LKEY
 static ssize_t show_imm_data_lkey(struct device *device, struct device_attribute *attr,
 			     char *buf)
 {
@@ -158,15 +155,20 @@ static ssize_t show_imm_data_lkey(struct device *device, struct device_attribute
 
 	return sprintf(buf, "0x%08x\n", ibdev->imm_data_lkey);
 }
+#endif
 
 
 static DEVICE_ATTR(behavior,      S_IRUGO, show_behavior,      NULL);
+#ifdef PIB_HACK_IMM_DATA_LKEY
 static DEVICE_ATTR(imm_data_lkey, S_IRUGO, show_imm_data_lkey, NULL);
+#endif
 
 
 static struct device_attribute *pib_class_attributes[] = {
 	&dev_attr_behavior,
+#ifdef PIB_HACK_IMM_DATA_LKEY
 	&dev_attr_imm_data_lkey,
+#endif
 };
 
 
@@ -411,7 +413,9 @@ static void *pib_ib_add(int ib_dev_id)
 	}
 
 	ibdev->behavior      = 0U;
+#ifdef PIB_HACK_IMM_DATA_LKEY
 	ibdev->imm_data_lkey = PIB_IB_IMM_DATA_LKEY;
+#endif
 
 	if (pib_create_kthread(ibdev))
 	    goto err_create_kthread;
@@ -514,6 +518,13 @@ static int pib_kmem_cache_create(void)
 	if (!pib_ib_recv_wqe_cachep)
 		return -1;
 
+	pib_ib_ack_cachep = kmem_cache_create("pib_ib_ack",
+						   sizeof(struct pib_ib_ack) ,0,
+						   0, NULL);
+
+	if (!pib_ib_ack_cachep)
+		return -1;
+
 	pib_ib_cqe_cachep = kmem_cache_create("pib_ib_cqe",
 					      sizeof(struct pib_ib_cqe), 0,
 					      0, NULL);
@@ -548,6 +559,9 @@ static void pib_kmem_cache_destroy(void)
 	if (pib_ib_recv_wqe_cachep)
 		kmem_cache_destroy(pib_ib_recv_wqe_cachep);
 
+	if (pib_ib_ack_cachep)
+		kmem_cache_destroy(pib_ib_ack_cachep);
+
 	if (pib_ib_cqe_cachep)
 		kmem_cache_destroy(pib_ib_cqe_cachep);
 
@@ -558,6 +572,7 @@ static void pib_kmem_cache_destroy(void)
 	pib_ib_srq_cachep = NULL;
 	pib_ib_send_wqe_cachep = NULL;
 	pib_ib_recv_wqe_cachep = NULL;
+	pib_ib_ack_cachep = NULL;
 	pib_ib_cqe_cachep = NULL;
 }
 

@@ -4,6 +4,3 @@
   パッチ取り込み待ち。
 
   http://permalink.gmane.org/gmane.linux.drivers.rdma/17792
-
-  
-

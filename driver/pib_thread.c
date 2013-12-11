@@ -279,24 +279,24 @@ static void process_new_send_wr(struct pib_ib_dev *dev)
 
 		down(&qp->sem);
 
-		if ((qp->state != IB_QPS_RTS) || list_empty(&qp->submitted_swqe_head))
+		if ((qp->state != IB_QPS_RTS) || list_empty(&qp->requester.submitted_swqe_head))
 			goto loop_end;
 
-		send_wqe = list_first_entry(&qp->submitted_swqe_head, struct pib_ib_send_wqe, list);
+		send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_ib_send_wqe, list);
 
 		set_expected_sq_psn(qp, send_wqe);
 
 		list_del_init(&send_wqe->list);
-		qp->nr_submitted_swqe--;
+		qp->requester.nr_submitted_swqe--;
 
-		list_add_tail(&send_wqe->list, &qp->sending_swqe_head);
-		qp->nr_sending_swqe++;
+		list_add_tail(&send_wqe->list, &qp->requester.sending_swqe_head);
+		qp->requester.nr_sending_swqe++;
 
 		send_wqe->processing.list_type = PIB_SWQE_SENDING;
 
 		pib_util_reschedule_qp(qp);
 
-		if (!list_empty(&qp->submitted_swqe_head)) {
+		if (!list_empty(&qp->requester.submitted_swqe_head)) {
 			list_add_tail(&qp->new_send_wr_qp_list, &dev->thread.new_send_wr_qp_head);
 			qp->has_new_send_wr = 1;
 		}
@@ -336,10 +336,11 @@ restart:
 
 	up_write(&dev->rwsem);
 
-	/* Responder: generating RDMA READ acknowledge packets */
+	/* Responder: generating acknowledge packets */
+	if (qp->qp_type == IB_QPT_RC)
+		pib_generate_rc_qp_acknowledge(dev, qp);
 
 	/* Requester: generating request packets */
-
 	if ((qp->state != IB_QPS_RTS) && (qp->state != IB_QPS_SQD))
 		goto done;
 
@@ -347,10 +348,10 @@ restart:
 	 *  Waiting listE の先頭の Send WQE が再送時刻に達していれば
 	 *  waiting list から sending list へ戻して再送信を促す。
 	 */
-	if (list_empty(&qp->waiting_swqe_head))
+	if (list_empty(&qp->requester.waiting_swqe_head))
 		goto first_sending_wsqe;
 
-	send_wqe = list_first_entry(&qp->waiting_swqe_head, struct pib_ib_send_wqe, list);
+	send_wqe = list_first_entry(&qp->requester.waiting_swqe_head, struct pib_ib_send_wqe, list);
 
 	if (time_after(send_wqe->processing.local_ack_time, now))
 		goto first_sending_wsqe;
@@ -359,31 +360,31 @@ restart:
 	send_wqe->processing.local_ack_time = now + PIB_SCHED_TIMEOUT;
 
 	/* waiting list から sending list へ戻す */
-	list_for_each_entry_safe_reverse(send_wqe, next_send_wqe, &qp->waiting_swqe_head, list) {
+	list_for_each_entry_safe_reverse(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		send_wqe->processing.list_type = PIB_SWQE_SENDING;
 		list_del_init(&send_wqe->list);
-		list_add_tail(&send_wqe->list, &qp->sending_swqe_head);
-		qp->nr_waiting_swqe--;
-		qp->nr_sending_swqe++;
+		list_add_tail(&send_wqe->list, &qp->requester.sending_swqe_head);
+		qp->requester.nr_waiting_swqe--;
+		qp->requester.nr_sending_swqe++;
 	}
 
 	/* 送信したパケット数をキャンセルする */
-	list_for_each_entry(send_wqe, &qp->sending_swqe_head, list) {
+	list_for_each_entry(send_wqe, &qp->requester.sending_swqe_head, list) {
 		send_wqe->processing.sent_packets = send_wqe->processing.ack_packets;
 	}
 	    
 first_sending_wsqe:
-	if (list_empty(&qp->sending_swqe_head))
+	if (list_empty(&qp->requester.sending_swqe_head))
 		goto done;
 
-	send_wqe = list_first_entry(&qp->sending_swqe_head, struct pib_ib_send_wqe, list);
+	send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
 
 	/*
 	 *  Sending list の先頭の Send WQE がエラーだが、waiting list が
 	 *  残っている場合、waiting list から空になるまで送信は再開しない。
 	 */
 	if (send_wqe->processing.status != IB_WC_SUCCESS)
-		if (!list_empty(&qp->waiting_swqe_head))
+		if (!list_empty(&qp->requester.waiting_swqe_head))
 			goto done;
 
 	/*
@@ -394,10 +395,10 @@ first_sending_wsqe:
 
 	send_wqe->processing.schedule_time = now;
 
-	while (!list_empty(&qp->sending_swqe_head)) {
+	while (!list_empty(&qp->requester.sending_swqe_head)) {
 		struct pib_ib_send_wqe *send_wqe;
 
-		send_wqe = list_first_entry(&qp->sending_swqe_head, struct pib_ib_send_wqe, list);
+		send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
 
 		ret = process_send_wr(dev, qp, send_wqe);
 			
@@ -414,9 +415,9 @@ first_sending_wsqe:
 
 		case PIB_SWQE_WAITING:
 			list_del_init(&send_wqe->list);
-			qp->nr_sending_swqe--;
-			list_add_tail(&send_wqe->list, &qp->waiting_swqe_head);
-			qp->nr_waiting_swqe++;
+			qp->requester.nr_sending_swqe--;
+			list_add_tail(&send_wqe->list, &qp->requester.waiting_swqe_head);
+			qp->requester.nr_waiting_swqe++;
 			break;
 
 		default:
@@ -515,7 +516,7 @@ completion_error:
 				 status, send_wqe->opcode);
 
 	list_del_init(&send_wqe->list);
-	qp->nr_sending_swqe--;
+	qp->requester.nr_sending_swqe--;
 	send_wqe->processing.list_type = PIB_SWQE_FREE;
 
 	switch (qp->qp_type) {
@@ -671,21 +672,27 @@ void pib_util_reschedule_qp(struct pib_ib_qp *qp)
 	now = jiffies;
 	schedule_time = now + PIB_SCHED_TIMEOUT;
 
+	if ((qp->qp_type == IB_QPT_RC) && pib_is_recv_ok(qp->state))
+		if (!list_empty(&qp->responder.ack_head)) {
+			schedule_time = now;
+			goto skip;
+		}
+
 	if ((qp->state != IB_QPS_RTS) && (qp->state != IB_QPS_SQD))
 		return;
 
-	if (!list_empty(&qp->waiting_swqe_head)) {
-		send_wqe = list_first_entry(&qp->waiting_swqe_head, struct pib_ib_send_wqe, list);
+	if (!list_empty(&qp->requester.waiting_swqe_head)) {
+		send_wqe = list_first_entry(&qp->requester.waiting_swqe_head, struct pib_ib_send_wqe, list);
 
 		if (time_before(send_wqe->processing.local_ack_time, schedule_time))
 			schedule_time = send_wqe->processing.local_ack_time;
 	}
 
-	if (!list_empty(&qp->sending_swqe_head)) {
-		send_wqe = list_first_entry(&qp->sending_swqe_head, struct pib_ib_send_wqe, list);
+	if (!list_empty(&qp->requester.sending_swqe_head)) {
+		send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
 
 		if (send_wqe->processing.status != IB_WC_SUCCESS)
-			if (!list_empty(&qp->waiting_swqe_head))
+			if (!list_empty(&qp->requester.waiting_swqe_head))
 				goto skip;
 
 		if (time_before(send_wqe->processing.schedule_time, schedule_time))
@@ -733,7 +740,8 @@ skip:
 
 	spin_unlock_irqrestore(&dev->schedule.lock, flags);
 
-	set_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags);
+	if (time_before_eq(dev->schedule.wakeup_time, now))
+		set_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags);
 }
 
 

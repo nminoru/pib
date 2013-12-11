@@ -8,6 +8,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/version.h>
 #include <linux/compiler.h>
 #include <linux/completion.h>
 #include <linux/list.h>
@@ -27,8 +28,20 @@
 #include "pib_packet.h"
 
 
-#define debug_printk(fmt, args...) \
-	printk(KERN_ERR fmt, ## args);
+#define PIB_DRIVER_VERSION   "0.06"
+
+/* IB_USER_VERBS_ABI_VERSION */
+#define PIB_IB_UVERBS_ABI_VERSION  (6)
+
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+/*
+ *  Linux kernels less than 3.13 have the bug that ib_uverbs_post_send() in
+ *  uverbs_cmd.c don't set imm_data from ib_uverbs_send_wr to ib_send_wr when 
+ *  sending UD messages.
+ */
+#define PIB_HACK_IMM_DATA_LKEY
+#endif
 
 
 #define PIB_IB_MAX_HCA   (4)
@@ -55,6 +68,9 @@
 #define PIB_IB_IMM_DATA_LKEY          (0xA0B0C0D0)
 
 #define PIB_SCHED_TIMEOUT             (0x3FFFFFFF) /* 1/4 of max value of unsigned long */
+
+#define debug_printk(fmt, args...) \
+	printk(KERN_ERR fmt, ## args);
 
 
 enum pib_behavior {
@@ -90,11 +106,13 @@ enum pib_ib_phys_port_state_{
 	PIB_IB_PHYS_PORT_PHY_TEST = 7
 };
 
+
 enum pib_result_type {
 	PIB_RES_SCCUESS,
 	PIB_RES_IMMEDIATE_RETURN,
 	PIB_RES_WR_FLUSH_ERR
 };
+
 
 enum pib_swqe_list {
 	PIB_SWQE_FREE      = -1,
@@ -103,11 +121,13 @@ enum pib_swqe_list {
 	PIB_SWQE_WAITING
 };
 
+
 enum pib_thread_flag {
 	PIB_THREAD_READY_TO_DATA,
 	PIB_THREAD_SCHEDULE,
 	PIB_THREAD_NEW_SEND_WR
 };
+
 
 enum pib_mr_direction {
 	PIB_MR_COPY_FROM,
@@ -116,6 +136,7 @@ enum pib_mr_direction {
 	PIB_MR_FETCHADD,
 	PIB_MR_CHECK
 };
+
 
 struct pib_dev {
 	struct device           dev;
@@ -160,7 +181,9 @@ struct pib_ib_dev {
 	struct list_head        cq_head;
 
 	unsigned int            behavior;
+#ifdef PIB_HACK_IMM_DATA_LKEY
 	u32                     imm_data_lkey;
+#endif
 
 	struct {
 		struct task_struct     *task;
@@ -248,14 +271,46 @@ struct pib_ib_srq {
 struct pib_ib_rd_atom_slot {
 	u32                     psn;
 	u32                     expected_psn;
-	enum ib_wr_opcode       opcode;
+	int                     OpCode;
 
 	union {
 		struct {
 			u64     vaddress;
 			u32     rkey;
 			u32     dmalen;
-			u32     offset; /* 送信済バイト数 */ 
+		} rdma_read;
+
+		struct {
+			u64     res;
+		} atomic;
+	} data;
+};
+
+
+enum pib_ib_ack_type {
+	PIB_IB_ACK_NORMAL	= 1,
+	PIB_IB_ACK_RMDA_READ,
+	PIB_IB_ACK_ATOMIC
+};
+
+
+struct pib_ib_ack {
+	struct list_head        list;
+
+	enum pib_ib_ack_type	type;
+
+	u32			psn;
+	u32                     expected_psn;
+
+	u32			msn;
+	enum pib_ib_syndrome	syndrome;
+
+	union {
+		struct {
+			u64     vaddress;
+			u32     rkey;
+			u32     size;
+			u32     offset; /* bytes to be transmitted */
 		} rdma_read;
 
 		struct {
@@ -277,48 +332,9 @@ struct pib_ib_qp {
 	struct ib_qp_attr       ib_qp_attr; /* don't use qp_state and cur_qp_state. */ 
 	struct ib_qp_init_attr  ib_qp_init_attr;
 
-	/* requester side */
-	struct {
-		u32             psn; /* sq_psn */
-		u32             expected_psn;
-	} requester;
-
-	/* responder side */
-	struct {
-		u32             psn; /* rq_psn */
-		int             last_opcode;
-		u32             offset;
-
-		struct {
-			u64     vaddr;
-			u32     rkey;
-			u32     dmalen;
-		} rdma_write;
-
-		int             slot_index;
-		int             slot_index_sent;
-		struct pib_ib_rd_atom_slot slots[PIB_IB_MAX_RD_ATOM];
-	} responder;
-
 	struct rb_node          rb_node; /* for dev->qp_table */
 
 	struct semaphore        sem;
-
-	/* list of WRs to be new submitted in SQ but not to be processed. */
-	int                     nr_submitted_swqe;
-	struct list_head        submitted_swqe_head;
-
-	/* list of WRs that QP is processing. */
-	int                     nr_sending_swqe;
-	struct list_head        sending_swqe_head;
-
-	/* list of WRs to be waiting for acknowledge. */
-	int                     nr_waiting_swqe;
-	struct list_head        waiting_swqe_head;
-
-	/* list of WRs to be submitted in RQ. */
-	int                     nr_recv_wqe;
-	struct list_head        recv_wqe_head;
 
 	int                     has_new_send_wr;
 	struct list_head        new_send_wr_qp_list;
@@ -329,6 +345,49 @@ struct pib_ib_qp {
 		unsigned long   tid;     /* order by inserting into scheduler */
 		struct rb_node  rb_node;
 	} schedule;
+
+	/* requester side */
+	struct {
+		u32			psn; /* sq_psn */
+		u32			expected_psn;
+
+		/* list of WRs to be new submitted in SQ but not to be processed. */
+		int                     nr_submitted_swqe;
+		struct list_head        submitted_swqe_head;
+		
+		/* list of WRs that QP is processing. */
+		int                     nr_sending_swqe;
+		struct list_head        sending_swqe_head;
+
+		/* list of WRs to be waiting for acknowledge. */
+		int                     nr_waiting_swqe;
+		struct list_head        waiting_swqe_head;
+
+	} requester;
+
+	/* responder side */
+	struct {
+		u32			psn; /* rq_psn */
+					
+		/* list of WRs to be submitted in RQ. */
+		int                     nr_recv_wqe;
+		struct list_head        recv_wqe_head;
+
+		int			nr_rd_atomic;
+		struct list_head        ack_head;
+
+		int			last_OpCode;
+		u32			offset;
+
+		struct {
+			u64		vaddr;
+			u32		rkey;
+			u32		dmalen;
+		} rdma_write;
+
+		int			slot_index;
+		struct pib_ib_rd_atom_slot slots[PIB_IB_MAX_RD_ATOM];
+	} responder;
 
 	int                     push_rcqe;
 	int                     issue_comm_est; /* set 1 when the async event of COMM_EST is issue */
@@ -424,6 +483,7 @@ extern struct kmem_cache *pib_ib_cq_cachep;
 extern struct kmem_cache *pib_ib_srq_cachep;
 extern struct kmem_cache *pib_ib_send_wqe_cachep;
 extern struct kmem_cache *pib_ib_recv_wqe_cachep;
+extern struct kmem_cache *pib_ib_ack_cachep;
 extern struct kmem_cache *pib_ib_cqe_cachep;
 
 
@@ -560,18 +620,25 @@ extern void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, 
  */
 extern int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
 extern void pib_receive_rc_qp_incoming_message(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth);
+extern void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
 
+/*
+ *  in pib_mad.c
+ */
 extern int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
 			       struct ib_wc *in_wc, struct ib_grh *in_grh,
 			       struct ib_mad *in_mad, struct ib_mad *out_mad);
 
+/*
+ *  in pib_lib.c
+ */
 extern const char *pib_get_qp_type(enum ib_qp_type type);
 extern const char *pib_get_qp_state(enum ib_qp_state state);
 extern const char *pib_get_wc_status(enum ib_wc_status status);
 extern u32 pib_get_maxium_packet_length(enum ib_mtu mtu);
 extern int pib_is_recv_ok(enum ib_qp_state state);
-extern int pib_opcode_is_acknowledge(int opcode);
-extern int pib_opcode_is_in_order_sequence(int opcode, int last_opcode);
+extern int pib_opcode_is_acknowledge(int OpCode);
+extern int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode);
 enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode);
 extern u32 pib_get_num_of_packets(struct pib_ib_qp *qp, u32 length);
 extern u32 pib_get_rnr_nak_time(int timeout);
