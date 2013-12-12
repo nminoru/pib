@@ -188,6 +188,9 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 {
 	int i;
 
+	if (PIB_IB_MAX_PAYLOAD_LEN <= size)
+		return IB_WC_LOC_LEN_ERR;
+
 	for (i=0 ; i<num_sge ; i++) {
 		struct ib_sge sge = sge_array[i];
 		struct pib_ib_mr *mr;
@@ -245,6 +248,9 @@ static enum ib_wc_status
 copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only)
 {
 	struct pib_ib_mr *mr;
+
+	if (PIB_IB_MAX_PAYLOAD_LEN <= size)
+		return IB_WC_LOC_LEN_ERR;
 
 	mr = pd->mr_table[rkey & PIB_IB_MR_INDEX_MASK];
 
@@ -304,6 +310,9 @@ mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap,
 	u64 addr, res;
 	struct ib_umem *umem;
 	struct ib_umem_chunk *chunk;
+
+	if (size == 0)
+		return 0;
 
 	umem = mr->ib_umem;
 

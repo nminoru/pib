@@ -363,6 +363,7 @@ struct pib_ib_qp {
 		int                     nr_waiting_swqe;
 		struct list_head        waiting_swqe_head;
 
+		int			nr_rd_atomic;
 	} requester;
 
 	/* responder side */

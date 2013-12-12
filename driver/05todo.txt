@@ -1,11 +1,11 @@
-- 2^31 の制限のチェック
+- RESET 時に送信した場合の挙動
 
-- kABI サポート
+- RESET 時に受信した場合の挙動
 
-- FENCE
-  - Requester は先行する全ての RDMA Read と Atomic WRs を待つ。
+- CQ overflow
+  - CQ がエラーすると CQE は失われる。
 
-- Requester 側で RDMA READ と Atomic 操作の outstanding 数をチェックする操作。
+- IBV_WC_RESP_TIMEOUT_ERR
 
 - ソケットのバッファサイズを増やす。
 

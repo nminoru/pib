@@ -104,6 +104,15 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	struct pib_packet_rc_request *rc_packet;
 	enum ib_wc_status status;
 
+	/*
+	 *  A work request with the fence attribute set shall block
+	 *  until all prior RDMA READ and Atomic WRs have completed.
+	 *  
+	 */
+	if (send_wqe->send_flags & IB_SEND_FENCE)
+		if (0 < qp->requester.nr_rd_atomic)
+			return -1;
+
 	if (send_wqe->processing.retry_cnt < 0) {
 		status = IB_WC_RETRY_EXC_ERR;
 		goto completion_error;
@@ -206,21 +215,6 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		break;
 
 	case IB_WR_RDMA_READ:
-		if (send_wqe->total_length == 0) {
-			struct ib_wc wc = {
-				.wr_id    = send_wqe->wr_id,
-				.status   = IB_WC_SUCCESS,
-				.opcode   = IB_WC_RDMA_READ,
-				.qp       = &qp->ib_qp,
-			};
-			
-			ret = pib_util_insert_wc_success(qp->send_cq, &wc);
-
-			send_wqe->processing.list_type = PIB_SWQE_FREE;
-
-			return 0;
-		}
-
 		rc_packet->bth.OpCode = IB_OPCODE_RDMA_READ_REQUEST;
 		status = process_RDMA_READ_request(dev, qp, send_wqe, buffer);
 		break;
@@ -291,6 +285,9 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 	u32 packet_length;
 	enum ib_wc_status status;
 
+	if (PIB_IB_MAX_PAYLOAD_LEN <= send_wqe->total_length)
+		return IB_WC_LOC_LEN_ERR;
+
 	rc_packet = (struct pib_packet_rc_request*)buffer;
 	buffer   += sizeof(struct pib_packet_rc_request);
 
@@ -351,6 +348,9 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 	u32 packet_length;
 	u64 remote_addr;
 	u32 dmalen, offset;
+
+	if (PIB_IB_MAX_PAYLOAD_LEN <= send_wqe->total_length)
+		return IB_WC_LOC_LEN_ERR;
 
 	remote_addr = send_wqe->wr.rdma.remote_addr;
 	dmalen      = send_wqe->total_length;
@@ -854,6 +854,11 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 	if (finit && (qp->responder.rdma_write.dmalen != qp->responder.offset + size))
 		goto nak_invalid_request;
 
+	if (PIB_IB_MAX_PAYLOAD_LEN <= qp->responder.rdma_write.dmalen) {
+		status = IB_WC_LOC_LEN_ERR;
+		goto skip;
+	}
+
 	pd = to_ppd(qp->ib_qp.pd);
 
 	down_read(&pd->rwsem);
@@ -877,6 +882,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 	 * completion error on a receive queue.
 	 */
 	if (status != IB_WC_SUCCESS) {
+	skip:		
 		if (with_imm && !pib_ib_get_behavior(dev, PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR))
 			goto completion_error;
 		else
@@ -1047,10 +1053,12 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 	rkey        = reth->R_Key;
 	dmalen      = reth->DMALen;
 
-	/* Pre-check */
+	/* Check */
+	if (PIB_IB_MAX_PAYLOAD_LEN <= dmalen)
+		goto legth_error_or_too_many_rdma_read;
 
 	if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)
-		goto too_many_rdma_read;
+		goto legth_error_or_too_many_rdma_read;
 
 	pd = to_ppd(qp->ib_qp.pd);
 
@@ -1072,7 +1080,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 		struct pib_ib_rd_atom_slot overwrite_slot;
 
 		if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)
-			goto too_many_rdma_read;
+			goto legth_error_or_too_many_rdma_read;
 
 		overwrite_slot = qp->responder.slots[((unsigned int)(qp->responder.slot_index - qp->ib_qp_attr.max_dest_rd_atomic)) % PIB_IB_MAX_RD_ATOM];
 
@@ -1118,7 +1126,7 @@ nak_invalid_request:
 
 	return -1;
 
-too_many_rdma_read:
+legth_error_or_too_many_rdma_read:
 	push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
 	insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 
@@ -1210,9 +1218,6 @@ void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp
 	if (!pib_is_recv_ok(qp->state))
 		return;
 
-	if (list_empty(&qp->responder.ack_head))
-		return;
-
 	port_num = qp->ib_qp_attr.port_num;
 	dlid     = qp->ib_qp_attr.ah_attr.dlid;
 
@@ -1223,35 +1228,58 @@ void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp
 		return; /* @todo */
 	}
 
-	list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
+restart:
+	if (list_empty(&qp->responder.ack_head))
+		return;
 
-		switch (ack->type) {
+	/* IBA Spec. Vol.1 9.7.5.1.2. Coalesced Acknowledge Messages */
+	ack = list_first_entry(&qp->responder.ack_head, struct pib_ib_ack, list);
 
-		case PIB_IB_ACK_ATOMIC:
-			generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, ack, sockaddr);
-			qp->responder.nr_rd_atomic--;
-			break;
+	if (ack->type == PIB_IB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
+		struct pib_ib_ack ack_tmp = *ack;
 
-		case PIB_IB_ACK_NORMAL:
-			generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, ack, sockaddr);
-			break;
-
-		case PIB_IB_ACK_RMDA_READ:
-			do {
-				generate_RDMA_READ_response(dev, port_num, qp, ack, sockaddr);
-			} while ((ack->data.rdma_read.offset < ack->data.rdma_read.size) &&
-				 (dev->thread.flags & PIB_THREAD_READY_TO_DATA) == 0);
-
-			qp->responder.nr_rd_atomic--;
-			break;
-
-		default:
-			BUG();
+		list_for_each_entry_safe(ack, ack_next, &qp->responder.ack_head, list) {
+			if (ack->type == PIB_IB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
+				list_del_init(&ack->list);
+				kmem_cache_free(pib_ib_ack_cachep, ack);
+			} else
+				break;
 		}
+		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, &ack_tmp, sockaddr);
 
-		list_del_init(&ack->list);
-		kmem_cache_free(pib_ib_ack_cachep, ack);
+		goto restart;
 	}
+
+	/* Other acknowledges */
+
+	switch (ack->type) {
+
+	case PIB_IB_ACK_ATOMIC:
+		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, ack, sockaddr);
+		qp->responder.nr_rd_atomic--;
+		break;
+
+	case PIB_IB_ACK_NORMAL:
+		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, ack, sockaddr);
+		break;
+
+	case PIB_IB_ACK_RMDA_READ:
+		do {
+			generate_RDMA_READ_response(dev, port_num, qp, ack, sockaddr);
+		} while ((ack->data.rdma_read.offset < ack->data.rdma_read.size) &&
+			 (dev->thread.flags & PIB_THREAD_READY_TO_DATA) == 0);
+
+		qp->responder.nr_rd_atomic--;
+		break;
+
+	default:
+		BUG();
+	}
+
+	list_del_init(&ack->list);
+	kmem_cache_free(pib_ib_ack_cachep, ack);
+
+	goto restart;
 }
 
 
@@ -1424,7 +1452,8 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 	psn = bth->PSN;
 
 	if (bth->OpCode == IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE)
-		return receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
+		/* RDMA READ response Middle packets have no AETH. */
+		goto switch_OpCode;
 
 	if (size < sizeof(struct pib_packet_aeth))
 		/* @todo これはエラーにとらないでいいか？ */
@@ -1481,6 +1510,7 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 		return -1;
 	}
 
+switch_OpCode:
 	switch (bth->OpCode) {
 
 	case IB_OPCODE_ACKNOWLEDGE:
@@ -1490,6 +1520,10 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 	case IB_OPCODE_RDMA_READ_RESPONSE_FIRST:
 	case IB_OPCODE_RDMA_READ_RESPONSE_LAST:
 	case IB_OPCODE_RDMA_READ_RESPONSE_ONLY:
+		ret = receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
+		break;
+
+	case IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE:
 		ret = receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
 		break;
 
@@ -1577,7 +1611,6 @@ set_send_wqe_to_error(struct pib_ib_qp *qp, u32 psn, enum ib_wc_status status)
 
 
 enum {
-	RET_BAD_RESPONSE = -2,
 	RET_ERROR        = -1,
 	RET_CONTINUE     =  0,
 	RET_STOP         =  1
@@ -1589,14 +1622,11 @@ receive_ACK_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, 
 {
 	struct pib_ib_send_wqe *send_wqe, *next_send_wqe;
 
-restart:
 	/* process_acknowledge */
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 
 		switch (process_acknowledge(dev, qp, send_wqe, psn, &qp->requester.nr_waiting_swqe)) {
-		case RET_BAD_RESPONSE:
-			goto restart;
 
 		case RET_ERROR:
 			list_del_init(&send_wqe->list);
@@ -1604,6 +1634,9 @@ restart:
 			goto completion_error;
 			
 		case RET_CONTINUE:
+			list_del_init(&send_wqe->list);
+			qp->requester.nr_waiting_swqe--;
+			kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
 			break;
 
 		case RET_STOP:
@@ -1615,15 +1648,15 @@ restart:
 
 		switch (process_acknowledge(dev, qp, send_wqe, psn, &qp->requester.nr_sending_swqe)) {
 
-		case RET_BAD_RESPONSE:
-			goto restart;
-
 		case RET_ERROR:
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_sending_swqe--;
 			goto completion_error;
 			
 		case RET_CONTINUE:
+			list_del_init(&send_wqe->list);
+			qp->requester.nr_sending_swqe--;
+			kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
 			break;
 
 		case RET_STOP:
@@ -1659,10 +1692,8 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 	u32 no_packets;
 	s32 psn_diff;
 
-	if (send_wqe->processing.status != IB_WC_SUCCESS) {
-		(*nr_swqe_p)--;
+	if (send_wqe->processing.status != IB_WC_SUCCESS)
 		return RET_ERROR;
-	}
 
 	psn_diff = get_psn_diff(psn, send_wqe->processing.based_psn);
 
@@ -1682,9 +1713,7 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 	case IB_WR_ATOMIC_CMP_AND_SWP:
 	case IB_WR_ATOMIC_FETCH_AND_ADD:
 		send_wqe->processing.status = IB_WC_BAD_RESP_ERR;
-		list_del_init(&send_wqe->list);
-		(*nr_swqe_p)--;
-		return RET_BAD_RESPONSE;
+		return RET_ERROR;
 
 	default:
 		break;
@@ -1712,12 +1741,6 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 	}
 
 	qp->requester.psn = send_wqe->processing.expected_psn;
-
-	(*nr_swqe_p)--;
-
-	list_del_init(&send_wqe->list);
-
-	kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
 
 	return RET_CONTINUE;
 }
@@ -1784,6 +1807,9 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 
 		ret = pib_util_insert_wc_success(qp->send_cq, &wc);
 	}
+
+	qp->requester.nr_rd_atomic--;
+	BUG_ON(qp->requester.nr_rd_atomic < 0);
 
 	qp->requester.psn = send_wqe->processing.expected_psn;
 
@@ -1861,6 +1887,9 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 
 		ret = pib_util_insert_wc_success(qp->send_cq, &wc);
 	}
+
+	qp->requester.nr_rd_atomic--;
+	BUG_ON(qp->requester.nr_rd_atomic < 0);
 
 	qp->requester.psn = send_wqe->processing.expected_psn;
 

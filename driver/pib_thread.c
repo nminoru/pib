@@ -388,6 +388,14 @@ first_sending_wsqe:
 			goto done;
 
 	/*
+	 *  IB_SEND_FENCE フラグがある場合、先行する RDMA READ & Atomic 操作の
+	 *  完了を待つ。
+	 */
+	if (send_wqe->send_flags & IB_SEND_FENCE)
+		if (0 < qp->requester.nr_rd_atomic)
+			goto done;
+
+	/*
 	 *  RNR NAK タイムアウト時刻の判定
 	 */
 	if (time_after(send_wqe->processing.schedule_time, now))
@@ -693,6 +701,10 @@ void pib_util_reschedule_qp(struct pib_ib_qp *qp)
 
 		if (send_wqe->processing.status != IB_WC_SUCCESS)
 			if (!list_empty(&qp->requester.waiting_swqe_head))
+				goto skip;
+
+		if (send_wqe->send_flags & IB_SEND_FENCE)
+			if (0 < qp->requester.nr_rd_atomic)
 				goto skip;
 
 		if (time_before(send_wqe->processing.schedule_time, schedule_time))

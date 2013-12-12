@@ -10,6 +10,7 @@
 ・SDP を動かす。
 ・XRC
 ・IPv6 対応
+・Kernel Update Package 化
 
 ○ Verfication
 

@@ -106,6 +106,8 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 	}
 	qp->requester.nr_submitted_swqe = 0;
 
+	qp->requester.nr_rd_atomic = 0;
+
 	if (send_only)
 		return;
 
@@ -157,6 +159,8 @@ static void reset_qp(struct pib_ib_qp *qp)
 	}
 	qp->requester.nr_submitted_swqe = 0;
 
+	qp->requester.nr_rd_atomic = 0;
+
 	list_for_each_entry_safe(recv_wqe, next_recv_wqe, &qp->responder.recv_wqe_head, list) {
 		list_del_init(&recv_wqe->list);
 		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
@@ -183,10 +187,12 @@ static void reset_qp_attr(struct pib_ib_qp *qp)
 {
 	qp->requester.psn	   = 0;
 	qp->requester.expected_psn = 0;
+	qp->requester.nr_rd_atomic = 0;
 
 	qp->responder.psn	   = 0;
 	qp->responder.last_OpCode  = IB_OPCODE_SEND_ONLY; /* dummy opcode */
 	qp->responder.offset       = 0;
+	qp->responder.nr_rd_atomic = 0;
 
 	memset(&qp->responder.slots, 0, sizeof(qp->responder.slots));
 
@@ -739,12 +745,27 @@ next_wr:
 		switch (ibwr->opcode) {
 		case IB_WR_RDMA_WRITE:
 		case IB_WR_RDMA_WRITE_WITH_IMM:
-		case IB_WR_RDMA_READ:
 			send_wqe->wr.rdma.remote_addr   = ibwr->wr.rdma.remote_addr;
 			send_wqe->wr.rdma.rkey          = ibwr->wr.rdma.rkey;
 			break;
+
+		case IB_WR_RDMA_READ:
+			if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic) {
+				res = PIB_RES_IMMEDIATE_RETURN;
+				goto skip;
+			}
+			qp->requester.nr_rd_atomic++;
+			send_wqe->wr.rdma.remote_addr   = ibwr->wr.rdma.remote_addr;
+			send_wqe->wr.rdma.rkey          = ibwr->wr.rdma.rkey;
+			break;
+
 		case IB_WR_ATOMIC_CMP_AND_SWP:
 		case IB_WR_ATOMIC_FETCH_AND_ADD:
+			if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic) {
+				res = PIB_RES_IMMEDIATE_RETURN;
+				goto skip;
+			}
+			qp->requester.nr_rd_atomic++;
 			send_wqe->wr.atomic.remote_addr = ibwr->wr.atomic.remote_addr;
 			send_wqe->wr.atomic.compare_add = ibwr->wr.atomic.compare_add;
 			send_wqe->wr.atomic.swap        = ibwr->wr.atomic.swap;
