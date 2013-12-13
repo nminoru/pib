@@ -35,6 +35,7 @@ struct kmem_cache *pib_ib_ack_cachep;
 struct kmem_cache *pib_ib_cqe_cachep;
 
 
+static u64 hca_guid_base;
 static struct pib_ib_dev *ibdev[PIB_IB_MAX_HCA];
 
 static unsigned int pib_num_hca = 1;
@@ -178,7 +179,7 @@ static void *pib_ib_add(int ib_dev_id)
 	struct pib_ib_dev *ibdev;
 	struct ib_device_attr ib_dev_attr = {
 		.fw_ver              = 0x00000000100010001ULL, /* 1.1.1 */
-		.sys_image_guid      = 0UL,
+		.sys_image_guid      = cpu_to_be64(hca_guid_base | 0x10ULL),
 		.max_mr_size         = 0xffffffffffffffffULL,
 		.page_size_cap       = 0xfffffe00UL,
 		.vendor_id           = 1U,
@@ -277,6 +278,7 @@ static void *pib_ib_add(int ib_dev_id)
 
 	ibdev->ib_dev.owner		= THIS_MODULE;
 	ibdev->ib_dev.node_type		= RDMA_NODE_IB_CA;
+	ibdev->ib_dev.node_guid         = cpu_to_be64(hca_guid_base | 0x20ULL);
 	ibdev->ib_dev.local_dma_lkey	= 0;
 	ibdev->ib_dev.phys_port_cnt     = pib_phys_port_cnt;
 	ibdev->ib_dev.num_comp_vectors	= num_possible_cpus();
@@ -407,9 +409,10 @@ static void *pib_ib_add(int ib_dev_id)
 		if (!ibdev->ports[i].lid_table)
 			goto err_ld_table;
 
-		ibdev->ports[i].gid[0].global.subnet_prefix = cpu_to_be64(0xCafeBabe0000ULL);
+		ibdev->ports[i].gid[0].global.subnet_prefix =
+			cpu_to_be64(hca_guid_base);
 		ibdev->ports[i].gid[0].global.interface_id  =
-			cpu_to_be64((0xDeadBeafULL << 32) | (ib_dev_id << 8) | i);
+			cpu_to_be64(hca_guid_base | ((ib_dev_id + 3) << 8) | i);
 	}
 
 	ibdev->behavior      = 0U;
@@ -577,11 +580,41 @@ static void pib_kmem_cache_destroy(void)
 }
 
 
+/*
+ *  pib's 64-bits GUID is derived from the 48-bits MAC address of the first
+ *  effective Ethernet NIC on this host.
+ */
+static void get_hca_guid_base(void)
+{
+	int i;
+	struct net_device *dev;
+
+	rtnl_lock();
+	for_each_netdev(&init_net, dev) {
+		if (dev->flags & IFF_LOOPBACK)
+			continue;
+
+		if (!dev->dev_addr)
+			continue;
+
+		for (i=0 ; i<ETH_ALEN ; i++) {
+			hca_guid_base |= (u8)dev->dev_addr[i];
+			hca_guid_base <<= 8;
+		}
+		
+		hca_guid_base <<= (sizeof(hca_guid_base) - ETH_ALEN - 1) * 8;
+		break;
+	}
+	rtnl_unlock();
+
+	if (hca_guid_base == 0)
+		hca_guid_base = 0xCafeBabe0000ULL;
+}
+
+
 static int __init pib_ib_init(void)
 {
 	int i, j, err = 0;
-
-	debug_printk("sizeof(struct pib_ib_dev) = %zu", sizeof(struct pib_ib_dev));
 
 	if ((pib_num_hca < 1) || (PIB_IB_MAX_HCA < pib_num_hca)) {
 		printk(KERN_ERR "pib_num_hca: %u\n", pib_num_hca);
@@ -592,6 +625,8 @@ static int __init pib_ib_init(void)
 		printk(KERN_ERR "phys_port_cnt: %u\n", pib_phys_port_cnt);
 		return -EINVAL;
 	}
+
+	get_hca_guid_base();
 
 	if (pib_kmem_cache_create()) {
 		pib_kmem_cache_destroy();
