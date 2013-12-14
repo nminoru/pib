@@ -147,7 +147,7 @@ enum {
 };
 
 
-static const int attr_opcode[] = {
+static const int attr_OpCode[] = {
 	[IB_OPCODE_SEND_FIRST                    ] = PIB_STARTING_OPCODE,
 	[IB_OPCODE_SEND_MIDDLE                   ] = PIB_MIDDLE_OPCODE,
 	[IB_OPCODE_SEND_LAST                     ] = PIB_ENDING_OPCODE,
@@ -241,7 +241,7 @@ int pib_is_recv_ok(enum ib_qp_state state)
 
 int pib_opcode_is_acknowledge(int OpCode)
 {
-	return (attr_opcode[OpCode] & PIB_ACKNOWLEDGE_OPCODE) == PIB_ACKNOWLEDGE_OPCODE;
+	return (attr_OpCode[OpCode & 0xFF] & PIB_ACKNOWLEDGE_OPCODE) == PIB_ACKNOWLEDGE_OPCODE;
 }
 
 enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode opcode)
@@ -286,13 +286,16 @@ int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 {
 	int cur_OpCode_attr;
 
-	cur_OpCode_attr = attr_opcode[OpCode] ;
+	OpCode      &= 0xFF;
+	last_OpCode &= 0xFF;
+
+	cur_OpCode_attr = attr_OpCode[OpCode] ;
 
 	if ((cur_OpCode_attr & (PIB_STARTING_OPCODE | PIB_MIDDLE_OPCODE |PIB_ENDING_OPCODE)) == 0)
 		return 0;
 
 	if (cur_OpCode_attr & PIB_STARTING_OPCODE)
-		return (attr_opcode[last_OpCode] & PIB_ENDING_OPCODE);
+		return (attr_OpCode[last_OpCode] & PIB_ENDING_OPCODE);
 
 	switch (OpCode) {
 

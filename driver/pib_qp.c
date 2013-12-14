@@ -190,7 +190,8 @@ static void reset_qp_attr(struct pib_ib_qp *qp)
 	qp->requester.nr_rd_atomic = 0;
 
 	qp->responder.psn	   = 0;
-	qp->responder.last_OpCode  = IB_OPCODE_SEND_ONLY; /* dummy opcode */
+	qp->responder.last_OpCode  = (qp->qp_type == IB_QPT_RC) ?
+		IB_OPCODE_RC_SEND_ONLY : IB_OPCODE_UD_SEND_ONLY; /* dummy opcode */
 	qp->responder.offset       = 0;
 	qp->responder.nr_rd_atomic = 0;
 

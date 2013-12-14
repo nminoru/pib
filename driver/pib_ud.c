@@ -108,7 +108,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 
 	memset(ud_packet, 0, sizeof(*ud_packet));
 
-	ud_packet->bth.OpCode = with_imm ? IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE : IB_OPCODE_SEND_ONLY;
+	ud_packet->bth.OpCode = with_imm ? IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE : IB_OPCODE_UD_SEND_ONLY;
 
 	ud_packet->lrh.VL     = 0;
 	ud_packet->lrh.LVer   = 0;
@@ -226,8 +226,8 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 
 	switch (bth->OpCode) {
 
-	case IB_OPCODE_SEND_ONLY:
-	case IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE:
+	case IB_OPCODE_UD_SEND_ONLY:
+	case IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE:
 		break;
 		
 	default:
@@ -255,7 +255,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 		goto silently_drop;
 
 	/* Analyze Immediate Extended Transport Header */
-	if (bth->OpCode == IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE) {
+	if (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) {
 		if (size < 4)
 			goto silently_drop;
 
@@ -308,7 +308,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 			.ex.imm_data = imm_data,
 			.src_qp      = deth->SrcQP,
 			.slid        = lrh->SLID,
-			.wc_flags    = (bth->OpCode == IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE) ? IB_WC_WITH_IMM : 0,
+			.wc_flags    = (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) ? IB_WC_WITH_IMM : 0,
 		};
 
 		int ret;

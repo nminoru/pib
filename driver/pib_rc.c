@@ -159,54 +159,54 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 
 	case IB_WR_SEND:
 		if (send_wqe->processing.all_packets == 1)
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_ONLY;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_ONLY;
 		else if (send_wqe->processing.sent_packets == 0)
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_FIRST;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_FIRST;
 		else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1)
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_LAST;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_LAST;
 		else
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_MIDDLE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_MIDDLE;
 		goto send_or_rdma_write;
 
 	case IB_WR_SEND_WITH_IMM:
 		if (send_wqe->processing.all_packets == 1) {
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE;
 			with_imm = 1;
 		} else if (send_wqe->processing.sent_packets == 0) {
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_FIRST;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_FIRST;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_LAST_WITH_IMMEDIATE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE;
 			with_imm = 1;
 		} else
-			rc_packet->bth.OpCode = IB_OPCODE_SEND_MIDDLE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_SEND_MIDDLE;
 		goto send_or_rdma_write;
 
 	case IB_WR_RDMA_WRITE:
 		if (send_wqe->processing.all_packets == 1) {
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_ONLY;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_ONLY;
 			with_reth = 1;
 		} else if (send_wqe->processing.sent_packets == 0) {
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_FIRST;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_FIRST;
 			with_reth = 1;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1)
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_LAST;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_LAST;
 		else
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_MIDDLE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_MIDDLE;
 		goto send_or_rdma_write;
 
 	case IB_WR_RDMA_WRITE_WITH_IMM:
 		if (send_wqe->processing.all_packets == 1) {
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_ONLY_WITH_IMMEDIATE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE;
 			with_reth = 1;
 			with_imm  = 1;
 		} else if (send_wqe->processing.sent_packets == 0) {
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_FIRST;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_FIRST;
 			with_reth = 1;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_LAST_WITH_IMMEDIATE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE;
 			with_imm  = 1;
 		} else
-			rc_packet->bth.OpCode = IB_OPCODE_RDMA_WRITE_MIDDLE;
+			rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_WRITE_MIDDLE;
 
 		goto send_or_rdma_write;
 
@@ -215,17 +215,17 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		break;
 
 	case IB_WR_RDMA_READ:
-		rc_packet->bth.OpCode = IB_OPCODE_RDMA_READ_REQUEST;
+		rc_packet->bth.OpCode = IB_OPCODE_RC_RDMA_READ_REQUEST;
 		status = process_RDMA_READ_request(dev, qp, send_wqe, buffer);
 		break;
 
 	case IB_WR_ATOMIC_CMP_AND_SWP:
-		rc_packet->bth.OpCode = IB_OPCODE_COMPARE_SWAP;
+		rc_packet->bth.OpCode = IB_OPCODE_RC_COMPARE_SWAP;
 		status = process_Atomic_request(dev, qp, send_wqe, buffer);
 		break;
 
 	case IB_WR_ATOMIC_FETCH_AND_ADD:
-		rc_packet->bth.OpCode = IB_OPCODE_FETCH_ADD;
+		rc_packet->bth.OpCode = IB_OPCODE_RC_FETCH_ADD;
 		status = process_Atomic_request(dev, qp, send_wqe, buffer);
 		break;
 
@@ -490,9 +490,9 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 		struct pib_ib_rd_atom_slot slot;
 
 		switch (OpCode) {
-		case IB_OPCODE_RDMA_READ_REQUEST:
-		case IB_OPCODE_COMPARE_SWAP:
-		case IB_OPCODE_FETCH_ADD:
+		case IB_OPCODE_RC_RDMA_READ_REQUEST:
+		case IB_OPCODE_RC_COMPARE_SWAP:
+		case IB_OPCODE_RC_FETCH_ADD:
 			for (i=1 ; i <= qp->ib_qp_attr.max_dest_rd_atomic ; i++) {
 				slot = qp->responder.slots[((unsigned int)(qp->responder.slot_index - i)) % PIB_IB_MAX_RD_ATOM];
 
@@ -501,7 +501,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 				    (get_psn_diff(psn, slot.expected_psn) >=  0))
 					continue;
 
-				if (OpCode == IB_OPCODE_RDMA_READ_REQUEST)
+				if (OpCode == IB_OPCODE_RC_RDMA_READ_REQUEST)
 					receive_RDMA_READ_request(dev, port_num, psn, qp, buffer, size,
 								   0, i);
 				else
@@ -535,34 +535,34 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 
 	switch (OpCode) {
 
-	case IB_OPCODE_SEND_FIRST:
-	case IB_OPCODE_SEND_MIDDLE:
-	case IB_OPCODE_SEND_LAST:
-	case IB_OPCODE_SEND_ONLY:
-	case IB_OPCODE_SEND_LAST_WITH_IMMEDIATE:
-	case IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_SEND_FIRST:
+	case IB_OPCODE_RC_SEND_MIDDLE:
+	case IB_OPCODE_RC_SEND_LAST:
+	case IB_OPCODE_RC_SEND_ONLY:
+	case IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE:
 		ret = receive_SEND_request(dev, port_num, psn, OpCode, qp, buffer, size, lrh);
 		break;
 
-	case IB_OPCODE_RDMA_WRITE_FIRST:
-	case IB_OPCODE_RDMA_WRITE_MIDDLE:
-	case IB_OPCODE_RDMA_WRITE_LAST:
-	case IB_OPCODE_RDMA_WRITE_LAST_WITH_IMMEDIATE:
-	case IB_OPCODE_RDMA_WRITE_ONLY:
-	case IB_OPCODE_RDMA_WRITE_ONLY_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_RDMA_WRITE_FIRST:
+	case IB_OPCODE_RC_RDMA_WRITE_MIDDLE:
+	case IB_OPCODE_RC_RDMA_WRITE_LAST:
+	case IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_RDMA_WRITE_ONLY:
+	case IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE:
 		ret = receive_RDMA_WRITE_request(dev, port_num, psn, OpCode, qp, buffer, size, lrh);
 		break;
 
-	case IB_OPCODE_RDMA_READ_REQUEST:
+	case IB_OPCODE_RC_RDMA_READ_REQUEST:
 		ret = receive_RDMA_READ_request(dev, port_num, psn, qp, buffer, size, 1, 0 /* ignore */);
 		break;
 
-	case IB_OPCODE_COMPARE_SWAP:
-		ret = receive_Atomic_request(dev, port_num, psn, IB_OPCODE_COMPARE_SWAP, qp, buffer, size);
+	case IB_OPCODE_RC_COMPARE_SWAP:
+		ret = receive_Atomic_request(dev, port_num, psn, IB_OPCODE_RC_COMPARE_SWAP, qp, buffer, size);
 		break;
 
-	case IB_OPCODE_FETCH_ADD:
-		ret = receive_Atomic_request(dev, port_num, psn, IB_OPCODE_FETCH_ADD, qp, buffer, size);
+	case IB_OPCODE_RC_FETCH_ADD:
+		ret = receive_Atomic_request(dev, port_num, psn, IB_OPCODE_RC_FETCH_ADD, qp, buffer, size);
 		break;
 
 	default:
@@ -593,34 +593,34 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 
 	switch (OpCode) {
 
-	case IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE:
 		with_imm = 1;
 		/* pass through */
 
-	case IB_OPCODE_SEND_ONLY:
+	case IB_OPCODE_RC_SEND_ONLY:
 		init  = 1;
 		finit = 1;
 		min   = 0;
 		max   = pmtu;
 		break;
 
-	case IB_OPCODE_SEND_FIRST:
+	case IB_OPCODE_RC_SEND_FIRST:
 		init  = 1;
 		min   = pmtu;
 		max   = pmtu;
 		break;
 
-	case IB_OPCODE_SEND_LAST_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE:
 		with_imm = 1;
 		/* pass through */
 
-	case IB_OPCODE_SEND_LAST:
+	case IB_OPCODE_RC_SEND_LAST:
 		finit = 1;
 		min   = 1;
 		max   = pmtu;
 		break;
 
-	case IB_OPCODE_SEND_MIDDLE:
+	case IB_OPCODE_RC_SEND_MIDDLE:
 		min   = pmtu;
 		max   = pmtu;
 		break;
@@ -765,11 +765,11 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 
 	switch (OpCode) {
 
-	case IB_OPCODE_RDMA_WRITE_ONLY_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE:
 		with_imm = 1;
 		/* pass through */
 
-	case IB_OPCODE_RDMA_WRITE_ONLY:
+	case IB_OPCODE_RC_RDMA_WRITE_ONLY:
 		with_reth = 1;
 		init  = 1;
 		finit = 1;
@@ -777,24 +777,24 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 		max   = pmtu;
 		break;
 
-	case IB_OPCODE_RDMA_WRITE_FIRST:
+	case IB_OPCODE_RC_RDMA_WRITE_FIRST:
 		with_reth = 1;
 		init  = 1;
 		min   = pmtu;
 		max   = pmtu;
 		break;
 
-	case IB_OPCODE_RDMA_WRITE_LAST_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE:
 		with_imm  = 1;
 		/* pass through */
 
-	case IB_OPCODE_RDMA_WRITE_LAST:
+	case IB_OPCODE_RC_RDMA_WRITE_LAST:
 		finit = 1;
 		min   = 1;
 		max   = pmtu;
 		break;
 
-	case IB_OPCODE_RDMA_WRITE_MIDDLE:
+	case IB_OPCODE_RC_RDMA_WRITE_MIDDLE:
 		min   = pmtu;
 		max   = pmtu;
 		break;
@@ -1084,7 +1084,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 
 		overwrite_slot = qp->responder.slots[((unsigned int)(qp->responder.slot_index - qp->ib_qp_attr.max_dest_rd_atomic)) % PIB_IB_MAX_RD_ATOM];
 
-		slot.OpCode                  = IB_OPCODE_RDMA_READ_REQUEST;
+		slot.OpCode                  = IB_OPCODE_RC_RDMA_READ_REQUEST;
 		slot.psn                     = qp->responder.psn;
 		slot.expected_psn            = qp->responder.psn + num_packets;
 		slot.data.rdma_read.vaddress = remote_addr;
@@ -1292,11 +1292,11 @@ generate_Normal_or_Atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struc
 
 	if (ack->type == PIB_IB_ACK_NORMAL)
 		size = pack_acknowledge_packet(dev, port_num, qp,
-					       IB_OPCODE_ACKNOWLEDGE, ack->psn,
+					       IB_OPCODE_RC_ACKNOWLEDGE, ack->psn,
 					       1, ack->syndrome, 0, 0);
 	else
 		size = pack_acknowledge_packet(dev, port_num, qp,
-					       IB_OPCODE_ATOMIC_ACKNOWLEDGE, ack->psn,
+					       IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE, ack->psn,
 					       1, PIB_IB_ACK_CODE, 1, ack->data.atomic.res);
 
 	memset(&msghdr, 0, sizeof(msghdr));
@@ -1332,14 +1332,14 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 	psn_offset = ack->data.rdma_read.offset / 128U >> qp->ib_qp_attr.path_mtu;
 
 	if (ack->expected_psn - ack->psn == 1)
-		OpCode = IB_OPCODE_RDMA_READ_RESPONSE_ONLY;
+		OpCode = IB_OPCODE_RC_RDMA_READ_RESPONSE_ONLY;
 	else if (psn_offset == 0)
-		OpCode = IB_OPCODE_RDMA_READ_RESPONSE_FIRST;
+		OpCode = IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST;
 	else if (ack->expected_psn > ack->psn + psn_offset + 1) {
-		OpCode = IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE;
+		OpCode = IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE;
 		with_aeth = 0;
 	} else 
-		OpCode = IB_OPCODE_RDMA_READ_RESPONSE_LAST;
+		OpCode = IB_OPCODE_RC_RDMA_READ_RESPONSE_LAST;
 
 	/* ここからパケット送信 */
 
@@ -1451,7 +1451,7 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 	/* response's PSN */
 	psn = bth->PSN;
 
-	if (bth->OpCode == IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE)
+	if (bth->OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE)
 		/* RDMA READ response Middle packets have no AETH. */
 		goto switch_OpCode;
 
@@ -1513,21 +1513,21 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 switch_OpCode:
 	switch (bth->OpCode) {
 
-	case IB_OPCODE_ACKNOWLEDGE:
+	case IB_OPCODE_RC_ACKNOWLEDGE:
 		ret = receive_ACK_response(dev, port_num, qp, psn);
 		break;
 
-	case IB_OPCODE_RDMA_READ_RESPONSE_FIRST:
-	case IB_OPCODE_RDMA_READ_RESPONSE_LAST:
-	case IB_OPCODE_RDMA_READ_RESPONSE_ONLY:
+	case IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST:
+	case IB_OPCODE_RC_RDMA_READ_RESPONSE_LAST:
+	case IB_OPCODE_RC_RDMA_READ_RESPONSE_ONLY:
 		ret = receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
 		break;
 
-	case IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE:
+	case IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE:
 		ret = receive_RDMA_READ_response(dev, port_num, qp, psn, buffer, size);
 		break;
 
-	case IB_OPCODE_ATOMIC_ACKNOWLEDGE:
+	case IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE:
 		ret =receive_Atomic_response(dev, port_num, qp, psn, buffer, size);
 		break;
 
