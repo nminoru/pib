@@ -115,18 +115,62 @@ static int pib_ib_query_pkey(struct ib_device *ibdev, u8 port_num, u16 index, u1
 static int pib_ib_modify_device(struct ib_device *ibdev, int mask,
 				struct ib_device_modify *props)
 {
-	/* @todo */
-	debug_printk("pib_ib_modify_device\n");
-	return -ENOSYS;
+	struct pib_ib_dev *dev;
+
+	debug_printk("pib_ib_modify_device: mask=%x\n", mask);
+
+	if (mask & ~(IB_DEVICE_MODIFY_SYS_IMAGE_GUID|IB_DEVICE_MODIFY_NODE_DESC))
+		return -EOPNOTSUPP;
+
+	dev = to_pdev(ibdev);
+
+	down_write(&dev->rwsem);
+
+	if (mask & IB_DEVICE_MODIFY_NODE_DESC)
+		/* @todo ポート毎の処理 (c.f. qib_node_desc_chg) */
+		memcpy(dev->ib_dev.node_desc, props->node_desc, sizeof(props->node_desc));
+
+	if (mask & IB_DEVICE_MODIFY_SYS_IMAGE_GUID)
+		/* @todo ポート毎の処理 (c.f. qib_sys_guid_chg) */
+		dev->ib_dev_attr.sys_image_guid = props->sys_image_guid;
+
+	up_write(&dev->rwsem);
+
+	return 0;
 }
 
 
-static int pib_ib_modify_port(struct ib_device *ibdev, u8 port, int mask,
+static int pib_ib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 			      struct ib_port_modify *props)
 {
-	/* @todo */
-	debug_printk("pib_ib_modify_port\n");
-	return -ENOSYS;
+	struct pib_ib_dev *dev;
+
+	debug_printk("pib_ib_modify_port: port=%u, mask=%x,%x,%x\n", port_num, mask, props->set_port_cap_mask, props->clr_port_cap_mask);
+
+	if (mask & ~(IB_PORT_SHUTDOWN|IB_PORT_INIT_TYPE|IB_PORT_RESET_QKEY_CNTR))
+		return -EOPNOTSUPP;
+
+	dev = to_pdev(ibdev);
+
+	down_write(&dev->rwsem);
+
+	if (mask & IB_PORT_INIT_TYPE)
+		debug_printk("pib_ib_modify_port: init type\n");
+
+	if (mask & IB_PORT_SHUTDOWN)
+		debug_printk("pib_ib_modify_port: port shutdown\n");
+
+	if (mask & IB_PORT_RESET_QKEY_CNTR)
+		debug_printk("pib_ib_modify_port: port reset qkey control\n");
+
+	dev->ports[port_num - 1].ib_port_attr.port_cap_flags |= props->set_port_cap_mask;
+	dev->ports[port_num - 1].ib_port_attr.port_cap_flags &= ~props->clr_port_cap_mask;
+
+	/* @todo port_cap_flags 変化を伝達 */
+
+	up_write(&dev->rwsem);
+
+	return 0;
 }
 
 
@@ -246,8 +290,6 @@ static void *pib_ib_add(int ib_dev_id)
 		.max_pkeys           =     125,
 		.local_ca_ack_delay  =      15,
 	};
-
-	debug_printk("pib_ib_add\n");
 
 	ibdev = (struct pib_ib_dev *)ib_alloc_device(sizeof *ibdev);
 	if (!ibdev) {
@@ -409,8 +451,12 @@ static void *pib_ib_add(int ib_dev_id)
 		if (!ibdev->ports[i].lid_table)
 			goto err_ld_table;
 
+		/*
+		 * @see IBA Spec. Vol.1 4.1.1
+		 */
 		ibdev->ports[i].gid[0].global.subnet_prefix =
-			cpu_to_be64(hca_guid_base);
+			/* default GID prefix */
+			cpu_to_be64(0xFE80000000000000ULL);
 		ibdev->ports[i].gid[0].global.interface_id  =
 			cpu_to_be64(hca_guid_base | ((ib_dev_id + 3) << 8) | i);
 	}

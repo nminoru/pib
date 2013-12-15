@@ -629,6 +629,8 @@ extern void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib
 extern int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
 			       struct ib_wc *in_wc, struct ib_grh *in_grh,
 			       struct ib_mad *in_mad, struct ib_mad *out_mad);
+extern int pib_process_smi_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
+extern int pib_process_gsi_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
 
 /*
  *  in pib_lib.c

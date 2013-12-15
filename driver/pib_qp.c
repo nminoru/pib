@@ -226,18 +226,6 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		if (ibpd != init_attr->srq->pd)
 			return ERR_PTR(-EINVAL);
 
-#if 1
-	switch (init_attr->qp_type) {
-
-	case IB_QPT_SMI:
-	case IB_QPT_GSI:
-		return ERR_PTR(-ENOSYS);
-
-	default:
-		break;
-	}
-#endif
-
 	qp = kmem_cache_zalloc(pib_ib_qp_cachep, GFP_KERNEL);
 	if (!qp)
 		return ERR_PTR(-ENOMEM);
@@ -370,7 +358,9 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	reset_qp(qp);
 	up(&qp->sem);
 
-	rb_erase(&qp->rb_node, &dev->qp_table);
+	if ((ibqp->qp_num != PIB_IB_QP0) && (ibqp->qp_num != PIB_IB_QP1))
+		rb_erase(&qp->rb_node, &dev->qp_table);
+
 	up_write(&dev->rwsem);
 
 	kmem_cache_free(pib_ib_qp_cachep, qp);
@@ -459,6 +449,8 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 		switch (qp->qp_type) {
 		case IB_QPT_UD:
+		case IB_QPT_SMI:
+		case IB_QPT_GSI:
 			qp->ib_qp_attr.path_mtu =
 				dev->ports[attr->port_num - 1].ib_port_attr.active_mtu;
 			break;
@@ -679,9 +671,6 @@ int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 
 	qp = to_pqp(ibqp);
 
-	if ((ibqp->qp_num == PIB_IB_QP0) || (ibqp->qp_num == PIB_IB_QP1))
-		return -EINVAL;
-
 	down(&qp->sem);
 
 next_wr:
@@ -778,6 +767,8 @@ next_wr:
 		break;
 
 	case IB_QPT_UD:
+	case IB_QPT_SMI:
+	case IB_QPT_GSI:
 		switch (ibwr->opcode) {
 		case IB_WR_SEND:
 		case IB_WR_SEND_WITH_IMM:
@@ -794,6 +785,7 @@ next_wr:
 			break;
 		}
 		break;
+
 	default:
 		break;
 	}
@@ -885,9 +877,6 @@ int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 	dev = to_pdev(ibqp->device);
 
 	qp = to_pqp(ibqp);
-
-	if ((qp->ib_qp.qp_num == PIB_IB_QP0) || (qp->ib_qp.qp_num == PIB_IB_QP1))
-		return -EINVAL;
 
 	if (qp->ib_qp_init_attr.srq)
 		return -EINVAL;

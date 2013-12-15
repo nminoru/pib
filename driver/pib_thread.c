@@ -157,6 +157,7 @@ static int create_socket(struct pib_ib_dev *dev, int port_index)
 		goto err_sock;
 	}
 
+#if 0
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
 	debug_printk("kernel_getsockname: %pISpc\n",
 		     (const struct sockaddr*)&sockaddr_in);
@@ -164,6 +165,7 @@ static int create_socket(struct pib_ib_dev *dev, int port_index)
 	debug_printk("kernel_getsockname: %08x:%u\n",
 		     ntohl(sockaddr_in.sin_addr.s_addr),
 		     ntohs(sockaddr_in.sin_port));
+#endif
 #endif
 
 	dev->ports[port_index].socket = socket;
@@ -212,8 +214,6 @@ static int kthread_routine(void *data)
 
 	BUG_ON(!dev);
 
-	debug_printk("kthread %s started.\n", dev->thread.task->comm);
-	
 #if 0
 	/* Hibernation / freezing of the SRPT kernel thread is not supported. */
 	current->flags |= PF_NOFREEZE;
@@ -429,6 +429,8 @@ first_sending_wsqe:
 			break;
 
 		default:
+			printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
+			       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 			BUG();
 		}
 			
@@ -503,17 +505,21 @@ static int process_send_wr(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct 
 
 	switch (qp->qp_type) {
 
-	case IB_QPT_SMI:
-	case IB_QPT_GSI:
-		break;
-
 	case IB_QPT_RC:
 		return pib_process_rc_qp_request(dev, qp, send_wqe);
 
 	case IB_QPT_UD:
 		return pib_process_ud_qp_request(dev, qp, send_wqe);
 
+	case IB_QPT_SMI:
+		return pib_process_smi_qp_request(dev, qp, send_wqe);
+
+	case IB_QPT_GSI:
+		return pib_process_gsi_qp_request(dev, qp, send_wqe);
+
 	default:
+		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
+		       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 		BUG();
 	}
 
@@ -539,6 +545,8 @@ completion_error:
 		break;
 
 	default:
+		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
+		       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 		BUG();
 	}
 
@@ -625,15 +633,27 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 
 	switch (qp->qp_type) {
 
-	case IB_QPT_UD:
-		pib_receive_ud_qp_SEND_request(dev, port_num, qp, buffer, ret, lrh, bth);
-		break;
-
 	case IB_QPT_RC:
 		pib_receive_rc_qp_incoming_message(dev, port_num, qp, buffer, ret, lrh, bth);
 		break;
 
+	case IB_QPT_UD:
+		pib_receive_ud_qp_SEND_request(dev, port_num, qp, buffer, ret, lrh, bth);
+		break;
+
+#if 0
+	case IB_QPT_SMI:
+		pib_receive_smi_qp_incoming_message(dev, port_num, qp, buffer, ret, lrh, bth);
+		break;
+
+	case IB_QPT_GSI:
+		pib_receive_gsi_qp_incoming_message(dev, port_num, qp, buffer, ret, lrh, bth);
+		break;
+#endif
+
 	default:
+		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
+		       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 		BUG();
 	}
 
