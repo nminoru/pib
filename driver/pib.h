@@ -611,6 +611,11 @@ extern int pib_create_kthread(struct pib_ib_dev *dev);
 extern void pib_release_kthread(struct pib_ib_dev *dev);
 
 /*
+ *  in pib_dma.c 
+ */
+extern struct ib_dma_mapping_ops pib_dma_mapping_ops;
+
+/*
  *  in pib_ud.c
  */
 extern int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);

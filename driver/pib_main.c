@@ -299,23 +299,6 @@ static void *pib_ib_add(int ib_dev_id)
 
 	ibdev->ib_dev_id = ib_dev_id;
 
-#if 0
-	ibdev->ib_dev.dev;
-	ibdev->ib_dev.dma_device;
-	ibdev->ib_dev.core_list;
-	ibdev->ib_dev.cache;
-	ibdev->ib_dev.pkey_tbl_len;
-	ibdev->ib_dev.iwcm;
-	ibdev->ib_dev.dma_ops;
-	ibdev->ib_dev.ports_parent
-	ibdev->ib_dev.port_list;
-	ibdev->ib_dev.reg_state;
-
-	char			     node_desc[64];
-	__be64			     node_guid;
-	u32			     local_dma_lkey;
-#endif
-
 	strlcpy(ibdev->ib_dev.name, "pib_%d", IB_DEVICE_NAME_MAX);
 
 	ibdev->ib_dev.owner		= THIS_MODULE;
@@ -324,7 +307,6 @@ static void *pib_ib_add(int ib_dev_id)
 	ibdev->ib_dev.local_dma_lkey	= 0;
 	ibdev->ib_dev.phys_port_cnt     = pib_phys_port_cnt;
 	ibdev->ib_dev.num_comp_vectors	= num_possible_cpus();
-	/* ibdev->ib_dev.dma_device	=   */
 	ibdev->ib_dev.uverbs_abi_ver    = PIB_IB_UVERBS_ABI_VERSION;
 
 	ibdev->ib_dev.uverbs_cmd_mask	=
@@ -404,6 +386,7 @@ static void *pib_ib_add(int ib_dev_id)
 	ibdev->ib_dev.detach_mcast	= pib_ib_mcg_detach;
 #endif
 	ibdev->ib_dev.process_mad	= pib_ib_process_mad;
+	ibdev->ib_dev.dma_ops		= &pib_dma_mapping_ops;
 
 	spin_lock_init(&ibdev->lock);
 
@@ -471,6 +454,8 @@ static void *pib_ib_add(int ib_dev_id)
 
 	if (ib_register_device(&ibdev->ib_dev, NULL))
 		goto err_register_ibdev;
+
+	ibdev->ib_dev.dma_device = &ibdev->ib_dev.dev;
 
 	for (i = 0; i < ARRAY_SIZE(pib_class_attributes); i++) {
 		if (device_create_file(&ibdev->ib_dev.dev, pib_class_attributes[i]))
