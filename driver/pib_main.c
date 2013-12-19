@@ -36,7 +36,9 @@ struct kmem_cache *pib_ib_cqe_cachep;
 
 
 static u64 hca_guid_base;
-static struct pib_ib_dev *ibdev[PIB_IB_MAX_HCA];
+static struct class *dummy_parent_class; /* /sys/class/pib */
+static struct device *dummy_parent_device;
+static struct pib_ib_dev *pib_ib_devs[PIB_IB_MAX_HCA];
 
 static unsigned int pib_num_hca = 1;
 module_param_named(num_hca, pib_num_hca, uint, S_IRUGO);
@@ -217,48 +219,22 @@ static struct device_attribute *pib_class_attributes[] = {
 };
 
 
-static void *pib_ib_add(int ib_dev_id)
+static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 {
-	int i;
+	int i, j;
 	struct pib_ib_dev *ibdev;
 	struct ib_device_attr ib_dev_attr = {
 		.fw_ver              = 0x00000000100010001ULL, /* 1.1.1 */
 		.sys_image_guid      = cpu_to_be64(hca_guid_base | 0x10ULL),
 		.max_mr_size         = 0xffffffffffffffffULL,
-		.page_size_cap       = 0xfffffe00UL,
+		.page_size_cap       = 0xfffffe00UL, /* @todo */
 		.vendor_id           = 1U,
 		.vendor_part_id      = 1U,
 		.hw_ver              = 0U,
 		.max_qp              = 131008,
 		.max_qp_wr           = 16351,
 		.device_cap_flags    = 0,
-#if 0
-		(IB_DEVICE_RESIZE_MAX_WR      |
-				     IB_DEVICE_BAD_PKEY_CNTR      |
-				     IB_DEVICE_BAD_QKEY_CNTR      |
-				     IB_DEVICE_RAW_MULTI          |
-				     IB_DEVICE_AUTO_PATH_MIG      |
-				     IB_DEVICE_CHANGE_PHY_PORT    |
-				     IB_DEVICE_UD_AV_PORT_ENFORCE |
-				     IB_DEVICE_CURR_QP_STATE_MOD  |
-				     IB_DEVICE_SHUTDOWN_PORT	  |
-				     IB_DEVICE_INIT_TYPE	  |
-				     IB_DEVICE_PORT_ACTIVE_EVENT  |
-				     IB_DEVICE_SYS_IMAGE_GUID	  |
-				     IB_DEVICE_RC_RNR_NAK_GEN	  |
-				     IB_DEVICE_SRQ_RESIZE	  |
-				     IB_DEVICE_N_NOTIFY_CQ	  |
-				     IB_DEVICE_LOCAL_DMA_LKEY	  |
-				     IB_DEVICE_RESERVED		  |
-				     IB_DEVICE_MEM_WINDOW         |
-				     IB_DEVICE_UD_IP_CSUM	  |
-				     IB_DEVICE_UD_TSO		  |
-				     IB_DEVICE_XRC		  |
-				     IB_DEVICE_MEM_MGT_EXTENSIONS |
-				     IB_DEVICE_BLOCK_MULTICAST_LOOPBACK |
-				     IB_DEVICE_MEM_WINDOW_TYPE_2A |
-				     IB_DEVICE_MEM_WINDOW_TYPE_2B); 
-#endif
+
 		.max_sge             = PIB_IB_MAX_SGE,
 		.max_sge_rd          =       8,
 		.max_cq              =   65408,
@@ -297,7 +273,7 @@ static void *pib_ib_add(int ib_dev_id)
 		return NULL;
 	}
 
-	ibdev->ib_dev_id = ib_dev_id;
+	ibdev->ib_dev_id		= ib_dev_id;
 
 	strlcpy(ibdev->ib_dev.name, "pib_%d", IB_DEVICE_NAME_MAX);
 
@@ -390,19 +366,19 @@ static void *pib_ib_add(int ib_dev_id)
 
 	spin_lock_init(&ibdev->lock);
 
-	ibdev->last_qp_num              = pib_random() & PIB_IB_QPN_MASK;
-	ibdev->qp_table                 = RB_ROOT;
+	ibdev->last_qp_num		= pib_random() & PIB_IB_QPN_MASK;
+	ibdev->qp_table			= RB_ROOT;
 
 	INIT_LIST_HEAD(&ibdev->ucontext_head);
 	INIT_LIST_HEAD(&ibdev->cq_head);
 
 	spin_lock_init(&ibdev->schedule.lock);
-	ibdev->schedule.wakeup_time     = jiffies;
-	ibdev->schedule.rb_root         = RB_ROOT;
-	
+	ibdev->schedule.wakeup_time	= jiffies;
+	ibdev->schedule.rb_root		= RB_ROOT;
+
 	init_rwsem(&ibdev->rwsem);
 
-	ibdev->ib_dev_attr              = ib_dev_attr;
+	ibdev->ib_dev_attr		= ib_dev_attr;
 
 	for (i=0 ; i < ibdev->ib_dev.phys_port_cnt ; i++) {
 		struct ib_port_attr ib_port_attr = {
@@ -444,33 +420,36 @@ static void *pib_ib_add(int ib_dev_id)
 			cpu_to_be64(hca_guid_base | ((ib_dev_id + 3) << 8) | i);
 	}
 
-	ibdev->behavior      = 0U;
+	ibdev->behavior		= 0U;
 #ifdef PIB_HACK_IMM_DATA_LKEY
-	ibdev->imm_data_lkey = PIB_IB_IMM_DATA_LKEY;
+	ibdev->imm_data_lkey	= PIB_IB_IMM_DATA_LKEY;
 #endif
 
-	if (pib_create_kthread(ibdev))
-	    goto err_create_kthread;
+	ibdev->ib_dev.dma_device = dma_device;
 
 	if (ib_register_device(&ibdev->ib_dev, NULL))
 		goto err_register_ibdev;
 
-	ibdev->ib_dev.dma_device = &ibdev->ib_dev.dev;
+	if (pib_create_kthread(ibdev))
+		goto err_create_kthread;
 
-	for (i = 0; i < ARRAY_SIZE(pib_class_attributes); i++) {
+	for (i = 0; i < ARRAY_SIZE(pib_class_attributes); i++)
 		if (device_create_file(&ibdev->ib_dev.dev, pib_class_attributes[i]))
 			goto err_create_file;
-	}
 
 	return ibdev;
 
 err_create_file:
-	ib_unregister_device(&ibdev->ib_dev);
+	for (j = i - 1; j >= 0 ; j--)
+		device_remove_file(&ibdev->ib_dev.dev, pib_class_attributes[j]);
 
-err_register_ibdev:
 	pib_release_kthread(ibdev);
 
 err_create_kthread:
+	ib_unregister_device(&ibdev->ib_dev);
+
+err_register_ibdev:
+
 err_ld_table:
 	for (i= ibdev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
 		if (ibdev->ports[i].lid_table)
@@ -482,22 +461,21 @@ err_ld_table:
 }
 
 
-static void pib_ib_remove(struct pib_dev *dev, void *ibdev_ptr)
+static void pib_ib_remove(struct pib_ib_dev *dev)
 {
 	int i;
-	struct pib_ib_dev *ibdev = ibdev_ptr;
 
 	debug_printk("pib_ib_remove\n");
 
-	ib_unregister_device(&ibdev->ib_dev);
+	ib_unregister_device(&dev->ib_dev);
 
-	pib_release_kthread(ibdev);
+	pib_release_kthread(dev);
 
-	for (i= ibdev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
-		if (ibdev->ports[i].lid_table)
-			vfree(ibdev->ports[i].lid_table);
+	for (i= dev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
+		if (dev->ports[i].lid_table)
+			vfree(dev->ports[i].lid_table);
 
-	ib_dealloc_device(&ibdev->ib_dev);
+	ib_dealloc_device(&dev->ib_dev);
 }
 
 
@@ -657,6 +635,18 @@ static int __init pib_ib_init(void)
 		return -EINVAL;
 	}
 
+	dummy_parent_class = class_create(THIS_MODULE, "pib");
+	if (IS_ERR(dummy_parent_class)) {
+		err = PTR_ERR(dummy_parent_class);
+		goto err_class_create;
+	}
+
+	dummy_parent_device = device_create(dummy_parent_class, NULL, MKDEV(0, 0), NULL, "pib_root");
+	if (IS_ERR(dummy_parent_device)) {
+		err = PTR_ERR(dummy_parent_device);
+		goto err_device_create;
+	}
+
 	get_hca_guid_base();
 
 	if (pib_kmem_cache_create()) {
@@ -666,8 +656,8 @@ static int __init pib_ib_init(void)
 	}
 
 	for (i=0 ; i<pib_num_hca ; i++) {
-		ibdev[i] = pib_ib_add(i);
-		if (!ibdev[i]) {
+		pib_ib_devs[i] = pib_ib_add(dummy_parent_device, i);
+		if (!pib_ib_devs[i]) {
 			err = -1;
 			goto err_ib_add;
 		}
@@ -677,11 +667,19 @@ static int __init pib_ib_init(void)
 
 err_ib_add:
 	for (j=i - 1 ; 0 <= j ; j--)
-		if (ibdev[j])
-			pib_ib_remove(NULL, ibdev[j]);
+		if (pib_ib_devs[j])
+			pib_ib_remove(pib_ib_devs[j]);
 
-err_kmem_cache_destroy:
 	pib_kmem_cache_destroy();
+err_kmem_cache_destroy:
+
+	device_unregister(dummy_parent_device);
+	dummy_parent_device = NULL;
+err_device_create:
+
+	class_destroy(dummy_parent_class);
+	dummy_parent_class = NULL;
+err_class_create:
 
 	return err;
 }
@@ -691,11 +689,21 @@ static void __exit pib_ib_cleanup(void)
 {
 	int i;
 
-	for (i=pib_num_hca - 1 ; 0 <= i ; i--)
-		if (ibdev[i])
-			pib_ib_remove(NULL, ibdev[i]);
+	for (i = pib_num_hca - 1 ; 0 <= i ; i--)
+		if (pib_ib_devs[i])
+			pib_ib_remove(pib_ib_devs[i]);
 
 	pib_kmem_cache_destroy();
+
+	if (dummy_parent_device) {
+		device_unregister(dummy_parent_device);
+		dummy_parent_device = NULL;
+	}
+
+	if (dummy_parent_class) {
+		class_destroy(dummy_parent_class);
+		dummy_parent_class = NULL;
+	}
 }
 
 

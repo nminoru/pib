@@ -21,8 +21,6 @@
 
 static int pib_dma_mapping_error(struct ib_device *dev, u64 dma_addr)
 {
-	debug_printk("pib_dma_mapping_error: dma_addr=%llx\n", (unsigned long long)dma_addr);
-
 	return dma_addr == BAD_DMA_ADDRESS;
 }
 
@@ -46,8 +44,6 @@ static u64 pib_dma_map_page(struct ib_device *dev, struct page *page,
 {
 	u64 addr;
 
-	debug_printk("pib_dma_map_page: offset=%lu, size=%zu\n", offset, size);
-
 	if (offset + size > PAGE_SIZE) {
 		addr = BAD_DMA_ADDRESS;
 		goto done;
@@ -67,8 +63,6 @@ done:
 static void pib_dma_unmap_page(struct ib_device *dev, u64 addr, size_t size,
 			       enum dma_data_direction direction)
 {
-	debug_printk("pib_dma_unmap_page: size=%zu\n", size);
-
 }
 
 static int pib_dma_map_sg(struct ib_device *dev, struct scatterlist *sgl,
