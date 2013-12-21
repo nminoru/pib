@@ -38,6 +38,7 @@ struct kmem_cache *pib_ib_cqe_cachep;
 static u64 hca_guid_base;
 static struct class *dummy_parent_class; /* /sys/class/pib */
 static struct device *dummy_parent_device;
+static u64 dummy_parent_device_dma_mask = DMA_BIT_MASK(32);
 static struct pib_ib_dev *pib_ib_devs[PIB_IB_MAX_HCA];
 
 static unsigned int pib_num_hca = 1;
@@ -646,6 +647,8 @@ static int __init pib_ib_init(void)
 		err = PTR_ERR(dummy_parent_device);
 		goto err_device_create;
 	}
+
+	dummy_parent_device->dma_mask = &dummy_parent_device_dma_mask;
 
 	get_hca_guid_base();
 
