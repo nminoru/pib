@@ -25,7 +25,7 @@ pib_ib_alloc_pd(struct ib_device *ibdev,
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
-	init_rwsem(&pd->rwsem);
+	spin_lock_init(&pd->lock);
 
 	pd->mr_table = vzalloc(sizeof(struct pib_ib_mr*) * PIB_IB_MAX_MR_PER_PD);
 	if (!pd->mr_table)
@@ -43,6 +43,7 @@ err_mr_table:
 int pib_ib_dealloc_pd(struct ib_pd *ibpd)
 {
 	struct pib_ib_pd *pd;
+	unsigned long flags;
 
 	debug_printk("pib_ib_dealloc_pd\n");
 
@@ -51,10 +52,10 @@ int pib_ib_dealloc_pd(struct ib_pd *ibpd)
 
 	pd = to_ppd(ibpd);
 
-	down_write(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	if (pd->nr_mr > 0)
 		debug_printk("pib_ib_dealloc_pd: nr_mr=%d\n", pd->nr_mr);
-	up_write(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	vfree(pd->mr_table);
 

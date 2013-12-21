@@ -18,13 +18,14 @@ static int mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size
 static int reg_mr(struct pib_ib_pd *pd, struct pib_ib_mr *mr)
 {
 	int i;
+	unsigned long flags;
 
 	/* find an empty slot in mr_table[] */
-	down_write(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	for (i=0 ; i<PIB_IB_MAX_MR_PER_PD ; i++)
 		if (pd->mr_table[i] == NULL)
 			goto found;
-	up_write(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	return -1;
 
@@ -44,7 +45,7 @@ found:
 
 	pd->nr_mr++;
 
-	up_write(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	return 0;
 }
@@ -135,6 +136,7 @@ int pib_ib_dereg_mr(struct ib_mr *ibmr)
 {
 	struct pib_ib_mr *mr;
 	struct pib_ib_pd *pd;
+	unsigned long flags;
 
 	debug_printk("pib_ib_dereg_mr\n");
 
@@ -144,10 +146,10 @@ int pib_ib_dereg_mr(struct ib_mr *ibmr)
 	mr  = to_pmr(ibmr);
 	pd  = to_ppd(ibmr->pd);
 
-	down_write(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	pd->mr_table[mr->lkey_prefix & PIB_IB_MR_INDEX_MASK] = NULL;
 	pd->nr_mr--;
-	up_write(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);

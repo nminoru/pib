@@ -16,8 +16,12 @@ struct ib_cq *pib_ib_create_cq(struct ib_device *ibdev, int entries, int vector,
 			       struct ib_ucontext *context,
 			       struct ib_udata *udata)
 {
-	struct pib_ib_dev *dev = to_pdev(ibdev);
+	int i;
+	struct pib_ib_dev *dev;
 	struct pib_ib_cq *cq;
+	struct pib_ib_cqe *cqe, *cqe_next;
+
+	dev = to_pdev(ibdev);
 
 	if (entries < 1 || dev->ib_dev_attr.max_cqe <= entries)
 		return ERR_PTR(-EINVAL);
@@ -29,17 +33,42 @@ struct ib_cq *pib_ib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	if (!cq)
 		return ERR_PTR(-ENOMEM);
 
-	cq->ib_cq.cqe = entries;
+	cq->ib_cq.cqe	= entries;
+	cq->nr_cqe	= 0;
 
-	sema_init(&cq->sem, 1);
+	spin_lock_init(&cq->lock);
+
 	INIT_LIST_HEAD(&cq->cqe_head);
+	INIT_LIST_HEAD(&cq->free_cqe_head);
+
+	for (i=0 ; i<entries ; i++) {
+		struct pib_ib_cqe *cqe;
+
+		cqe = kmem_cache_zalloc(pib_ib_cqe_cachep, GFP_KERNEL);
+		if (!cqe)
+			goto err_allloc_ceq;
+		
+		INIT_LIST_HEAD(&cqe->list);
+		list_add_tail(&cqe->list, &cq->free_cqe_head);
+	}
 
 	return &cq->ib_cq;
+
+err_allloc_ceq:
+	list_for_each_entry_safe(cqe, cqe_next, &cq->free_cqe_head, list) {
+		list_del_init(&cqe->list);
+		kmem_cache_free(pib_ib_cqe_cachep, cqe);
+	}
+
+	kmem_cache_free(pib_ib_cq_cachep, cq);
+
+	return ERR_PTR(-ENOMEM);
 }
 
 
 int pib_ib_destroy_cq(struct ib_cq *ibcq)
 {
+	unsigned long flags;
 	struct pib_ib_cq *cq;
 	struct pib_ib_cqe *cqe, *cqe_next;
 
@@ -48,13 +77,17 @@ int pib_ib_destroy_cq(struct ib_cq *ibcq)
 
 	cq = to_pcq(ibcq);
 
-	down(&cq->sem);
+	spin_lock_irqsave(&cq->lock, flags);
 	list_for_each_entry_safe(cqe, cqe_next, &cq->cqe_head, list) {
 		list_del_init(&cqe->list);
 		kmem_cache_free(pib_ib_cqe_cachep, cqe);
 	}
+	list_for_each_entry_safe(cqe, cqe_next, &cq->free_cqe_head, list) {
+		list_del_init(&cqe->list);
+		kmem_cache_free(pib_ib_cqe_cachep, cqe);
+	}
 	cq->nr_cqe = 0;
-	up(&cq->sem);
+	spin_unlock_irqrestore(&cq->lock, flags);
 
 	kmem_cache_free(pib_ib_cq_cachep, cq);
 
@@ -78,7 +111,8 @@ int pib_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 
 int pib_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 {
-	int i;
+	int i, ret = 0;
+	unsigned long flags;
 	struct pib_ib_cq *cq;
 
 	if (!ibcq)
@@ -86,25 +120,22 @@ int pib_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 
 	cq = to_pcq(ibcq);
 
-	down(&cq->sem);
-	for (i=0 ; i<num_entries ; i++) {
+	spin_lock_irqsave(&cq->lock, flags);
+	for (i=0 ; (i<num_entries) && !list_empty(&cq->cqe_head) ; i++) {
 		struct pib_ib_cqe *cqe;
-
-		if (cq->nr_cqe <= 0)
-			break;
 
 		cqe = list_first_entry(&cq->cqe_head, struct pib_ib_cqe, list);
 		list_del_init(&cqe->list);
+		list_add_tail(&cqe->list, &cq->free_cqe_head);
 
 		ibwc[i] = cqe->ib_wc;
 
 		cq->nr_cqe--;
-
-		kmem_cache_free(pib_ib_cqe_cachep, cqe);
+		ret++;
 	}
-	up(&cq->sem);
-	
-	return i;
+	spin_unlock_irqrestore(&cq->lock, flags);
+
+	return ret;
 }
 
 
@@ -119,18 +150,20 @@ int pib_ib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
  */
 void pib_util_remove_cq(struct pib_ib_cq *cq, struct pib_ib_qp *qp)
 {
+	unsigned long flags;
 	struct pib_ib_cqe *cqe, *cqe_next;
 
 	BUG_ON(qp == NULL);
 
-	down(&cq->sem);
+	spin_lock_irqsave(&cq->lock, flags);
 	list_for_each_entry_safe(cqe, cqe_next, &cq->cqe_head, list) {
 		if (cqe->ib_wc.qp == &qp->ib_qp) {
+			cq->nr_cqe--;
 			list_del_init(&cqe->list);
-			kmem_cache_free(pib_ib_cqe_cachep, cqe);
+			list_add_tail(&cqe->list, &cq->free_cqe_head);
 		}
 	}
-	up(&cq->sem);
+	spin_unlock_irqrestore(&cq->lock, flags);
 }
 
 
@@ -155,42 +188,43 @@ int pib_util_insert_wc_error(struct pib_ib_cq *cq, struct pib_ib_qp *qp, u64 wr_
 
 static int insert_wc(struct pib_ib_cq *cq, const struct ib_wc *wc)
 {
+	unsigned long flags;
 	struct pib_ib_cqe *cqe;
+	struct ib_event ev;
 
-	cqe = kmem_cache_zalloc(pib_ib_cqe_cachep, GFP_KERNEL);
+	spin_lock_irqsave(&cq->lock, flags);
 
-	if (!cqe) {
-		debug_printk("insert_wc: ENOMEM\n");
-		return -ENOMEM;
+	if (list_empty(&cq->free_cqe_head)) {
+		spin_unlock_irqrestore(&cq->lock, flags);
+		goto cq_overflow;
 	}
+
+	cqe = list_first_entry(&cq->free_cqe_head, struct pib_ib_cqe, list);
+	list_del_init(&cqe->list);
+	list_add_tail(&cqe->list, &cq->cqe_head);
 
 	cqe->ib_wc = *wc;
-	INIT_LIST_HEAD(&cqe->list);
-
-	down(&cq->sem);
-
-	list_add_tail(&cqe->list, &cq->cqe_head);
 	cq->nr_cqe++;
 
-	if (cq->ib_cq.cqe <= cq->nr_cqe) {
-		/* CQ overflow */
-		struct ib_event ev;
-
-		ev.event      = IB_EVENT_CQ_ERR;
-		ev.device     = cq->ib_cq.device;
-		ev.element.cq = &cq->ib_cq;
-
-		local_bh_disable();
-		cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
-		local_bh_enable();
-	}
-
-	up(&cq->sem);
+	spin_unlock_irqrestore(&cq->lock, flags);
 
 	/* tell completion channel */
 	local_bh_disable();
 	cq->ib_cq.comp_handler(&cq->ib_cq, cq->ib_cq.cq_context);
 	local_bh_enable();
 
-	return 0;	
+	return 0;
+
+cq_overflow:
+	/* CQ overflow */
+
+	ev.event      = IB_EVENT_CQ_ERR;
+	ev.device     = cq->ib_cq.device;
+	ev.element.cq = &cq->ib_cq;
+
+	local_bh_disable();
+	cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
+	local_bh_enable();
+
+	return -ENOMEM;
 }

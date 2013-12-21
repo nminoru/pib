@@ -47,6 +47,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	enum ib_wr_opcode opcode;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	int with_imm;
+	unsigned long flags;
 
 	opcode = send_wqe->opcode;
 
@@ -141,12 +142,12 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		goto completion_error;
 	}
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
 				       buffer, 0, send_wqe->total_length,
 				       0,
 				       PIB_MR_COPY_FROM);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS)
 		goto completion_error;
@@ -220,6 +221,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 	struct pib_packet_deth *deth;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	__be32 imm_data = 0;
+	unsigned long flags;
 
 	if (!pib_is_recv_ok(qp->state))
 		goto silently_drop;
@@ -288,12 +290,12 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data(pd, recv_wqe->sge_array, recv_wqe->num_sge,
 				       buffer, 40, size,
 				       IB_ACCESS_LOCAL_WRITE,
 				       PIB_MR_COPY_TO);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS)
 		goto completion_error;

@@ -211,10 +211,10 @@ struct pib_ib_ucontext {
 struct pib_ib_pd {
 	struct ib_pd            ib_pd;
 
+	spinlock_t		lock;
+
 	int                     nr_mr;
 	struct pib_ib_mr      **mr_table;
-
-	struct rw_semaphore     rwsem;
 };
 
 
@@ -243,10 +243,11 @@ struct pib_ib_mr {
 struct pib_ib_cq {
 	struct ib_cq            ib_cq;
 	
-	struct semaphore        sem;	
+	spinlock_t		lock;
 
 	int                     nr_cqe;
 	struct list_head        cqe_head;
+	struct list_head        free_cqe_head;
 };
 
 

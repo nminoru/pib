@@ -284,6 +284,7 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 	u32 payload_size;
 	u32 packet_length;
 	enum ib_wc_status status;
+	unsigned long flags;
 
 	if (PIB_IB_MAX_PAYLOAD_LEN <= send_wqe->total_length)
 		return IB_WC_LOC_LEN_ERR;
@@ -318,12 +319,12 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
 				       buffer, mr_offset, payload_size,
 				       0,
 				       PIB_MR_COPY_FROM);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS)
 		return status;
@@ -588,6 +589,7 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 	struct pib_ib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	enum pib_ib_syndrome syndrome;
+	unsigned long flags;
 
 	pmtu = (128U << qp->ib_qp_attr.path_mtu);
 
@@ -665,12 +667,12 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data(pd, recv_wqe->sge_array, recv_wqe->num_sge,
 				       buffer, qp->responder.offset, size,
 				       IB_ACCESS_LOCAL_WRITE,
 				       PIB_MR_COPY_TO);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	switch (status) {
 	case IB_WC_SUCCESS:
@@ -760,6 +762,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 	struct pib_ib_recv_wqe *recv_wqe = NULL;
 	struct pib_ib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
+	unsigned long flags;
 
 	pmtu = (128U << qp->ib_qp_attr.path_mtu);
 
@@ -861,14 +864,14 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data_with_rkey(pd, qp->responder.rdma_write.rkey,
 						 buffer,
 						 qp->responder.rdma_write.vaddr + qp->responder.offset,
 						 size,
 						 IB_ACCESS_LOCAL_WRITE | IB_ACCESS_REMOTE_WRITE,
 						 PIB_MR_COPY_TO);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	/*
 	 * IBA Spec. Vol.1 10.7.2.2 states the following sentence
@@ -975,6 +978,7 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 	struct pib_ib_rd_atom_slot slot;
 	u64 vaddr;
 	u64 result;
+	unsigned long flags;
 
 	if (size != sizeof(struct pib_packet_atomiceth)) {
 		/* Invalid Request Local Work Queue Error */
@@ -1002,14 +1006,13 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_atomic(pd, atomiceth->R_Key, vaddr,
 				    ((u64)atomiceth->SwapDt_hi << 32) | atomiceth->SwapDt_lo,
 				    ((u64)atomiceth->CmpDt_hi  << 32) | atomiceth->CmpDt_lo,
 				    &result,
 				    (OpCode == IB_WR_ATOMIC_CMP_AND_SWP) ? PIB_MR_CAS : PIB_MR_FETCHADD);
-
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS) {
 		/* Local Access Violation Work Queue Error */
@@ -1043,6 +1046,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 	struct pib_ib_rd_atom_slot slot;
 	struct pib_ib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
+	unsigned long flags;
 
 	if (size != sizeof(struct pib_packet_reth))
 		goto nak_invalid_request;
@@ -1062,9 +1066,9 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_validate_rkey(pd, rkey, remote_addr, dmalen, IB_ACCESS_REMOTE_READ);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS) {
 		/* Local Access Violation Work Queue Error */
@@ -1326,6 +1330,7 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 	struct kvec iov;
 	u32 payload_size;
 	enum ib_wc_status status;
+	unsigned long flags;
 
 	pmtu = (128U << qp->ib_qp_attr.path_mtu);
 
@@ -1353,7 +1358,7 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data_with_rkey(pd,
 						 ack->data.rdma_read.rkey,
 						 dev->thread.buffer + size,
@@ -1361,7 +1366,7 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 						 payload_size,
 						 IB_ACCESS_REMOTE_READ,
 						 PIB_MR_COPY_FROM);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS)
 		/* receive_RDMA_READ_request でチェックしているから本当はないはず */
@@ -1754,6 +1759,7 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 	int *nr_swqe_p;
 	struct pib_ib_pd *pd;
 	enum ib_wc_status status;
+	unsigned long flags;
 
 	send_wqe = match_send_wqe(qp, psn, &first_send_wqe, &nr_swqe_p);
 
@@ -1774,14 +1780,14 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
 				       buffer,
 				       send_wqe->processing.sent_packets * 128U << qp->ib_qp_attr.path_mtu,
 				       size,
 				       IB_ACCESS_LOCAL_WRITE,
 				       PIB_MR_COPY_TO);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS) {
 		send_wqe->processing.status = status;
@@ -1832,6 +1838,7 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 	struct pib_ib_pd *pd;
 	enum ib_wc_status status;
 	u64 res;
+	unsigned long flags;
 
 	if (size !=  sizeof(struct pib_packet_atomicacketh))
 		/* @todo これはエラーにとらないでいいか？ */
@@ -1863,12 +1870,12 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	down_read(&pd->rwsem);
+	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
 				       (void*)&res, 0, sizeof(res),
 				       IB_ACCESS_LOCAL_WRITE,
 				       PIB_MR_COPY_TO);
-	up_read(&pd->rwsem);
+	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS) {
 		send_wqe->processing.status = status;
