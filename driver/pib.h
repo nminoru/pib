@@ -18,6 +18,7 @@
 #include <linux/rbtree.h>
 #include <linux/semaphore.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_umem.h>
