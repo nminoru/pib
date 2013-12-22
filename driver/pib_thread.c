@@ -171,7 +171,7 @@ static int create_socket(struct pib_ib_dev *dev, int port_index)
 	dev->ports[port_index].socket = socket;
 
 	/* register lid_table */
-	sockaddr_in_p  = kzalloc(sizeof(struct sockaddr_in), GFP_KERNEL);
+	sockaddr_in_p  = kzalloc(sizeof(struct sockaddr_in), GFP_ATOMIC);
 
 	sockaddr_in_p->sin_family      = AF_INET;
 	sockaddr_in_p->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -414,7 +414,7 @@ first_sending_wsqe:
 
 		case PIB_SWQE_FREE:
 			/* list からは外されている */
-			kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+			pib_util_free_send_wqe(qp, send_wqe);
 			break;
 
 		case PIB_SWQE_SENDING:

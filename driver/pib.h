@@ -257,11 +257,12 @@ struct pib_ib_srq {
 	
 	/* @todo ステータスが必要 IBA Spec. Vol.1 10.2.9.5 */
 
-	struct semaphore        sem;
+	spinlock_t		lock;
 
 	/* list of WRs to be submitted in SRQ. */
 	int                     nr_recv_wqe;
 	struct list_head        recv_wqe_head;
+	struct list_head        free_recv_wqe_head;
 
 	int                     issue_srq_limit; /* set 1 when the async event of SRQ_LIMIT_REACHED is issue */
 };
@@ -366,6 +367,8 @@ struct pib_ib_qp {
 		struct list_head        waiting_swqe_head;
 
 		int			nr_rd_atomic;
+
+		struct list_head        free_swqe_head;
 	} requester;
 
 	/* responder side */
@@ -378,6 +381,8 @@ struct pib_ib_qp {
 
 		int			nr_rd_atomic;
 		struct list_head        ack_head;
+
+		struct list_head        free_rwqe_head;
 
 		int			last_OpCode;
 		u32			offset;
@@ -587,6 +592,8 @@ extern int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 			     struct ib_send_wr **bad_wr);
 extern int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
 			     struct ib_recv_wr **bad_wr);
+extern void pib_util_free_send_wqe(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
+extern void pib_util_free_recv_wqe(struct pib_ib_qp *qp, struct pib_ib_recv_wqe *recv_wqe);
 extern struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num);
 extern void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only);
 extern void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type event);

@@ -28,6 +28,7 @@ struct ib_srq *pib_ib_create_srq(struct ib_pd *ibpd,
 				 struct ib_srq_init_attr *init_attr,
 				 struct ib_udata *udata)
 {
+	int i;
 	struct pib_ib_srq *srq;
 
 	debug_printk("pib_ib_create_srq\n");
@@ -45,15 +46,40 @@ struct ib_srq *pib_ib_create_srq(struct ib_pd *ibpd,
 	srq->ib_srq_attr = init_attr->attr;
 	srq->ib_srq_attr.srq_limit = 0; /* srq_limit isn't set when ibv_craete_srq */
 
-	sema_init(&srq->sem, 1);
+	spin_lock_init(&srq->lock);
 	INIT_LIST_HEAD(&srq->recv_wqe_head);
+	INIT_LIST_HEAD(&srq->free_recv_wqe_head);
+
+	for (i=0 ; i<srq->ib_srq_attr.max_wr ; i++) {
+		struct pib_ib_recv_wqe *recv_wqe;
+
+		recv_wqe = kmem_cache_zalloc(pib_ib_recv_wqe_cachep, GFP_KERNEL);
+		if (!recv_wqe)
+			goto err_alloc_wqe;
+
+		INIT_LIST_HEAD(&recv_wqe->list);
+		list_add_tail(&recv_wqe->list, &srq->free_recv_wqe_head);
+	}
 
 	return &srq->ib_srq;
+
+err_alloc_wqe:
+	while (!list_empty(&srq->free_recv_wqe_head)) {
+		struct pib_ib_recv_wqe *recv_wqe;
+		recv_wqe = list_first_entry(&srq->free_recv_wqe_head, struct pib_ib_recv_wqe, list);
+		list_del_init(&recv_wqe->list);
+		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	}
+
+	kmem_cache_free(pib_ib_srq_cachep, srq);
+	
+	return ERR_PTR(-ENOMEM);
 }
 
 
 int pib_ib_destroy_srq(struct ib_srq *ibsrq)
 {
+	unsigned long flags;
 	struct pib_ib_srq *srq;
 	struct pib_ib_recv_wqe *recv_wqe, *next;
 
@@ -64,13 +90,17 @@ int pib_ib_destroy_srq(struct ib_srq *ibsrq)
 
 	srq = to_psrq(ibsrq);
 
-	down(&srq->sem);
+	spin_lock_irqsave(&srq->lock, flags);
 	list_for_each_entry_safe(recv_wqe, next, &srq->recv_wqe_head, list) {
 		list_del_init(&recv_wqe->list);
 		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
 	}
+	list_for_each_entry_safe(recv_wqe, next, &srq->free_recv_wqe_head, list) {
+		list_del_init(&recv_wqe->list);
+		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	}
 	srq->nr_recv_wqe = 0;
-	up(&srq->sem);
+	spin_unlock_irqrestore(&srq->lock, flags);
 
 	kmem_cache_free(pib_ib_srq_cachep, to_psrq(ibsrq));
 
@@ -118,11 +148,12 @@ int pib_ib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 int pib_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
 			 struct ib_recv_wr **bad_wr)
 {
-	int i, ret;
+	int i, ret = 0;
 	struct pib_ib_dev *dev;
 	struct pib_ib_recv_wqe *recv_wqe;
 	struct pib_ib_srq *srq;
 	u64 total_length = 0;
+	unsigned long flags;
 
 	if (!ibsrq || !ibwr)
 		return -EINVAL;
@@ -131,19 +162,21 @@ int pib_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
 
 	srq = to_psrq(ibsrq);
 
+	spin_lock_irqsave(&srq->lock, flags);
+
 next_wr:
 	if ((ibwr->num_sge < 1) || (srq->ib_srq_attr.max_sge < ibwr->num_sge)) {
 		ret = -EINVAL;
 		goto err;
 	}
 
-	recv_wqe = kmem_cache_zalloc(pib_ib_recv_wqe_cachep, GFP_KERNEL);
-	if (!recv_wqe) {
+	if (list_empty(&srq->free_recv_wqe_head)) {
 		ret = -ENOMEM;
 		goto err;
 	}
 
-	INIT_LIST_HEAD(&recv_wqe->list);
+	recv_wqe = list_first_entry(&srq->free_recv_wqe_head, struct pib_ib_recv_wqe, list);
+	list_del_init(&recv_wqe->list); /* list_del でいい？ */
 
 	recv_wqe->wr_id   = ibwr->wr_id;
 	recv_wqe->num_sge = ibwr->num_sge;
@@ -163,15 +196,6 @@ next_wr:
 
 	recv_wqe->total_length = (u32)total_length;
 
-	down(&srq->sem);
-
-	if (srq->ib_srq_attr.max_wr < srq->nr_recv_wqe + 1) {
-		up(&srq->sem);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
-		ret = -ENOMEM; /* @todo */
-		goto err;
-	}
-
 	if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_SRQ_SHUFFLE)) {
 		/* shuffle WRs */
 		if ((post_srq_recv_counter++ % 2) == 0)
@@ -184,17 +208,16 @@ next_wr:
 	}
 
 	srq->nr_recv_wqe++;
-	up(&srq->sem);
 
 	ibwr = ibwr->next;
 	if (ibwr)
 		goto next_wr;
 
-	return 0;
-
 err:
-	if (bad_wr)
-		*bad_wr = ibwr;
+	spin_unlock_irqrestore(&srq->lock, flags);
+
+	if (ret && bad_wr)
+		*bad_wr = ibwr;	
 
 	return ret;
 }
@@ -203,9 +226,10 @@ err:
 struct pib_ib_recv_wqe *
 pib_util_get_srq(struct pib_ib_srq *srq)
 {
+	unsigned long flags;
 	struct pib_ib_recv_wqe *recv_wqe = NULL;
 
-	down(&srq->sem);
+	spin_lock_irqsave(&srq->lock, flags);
 
 	if (list_empty(&srq->recv_wqe_head))
 		goto skip;
@@ -231,7 +255,7 @@ pib_util_get_srq(struct pib_ib_srq *srq)
 	}
 
 skip:
-	up(&srq->sem);
+	spin_unlock_irqrestore(&srq->lock, flags);
 
 	return recv_wqe;
 }

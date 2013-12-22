@@ -711,7 +711,7 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 		list_del_init(&recv_wqe->list);
 		qp->responder.nr_recv_wqe--;
 
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		pib_util_free_recv_wqe(qp, recv_wqe);
 	}
 
 	push_acknowledge(qp, psn, PIB_IB_ACK_CODE);
@@ -739,7 +739,7 @@ completion_error:
 
 	list_del_init(&recv_wqe->list);
 	qp->responder.nr_recv_wqe--;
-	kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	pib_util_free_recv_wqe(qp, recv_wqe);
 
 	push_acknowledge(qp, psn, syndrome);
 
@@ -915,7 +915,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 		list_del_init(&recv_wqe->list);
 		qp->responder.nr_recv_wqe--;
 
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		pib_util_free_recv_wqe(qp, recv_wqe);
 	}
 
 	push_acknowledge(qp, psn, PIB_IB_ACK_CODE);
@@ -949,7 +949,7 @@ completion_error:
 
 	list_del_init(&recv_wqe->list);
 	qp->responder.nr_recv_wqe--;
-	kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	pib_util_free_recv_wqe(qp, recv_wqe);
 
 common_error:
 	switch (status) {
@@ -1143,7 +1143,7 @@ push_acknowledge(struct pib_ib_qp *qp, u32 psn, enum pib_ib_syndrome syndrome)
 {
 	struct pib_ib_ack *ack;
 
-	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_KERNEL);
+	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
 		return;
 
@@ -1169,7 +1169,7 @@ push_rdma_read_acknowledge(struct pib_ib_qp *qp, u32 psn, u32 expected_psn, u64 
 		qp->responder.nr_rd_atomic = 0;
 	}
 
-	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_KERNEL);
+	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
 		return;
 
@@ -1192,7 +1192,7 @@ push_atomic_acknowledge(struct pib_ib_qp *qp, u32 psn, u64 res)
 {
 	struct pib_ib_ack *ack;
 
-	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_KERNEL);
+	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
 		return;
 
@@ -1641,7 +1641,7 @@ receive_ACK_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, 
 		case RET_CONTINUE:
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_waiting_swqe--;
-			kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+			pib_util_free_send_wqe(qp, send_wqe);
 			break;
 
 		case RET_STOP:
@@ -1661,7 +1661,7 @@ receive_ACK_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, 
 		case RET_CONTINUE:
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_sending_swqe--;
-			kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+			pib_util_free_send_wqe(qp, send_wqe);
 			break;
 
 		case RET_STOP:
@@ -1679,7 +1679,7 @@ completion_error:
 	pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
 				 send_wqe->processing.status, send_wqe->opcode);
 
-	kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+	pib_util_free_send_wqe(qp, send_wqe);
 
 	qp->state = IB_QPS_ERR;
 	pib_util_flush_qp(qp, 0);
@@ -1822,7 +1822,7 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 	(*nr_swqe_p)--;
 
 	list_del_init(&send_wqe->list);
-	kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+	pib_util_free_send_wqe(qp, send_wqe);
 
 	return 0;
 }
@@ -1903,7 +1903,7 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 	(*nr_swqe_p)--;
 
 	list_del_init(&send_wqe->list);
-	kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+	pib_util_free_send_wqe(qp, send_wqe);
 
 	return 0;
 }
@@ -1945,7 +1945,7 @@ abort_active_rwqe(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 	list_del_init(&recv_wqe->list);
 	qp->responder.nr_recv_wqe--;
 
-	kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	pib_util_free_recv_wqe(qp, recv_wqe);
 }
 
 

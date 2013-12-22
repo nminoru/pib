@@ -13,6 +13,7 @@
 
 static int qp_init_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_init_attr *init_attr);
 static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *cap, int use_srq);
+static void dealloc_free_wqe(struct pib_ib_qp *qp);
 static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp *qp, const struct ib_qp_attr *attr, int attr_mask);
 static void get_ready_to_send(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
 static void reset_qp(struct pib_ib_qp *qp);
@@ -86,7 +87,7 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
 					 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
 		list_del_init(&send_wqe->list);
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_waiting_swqe = 0;
 
@@ -94,7 +95,7 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
 					 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
 		list_del_init(&send_wqe->list);
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_sending_swqe = 0;
 
@@ -102,7 +103,7 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
 					 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
 		list_del_init(&send_wqe->list);
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_submitted_swqe = 0;
 
@@ -115,7 +116,7 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 		pib_util_insert_wc_error(qp->recv_cq, qp, recv_wqe->wr_id,
 					 IB_WC_WR_FLUSH_ERR, IB_WC_RECV);
 		list_del_init(&recv_wqe->list);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		pib_util_free_recv_wqe(qp, recv_wqe);
 	}
 	qp->responder.nr_recv_wqe = 0;
 
@@ -143,19 +144,19 @@ static void reset_qp(struct pib_ib_qp *qp)
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		list_del_init(&send_wqe->list);
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_waiting_swqe = 0;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.sending_swqe_head, list) {
 		list_del_init(&send_wqe->list);
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_sending_swqe = 0;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.submitted_swqe_head, list) {
 		list_del_init(&send_wqe->list);
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_submitted_swqe = 0;
 
@@ -163,7 +164,7 @@ static void reset_qp(struct pib_ib_qp *qp)
 
 	list_for_each_entry_safe(recv_wqe, next_recv_wqe, &qp->responder.recv_wqe_head, list) {
 		list_del_init(&recv_wqe->list);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		pib_util_free_recv_wqe(qp, recv_wqe);
 	}
 	qp->responder.nr_recv_wqe = 0;
 
@@ -208,6 +209,8 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 			       struct ib_qp_init_attr *init_attr,
 			       struct ib_udata *udata)
 {
+	int i;
+	int is_register_qp_table = 0;
 	struct pib_ib_dev *dev;
 	struct pib_ib_qp *qp;
 	u32 qp_num;
@@ -241,12 +244,17 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 	qp->recv_cq         = to_pcq(init_attr->recv_cq);
 
 	sema_init(&qp->sem, 1);
+
 	INIT_LIST_HEAD(&qp->new_send_wr_qp_list);
+
 	INIT_LIST_HEAD(&qp->requester.submitted_swqe_head);
 	INIT_LIST_HEAD(&qp->requester.sending_swqe_head);
 	INIT_LIST_HEAD(&qp->requester.waiting_swqe_head);
+	INIT_LIST_HEAD(&qp->requester.free_swqe_head);
+
 	INIT_LIST_HEAD(&qp->responder.recv_wqe_head);
 	INIT_LIST_HEAD(&qp->responder.ack_head);
+	INIT_LIST_HEAD(&qp->responder.free_rwqe_head);
 
 	reset_qp_attr(qp);
 
@@ -277,6 +285,7 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		dev->last_qp_num = qp_num;
 		insert_qp(dev, qp);
 		up_write(&dev->rwsem);
+		is_register_qp_table = 1;
 		break;
 
 	default:
@@ -285,7 +294,44 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		return ERR_PTR(-ENOSYS);
 	}
 
+	/* allocate Send WQEs and Recv WQEs */
+
+	for (i=0 ; i<init_attr->cap.max_send_wr ; i++) {
+		struct pib_ib_send_wqe *send_wqe;
+
+		send_wqe = kmem_cache_zalloc(pib_ib_send_wqe_cachep, GFP_KERNEL);
+		if (!send_wqe)
+			goto err_alloc_wqe;
+
+		INIT_LIST_HEAD(&send_wqe->list);
+		list_add_tail(&send_wqe->list, &qp->requester.free_swqe_head);
+	}
+
+	for (i=0 ; i<init_attr->cap.max_recv_wr ; i++) {
+		struct pib_ib_recv_wqe *recv_wqe;
+
+		recv_wqe = kmem_cache_zalloc(pib_ib_recv_wqe_cachep, GFP_KERNEL);
+		if (!recv_wqe)
+			goto err_alloc_wqe;
+
+		INIT_LIST_HEAD(&recv_wqe->list);
+		list_add_tail(&recv_wqe->list, &qp->responder.free_rwqe_head);
+	}
+
 	return &qp->ib_qp;
+
+err_alloc_wqe:
+	dealloc_free_wqe(qp);
+
+	if (is_register_qp_table) {
+		down_write(&dev->rwsem);
+		rb_erase(&qp->rb_node, &dev->qp_table);
+		up_write(&dev->rwsem);
+	}
+
+	kmem_cache_free(pib_ib_qp_cachep, qp);
+
+	return ERR_PTR(-ENOMEM);
 }
 
 
@@ -356,16 +402,34 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 
 	down(&qp->sem);
 	reset_qp(qp);
+	dealloc_free_wqe(qp);
 	up(&qp->sem);
 
 	if ((ibqp->qp_num != PIB_IB_QP0) && (ibqp->qp_num != PIB_IB_QP1))
 		rb_erase(&qp->rb_node, &dev->qp_table);
-
 	up_write(&dev->rwsem);
 
 	kmem_cache_free(pib_ib_qp_cachep, qp);
 
 	return 0;
+}
+
+
+static void dealloc_free_wqe(struct pib_ib_qp *qp)
+{
+	while (!list_empty(&qp->requester.free_swqe_head)) {
+		struct pib_ib_send_wqe *send_wqe;
+		send_wqe = list_first_entry(&qp->requester.free_swqe_head, struct pib_ib_send_wqe, list);
+		list_del_init(&send_wqe->list);
+		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+	}
+
+	while (!list_empty(&qp->responder.free_rwqe_head)) {
+		struct pib_ib_recv_wqe *recv_wqe;
+		recv_wqe = list_first_entry(&qp->responder.free_rwqe_head, struct pib_ib_recv_wqe, list);
+		list_del_init(&recv_wqe->list);
+		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	}
 }
 
 
@@ -673,6 +737,11 @@ int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 
 	down(&qp->sem);
 
+	if ((qp->state == IB_QPS_RESET) || (qp->state == IB_QPS_INIT)) {
+		ret = -EINVAL;
+		goto done;		
+	}
+
 next_wr:
 	imm_data = ibwr->ex.imm_data;
 
@@ -696,13 +765,14 @@ next_wr:
 		goto done;
 	}
 
-	send_wqe = kmem_cache_zalloc(pib_ib_send_wqe_cachep, GFP_KERNEL);
-	if (!send_wqe) {
+	/* free swqe は max_send_wr しか用意されてないのでチェックも兼ねている */
+	if (list_empty(&qp->requester.free_swqe_head)) {
 		ret = -ENOMEM;
 		goto done;
 	}
 
-	INIT_LIST_HEAD(&send_wqe->list);
+	send_wqe = list_first_entry(&qp->requester.free_swqe_head, struct pib_ib_send_wqe, list);
+	list_del_init(&send_wqe->list); /* list_del でいい？ */
 
 	send_wqe->wr_id      = ibwr->wr_id;
 	send_wqe->opcode     = ibwr->opcode;
@@ -792,13 +862,8 @@ next_wr:
 
 	switch (qp->state) {
 
-	case IB_QPS_RESET:
-		/* @todo IB_QPS_RESET */
-	default:
-		res = PIB_RES_IMMEDIATE_RETURN;
-		goto skip;
-
 	case IB_QPS_ERR:
+	case IB_QPS_SQE:
 		res = PIB_RES_WR_FLUSH_ERR;
 		goto skip;
 
@@ -806,14 +871,13 @@ next_wr:
 		pending_send_wr = 1;
 		break;
 
+	case IB_QPS_RTR:
 	case IB_QPS_SQD:
 		break;
-	}
 
-	if (qp->ib_qp_init_attr.cap.max_send_wr < get_send_wr_num(qp) + 1) {
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
-		ret = -ENOMEM; /* @todo */
-		goto done;		
+	case IB_QPS_RESET:
+	case IB_QPS_INIT:
+		BUG();
 	}
 
 	send_wqe->processing.list_type = PIB_SWQE_SUBMITTED;
@@ -826,12 +890,12 @@ skip:
 	switch (res) {
 
 	case PIB_RES_IMMEDIATE_RETURN:
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 		ret = -EINVAL;
 		goto done;
 
 	case PIB_RES_WR_FLUSH_ERR:
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		pib_util_free_send_wqe(qp, send_wqe);
 		pib_util_insert_wc_error(qp->send_cq, qp, ibwr->wr_id,
 					 IB_WC_WR_FLUSH_ERR, ibwr->opcode);
 		break;
@@ -844,18 +908,16 @@ skip:
 	if (ibwr)
 		goto next_wr;
 
-	up(&qp->sem);
-
-	if (pending_send_wr)
-		get_ready_to_send(dev, qp);
-
-	return 0;
-
 done:
 	up(&qp->sem);
 
-	if (bad_wr)
-		*bad_wr = ibwr;
+	if (ret == 0) {
+		if (pending_send_wr)
+			get_ready_to_send(dev, qp);
+	} else {
+		if (bad_wr)
+			*bad_wr = ibwr;
+	}
 
 	return ret;
 }
@@ -864,7 +926,7 @@ done:
 int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 		     struct ib_recv_wr **bad_wr)
 {
-	int i, ret;
+	int i, ret = 0;
 	struct pib_ib_dev *dev;
 	struct pib_ib_recv_wqe *recv_wqe;
 	struct pib_ib_qp *qp;
@@ -881,19 +943,21 @@ int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 	if (qp->ib_qp_init_attr.srq)
 		return -EINVAL;
 
+	down(&qp->sem);
+
 next_wr:
 	if ((ibwr->num_sge < 1) || (qp->ib_qp_init_attr.cap.max_recv_sge < ibwr->num_sge)) {
 		ret = -EINVAL;
 		goto err;
 	}
 
-	recv_wqe = kmem_cache_zalloc(pib_ib_recv_wqe_cachep, GFP_KERNEL);
-	if (!recv_wqe) {
+	if (list_empty(&qp->responder.free_rwqe_head)) {
 		ret = -ENOMEM;
 		goto err;
 	}
 
-	INIT_LIST_HEAD(&recv_wqe->list);
+	recv_wqe = list_first_entry(&qp->responder.free_rwqe_head, struct pib_ib_recv_wqe, list);
+	list_del_init(&recv_wqe->list); /* list_del でいい？ */
 
 	recv_wqe->wr_id   = ibwr->wr_id;
 	recv_wqe->num_sge = ibwr->num_sge;
@@ -912,8 +976,6 @@ next_wr:
 		; /* @todo */
 
 	recv_wqe->total_length = (u32)total_length;
-
-	down(&qp->sem);
 
 	/* QP check */
 	switch (qp->state) {
@@ -935,32 +997,22 @@ next_wr:
 		break;
 	}
 
-	if (qp->ib_qp_init_attr.cap.max_recv_wr < qp->responder.nr_recv_wqe + 1) {
-		up(&qp->sem);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
-		ret = -ENOMEM; /* @todo */
-		goto err;
-	}
-
 	list_add_tail(&recv_wqe->list, &qp->responder.recv_wqe_head);
 	qp->responder.nr_recv_wqe++;
-skip:
-	up(&qp->sem);
 
+skip:
 	switch (res) {
 
 	case PIB_RES_IMMEDIATE_RETURN:
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		pib_util_free_recv_wqe(qp, recv_wqe);
 		ret = -EINVAL;
 		goto err;
 
 	case PIB_RES_WR_FLUSH_ERR:
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
-
-		down(&qp->sem);
+		pib_util_free_recv_wqe(qp, recv_wqe);
 		pib_util_insert_wc_error(qp->recv_cq, qp, ibwr->wr_id,
 					 IB_WC_WR_FLUSH_ERR, IB_WC_RECV);
-		up(&qp->sem);
+		ret = -EPERM; /* @todo ? */
 		break;
 
 	default:
@@ -971,13 +1023,40 @@ skip:
 	if (ibwr)
 		goto next_wr;
 
-	return 0;
-
 err:
-	if (bad_wr)
-		*bad_wr = ibwr;
+	up(&qp->sem);
+
+	if (ret)
+		if (bad_wr)
+			*bad_wr = ibwr;
 
 	return ret;
+}
+
+
+void pib_util_free_send_wqe(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
+{
+	memset(send_wqe, 0, sizeof(*send_wqe));
+	INIT_LIST_HEAD(&send_wqe->list);
+
+	list_add_tail(&send_wqe->list, &qp->requester.free_swqe_head);
+}
+
+
+void pib_util_free_recv_wqe(struct pib_ib_qp *qp, struct pib_ib_recv_wqe *recv_wqe)
+{
+	memset(recv_wqe, 0, sizeof(*recv_wqe));
+	INIT_LIST_HEAD(&recv_wqe->list);
+
+	if (qp->ib_qp_init_attr.srq) {
+		struct pib_ib_srq *srq = to_psrq(qp->ib_qp_init_attr.srq);
+		spin_lock(&srq->lock);
+		/* @todo SRQ エラーをチェックすべき？ */ 
+		list_add_tail(&recv_wqe->list, &srq->free_recv_wqe_head);
+		spin_unlock(&srq->lock);
+	} else {
+		list_add_tail(&recv_wqe->list, &qp->responder.free_rwqe_head);
+	}
 }
 
 

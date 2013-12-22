@@ -41,6 +41,8 @@ struct ib_cq *pib_ib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	INIT_LIST_HEAD(&cq->cqe_head);
 	INIT_LIST_HEAD(&cq->free_cqe_head);
 
+	/* allocate CQE internally */
+
 	for (i=0 ; i<entries ; i++) {
 		struct pib_ib_cqe *cqe;
 
@@ -112,8 +114,8 @@ int pib_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 int pib_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 {
 	int i, ret = 0;
-	unsigned long flags;
 	struct pib_ib_cq *cq;
+	unsigned long flags;
 
 	if (!ibcq)
 		return -EINVAL;
@@ -201,10 +203,11 @@ static int insert_wc(struct pib_ib_cq *cq, const struct ib_wc *wc)
 
 	cqe = list_first_entry(&cq->free_cqe_head, struct pib_ib_cqe, list);
 	list_del_init(&cqe->list);
-	list_add_tail(&cqe->list, &cq->cqe_head);
 
 	cqe->ib_wc = *wc;
 	cq->nr_cqe++;
+
+	list_add_tail(&cqe->list, &cq->cqe_head);
 
 	spin_unlock_irqrestore(&cq->lock, flags);
 

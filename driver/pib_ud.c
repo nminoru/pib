@@ -320,13 +320,13 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 
 	qp->push_rcqe = 1;
 	qp->ib_qp_attr.rq_psn++;
-	kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	pib_util_free_recv_wqe(qp, recv_wqe);
 
 	return;
 
 silently_drop:
 	if (recv_wqe)
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe); /* @todo WC をあげるべき */
+		pib_util_free_recv_wqe(qp, recv_wqe); /* @todo WC をあげるべき */
 
 	return;
 
@@ -341,5 +341,5 @@ completion_error:
 	qp->push_rcqe = 1;
 	/* qp->ib_qp_attr.rq_psn++; */ /* @todo エラー時も PSN をまわすのか？ */
 
-	kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+	pib_util_free_recv_wqe(qp, recv_wqe);
 }
