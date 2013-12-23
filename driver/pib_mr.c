@@ -218,8 +218,10 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 		diff = sge.addr - mr->start;
 
 		if (offset < range) {
-			mr_copy_data(mr, buffer, offset + diff, range - offset, 0, 0, direction);
-			size -= range - offset;
+			u64 chunk_size = range - offset;
+			mr_copy_data(mr, buffer, diff + offset, chunk_size, 0, 0, direction);
+			buffer += chunk_size;
+			size   -= chunk_size;
 		}
 
 		offset -= range;
