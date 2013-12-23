@@ -187,7 +187,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		struct ib_wc wc = {
 			.wr_id    = send_wqe->wr_id,
 			.status   = IB_WC_SUCCESS,
-			.opcode   = send_wqe->opcode,
+			.opcode   = pib_convert_wr_opcode_to_wc_opcode(send_wqe->opcode),
 			.qp       = &qp->ib_qp,
 		};
 
