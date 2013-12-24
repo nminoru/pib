@@ -126,7 +126,15 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	ud_packet->bth.A      = 0;
 	ud_packet->bth.PSN    = qp->ib_qp_attr.sq_psn;
 
-	ud_packet->deth.Q_Key = send_wqe->wr.ud.remote_qkey;
+	/*
+	 *  An attempt to send a Q_Key with the most siginificant bit set results
+	 *  in using the Q_key in the QP context instead of Send WR context.
+	 *
+	 *  @see IBA Spec. Vol.1 3.5.3 KEYS
+	 */
+	ud_packet->deth.Q_Key = ((s32)send_wqe->wr.ud.remote_qkey < 0) ?
+		qp->ib_qp_attr.qkey : send_wqe->wr.ud.remote_qkey;
+
 	ud_packet->deth.SrcQP = qp->ib_qp.qp_num;
 
 	buffer += sizeof(*ud_packet);
