@@ -59,19 +59,23 @@ int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
 		       struct ib_wc *in_wc, struct ib_grh *in_grh,
 		       struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
+	int ret;
+
 	BUG_ON(!in_mad || !out_mad);
+
+	ret = IB_MAD_RESULT_SUCCESS;
 
 	*out_mad = *in_mad;
 
-	if (in_mad->mad_hdr.method == IB_MGMT_METHOD_GET_RESP) {
-		return IB_MAD_RESULT_SUCCESS;
-	}
+	if (in_mad->mad_hdr.method == IB_MGMT_METHOD_GET_RESP)
+		goto done;
 
 	switch (in_mad->mad_hdr.mgmt_class) {
 
-	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
 		return process_subn(ibdev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
+
+	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
 
 	case IB_MGMT_CLASS_SUBN_ADM:
 	case IB_MGMT_CLASS_PERF_MGMT:
@@ -86,12 +90,14 @@ int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
 	case IB_MGMT_CLASS_VENDOR_RANGE2_START:
 	case IB_MGMT_CLASS_VENDOR_RANGE2_END:
 	default:
+		pr_err("Not Implementation class: %u\n", in_mad->mad_hdr.mgmt_class);
 		pib_print_mad("IN", &in_mad->mad_hdr);
 		pib_print_mad("OUT", &out_mad->mad_hdr);
 		break;
 	}
 
-	return 0;
+done:
+	return ret;
 }
 
 
@@ -438,7 +444,6 @@ void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 		/* 1 bit, 2 bits, 5 */
 		port_info->clientrereg_resv_subnetto =
 			(port->client_reregister << 7) | port->subnet_timeout;
-
 #if 0
 		/* 3 bits, 5 bits */
 		port_info->resv_resptimevalue;
@@ -482,6 +487,14 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 	if (port->ib_port_attr.state < IB_PORT_INIT) {
 		struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 		port->ib_port_attr.state = IB_PORT_INIT;
+
+		/*
+		 *  HACK
+		 *  SubnSet() に対する SubnGetResp() では、SubnSet() の内容をそ
+		 *  のままコピーすることになっている(C13-12.1.1)。
+		 *  しかし OpenSM はここで LinkDown ではなく LinkInitialize を
+		 *  返すことを期待している。
+		 */
 		port_info->linkspeed_portstate = (port_info->linkspeed_portstate & 0xF0) | port->ib_port_attr.state;
 	}
 
@@ -573,9 +586,11 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 		port->overrun_errors       = port_info->localphyerrors_overrunerrors & 0xF;
 	}
 
+#if 0
 	debug_printk("pib_subn_set_portinfo: type=%u, port_num=%u, tid=%llx, lid=%u, state=%u phy_state=%u\n",
 		     type, port_num, (unsigned long long)cpu_to_be16(smp->tid), port->ib_port_attr.lid,
 		     port->ib_port_attr.state, port->ib_port_attr.phys_state);
+#endif
 }
 
 
