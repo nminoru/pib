@@ -456,8 +456,6 @@ const char *pib_get_smp_attr(__be16 attr_id)
 	}
 }
 
-		
-
 
 void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr)
 {

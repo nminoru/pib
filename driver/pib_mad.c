@@ -469,8 +469,11 @@ void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 
 static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
+	int port_index;
+	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 	u32 port_num = be32_to_cpu(smp->attr_mod);
 	struct pib_ib_port *port;
+	u16 old_lid, new_lid;
 
 	if (port_num == 0)
 		port_num = in_port_num;
@@ -480,7 +483,23 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 		goto bail;
 	}
 
-	port = &dev->ports[port_num - 1];
+	port_index = port_num - 1;
+
+	port = &dev->ports[port_index];
+
+	old_lid = port->ib_port_attr.lid;
+	new_lid = be16_to_cpu(port_info->lid);
+
+#ifdef PIB_USE_EASY_SWITCH
+	if (old_lid != new_lid) {
+		/* @todo need lock */
+		if (old_lid != 0)
+			dev->ports[port_index].lid_table[old_lid] = NULL;
+		if (new_lid != 0)
+			dev->ports[port_index].lid_table[new_lid] = 
+				dev->ports[port_num - 1].sockaddr;
+	}
+#endif
 	
 	pib_subn_set_portinfo(smp, port, port_num, PIB_PORT_CA);
 

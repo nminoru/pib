@@ -35,10 +35,6 @@ struct kmem_cache *pib_ib_ack_cachep;
 struct kmem_cache *pib_ib_cqe_cachep;
 
 
-static struct class *dummy_parent_class; /* /sys/class/pib */
-static struct device *dummy_parent_device;
-static u64 dummy_parent_device_dma_mask = DMA_BIT_MASK(32);
-
 u64 hca_guid_base;
 struct pib_ib_dev *pib_ib_devs[PIB_IB_MAX_HCA];
 struct pib_ib_easy_sw  pib_ib_easy_sw;
@@ -50,6 +46,12 @@ MODULE_PARM_DESC(num_hca, "Number of pib HCAs");
 unsigned int pib_phys_port_cnt = 2;
 module_param_named(phys_port_cnt, pib_phys_port_cnt, uint, S_IRUGO);
 MODULE_PARM_DESC(phys_port_cnt, "Number of physical ports");
+
+
+static struct class *dummy_parent_class; /* /sys/class/pib */
+static struct device *dummy_parent_device;
+static u64 dummy_parent_device_dma_mask = DMA_BIT_MASK(32);
+static struct sockaddr **lid_table;
 
 
 static int pib_ib_query_device(struct ib_device *ibdev,
@@ -473,9 +475,13 @@ static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 		dev->ports[i].port_num	= i + 1;
 		dev->ports[i].ib_port_attr = ib_port_attr;
 
-		dev->ports[i].lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_IB_MAX_LID);
-		if (!dev->ports[i].lid_table)
-			goto err_ld_table;
+		if (lid_table != NULL) {
+			dev->ports[i].lid_table = lid_table;
+		} else {
+			dev->ports[i].lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_IB_MAX_LID);
+			if (!dev->ports[i].lid_table)
+				goto err_ld_table;
+		}
 
 		/*
 		 * @see IBA Spec. Vol.1 4.1.1
@@ -518,9 +524,10 @@ err_create_kthread:
 err_register_ibdev:
 
 err_ld_table:
-	for (i = dev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
-		if (dev->ports[i].lid_table)
-			vfree(dev->ports[i].lid_table);
+	if (lid_table == NULL)
+		for (i = dev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
+			if (dev->ports[i].lid_table)
+				vfree(dev->ports[i].lid_table);
 
 	vfree(dev->ports);
 err_ports:
@@ -541,9 +548,10 @@ static void pib_ib_remove(struct pib_ib_dev *dev)
 
 	pib_release_kthread(dev);
 
-	for (i= dev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
-		if (dev->ports[i].lid_table)
-			vfree(dev->ports[i].lid_table);
+	if (lid_table == NULL)
+		for (i= dev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
+			if (dev->ports[i].lid_table)
+				vfree(dev->ports[i].lid_table);
 
 	vfree(dev->ports);
 
@@ -748,6 +756,12 @@ static int __init pib_ib_init(void)
 
 	get_hca_guid_base();
 
+#ifdef PIB_USE_EASY_SWITCH
+	lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_IB_MAX_LID);	
+	if (!lid_table)
+		goto err_alloc_lid_table;
+#endif
+
 	if (pib_kmem_cache_create()) {
 		pib_kmem_cache_destroy();
 		err = -ENOMEM;
@@ -778,6 +792,11 @@ err_create_switch:
 	pib_kmem_cache_destroy();
 err_kmem_cache_destroy:
 
+#ifdef PIB_USE_EASY_SWITCH
+	vfree(lid_table);
+err_alloc_lid_table:
+#endif
+
 	device_unregister(dummy_parent_device);
 	dummy_parent_device = NULL;
 err_device_create:
@@ -801,6 +820,10 @@ static void __exit pib_ib_cleanup(void)
 	pib_release_switch(&pib_ib_easy_sw);
 
 	pib_kmem_cache_destroy();
+
+#ifdef PIB_USE_EASY_SWITCH
+	vfree(lid_table);
+#endif
 
 	if (dummy_parent_device) {
 		device_unregister(dummy_parent_device);

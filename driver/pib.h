@@ -47,6 +47,9 @@
 #define PIB_IB_UVERBS_ABI_VERSION  (6)
 
 
+#define PIB_USE_EASY_SWITCH
+
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 /*
  *  Linux kernels less than 3.13 have the bug that ib_uverbs_post_send() in

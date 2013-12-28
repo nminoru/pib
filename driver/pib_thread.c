@@ -191,17 +191,19 @@ static void release_socket(struct pib_ib_dev *dev, int port_index)
 {
 	int i;
 
-	for (i=0 ; i<PIB_IB_MAX_LID ; i++) {
-		if (dev->ports[port_index].sockaddr) {
-			kfree(dev->ports[port_index].sockaddr);
-			dev->ports[port_index].sockaddr = NULL;
-		}
+	if (dev->ports[port_index].sockaddr) {
+		kfree(dev->ports[port_index].sockaddr);
+		dev->ports[port_index].sockaddr = NULL;
+	}
 
+#ifndef PIB_USE_EASY_SWITCH
+	for (i=0 ; i<PIB_IB_MAX_LID ; i++) {
 		if (dev->ports[port_index].lid_table[i]) {
 			kfree(dev->ports[port_index].lid_table[i]);
 			dev->ports[port_index].lid_table[i] = NULL;
 		}
 	}
+#endif
 
 	if (dev->ports[port_index].socket) {
 		sock_release(dev->ports[port_index].socket);
