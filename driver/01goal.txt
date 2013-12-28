@@ -1,17 +1,3 @@
-○ ゴール
-
-・単体で動く UD/RC
-・複数ノードにまたがって動かす。
-・代替パス
-・OpenSM
-・Multicast 対応
-・IPoIB を動かす
-・RMDA CM を動かす。
-・SDP を動かす。
-・XRC
-・IPv6 対応
-・Kernel Update Package 化
-
 ○ Verfication
 
 - Receiver の平行動作

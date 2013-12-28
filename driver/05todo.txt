@@ -1,3 +1,12 @@
+- inline 対応
+  IBV_SEND_INLINE をつけると L_Key をチェックしなくなる。
+
+- UD/UC/RD/RC/XRC
+
+- パケットヘッダーのエンディアン変換
+
+- ソケットのバッファサイズを変更可能に。
+
 - RESET 時に送信した場合の挙動
 
 - RESET 時に受信した場合の挙動
@@ -7,11 +16,7 @@
 
 - IBV_WC_RESP_TIMEOUT_ERR
 
-- ソケットのバッファサイズを増やす。
-
 - pib_util_get_srq のロック条件を見直せ
-
-- MAC アドレスから GID を合成する
 
 - 11.4.2.2 Request Completion Notification
   - SEND

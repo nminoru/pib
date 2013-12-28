@@ -85,12 +85,13 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		goto completion_error;
 	}
 
-	if (qp->ib_qp_attr.port_num != port_num) {
-		status = IB_WC_LOC_QP_OP_ERR;
-		goto completion_error;
-	}
+	if (qp->qp_type == IB_QPT_UD) /* ignore port_num check if SMI QP and GSI QP */
+		if (qp->ib_qp_attr.port_num != port_num) {
+			status = IB_WC_LOC_QP_OP_ERR;
+			goto completion_error;
+		}
 
-	sockaddr = dev->ports[port_num - 1].lid_table[ah->ib_ah_attr.dlid];
+	sockaddr = pib_get_sockaddr_from_lid(dev, port_num, qp, ah->ib_ah_attr.dlid);
 
 	if (!sockaddr) {
 		debug_printk("Not found the destination address in ld_table (ah.dlid=%u)", ah->ib_ah_attr.dlid);
@@ -169,6 +170,19 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	ud_packet->bth.PadCnt = ud_packet->lrh.PktLen * 4 - total_length;
 
 	total_length = ud_packet->lrh.PktLen * 4;
+
+	if (ud_packet->bth.DestQP == PIB_IB_QP0) {
+		struct pib_packet_smp *packet;
+		
+		packet = (struct pib_packet_smp *)buffer;
+
+		if (packet->smp.mgmt_class == IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE) {
+			if (packet->smp.dr_slid == IB_LID_PERMISSIVE)
+				ud_packet->lrh.SLID = 0xFFFF;
+			if (packet->smp.dr_dlid == IB_LID_PERMISSIVE)
+				ud_packet->lrh.DLID = 0xFFFF;
+		}
+	}
 
 	memset(&msghdr, 0, sizeof(msghdr));
 	
@@ -257,12 +271,25 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 	buffer += sizeof(*deth);
 	size   -= sizeof(*deth);
 
-	if (qp->ib_qp_attr.port_num != port_num)
-		goto silently_drop;
+	if (qp->qp_type == IB_QPT_UD) /* ignore port_num check if SMI QP and GSI QP */
+		if (qp->ib_qp_attr.port_num != port_num)
+			goto silently_drop;
 
 	/* BTH: Q_Key check */
-	if (qp->ib_qp_attr.qkey != deth->Q_Key)
-		goto silently_drop;
+	switch (qp->qp_type) {
+	case IB_QPT_SMI:
+		break;
+
+	case IB_QPT_GSI:
+		if (deth->Q_Key != IB_QP1_QKEY)
+			goto silently_drop;
+		break;
+
+	default:
+		if (deth->Q_Key != qp->ib_qp_attr.qkey)
+			goto silently_drop;
+		break;
+	}
 
 	/* Analyze Immediate Extended Transport Header */
 	if (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) {

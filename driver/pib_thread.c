@@ -118,7 +118,6 @@ static int create_socket(struct pib_ib_dev *dev, int port_index)
 	struct socket *socket;
 	struct sockaddr_in sockaddr_in;
 	struct sockaddr_in *sockaddr_in_p;
-	u16 lid;
 
 	ret = sock_create_kern(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &socket);
 	if (ret < 0)
@@ -171,14 +170,13 @@ static int create_socket(struct pib_ib_dev *dev, int port_index)
 	dev->ports[port_index].socket = socket;
 
 	/* register lid_table */
-	sockaddr_in_p  = kzalloc(sizeof(struct sockaddr_in), GFP_ATOMIC);
+	sockaddr_in_p  = kzalloc(sizeof(struct sockaddr_in), GFP_KERNEL);
 
-	sockaddr_in_p->sin_family      = AF_INET;
-	sockaddr_in_p->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	sockaddr_in_p->sin_port        = sockaddr_in.sin_port;
+	sockaddr_in_p->sin_family	= AF_INET;
+	sockaddr_in_p->sin_addr.s_addr	= htonl(INADDR_LOOPBACK);
+	sockaddr_in_p->sin_port		= sockaddr_in.sin_port;
 
-	lid = dev->ports[port_index].ib_port_attr.lid;
-	dev->ports[port_index].lid_table[lid] = (struct sockaddr*)sockaddr_in_p;
+	dev->ports[port_index].sockaddr	= (struct sockaddr *)sockaddr_in_p;
 
 	return 0;
 
@@ -193,11 +191,17 @@ static void release_socket(struct pib_ib_dev *dev, int port_index)
 {
 	int i;
 
-	for (i=0 ; i<PIB_IB_MAX_LID ; i++)
+	for (i=0 ; i<PIB_IB_MAX_LID ; i++) {
+		if (dev->ports[port_index].sockaddr) {
+			kfree(dev->ports[port_index].sockaddr);
+			dev->ports[port_index].sockaddr = NULL;
+		}
+
 		if (dev->ports[port_index].lid_table[i]) {
 			kfree(dev->ports[port_index].lid_table[i]);
 			dev->ports[port_index].lid_table[i] = NULL;
 		}
+	}
 
 	if (dev->ports[port_index].socket) {
 		sock_release(dev->ports[port_index].socket);
@@ -509,13 +513,9 @@ static int process_send_wr(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct 
 		return pib_process_rc_qp_request(dev, qp, send_wqe);
 
 	case IB_QPT_UD:
-		return pib_process_ud_qp_request(dev, qp, send_wqe);
-
-	case IB_QPT_SMI:
-		return pib_process_smi_qp_request(dev, qp, send_wqe);
-
 	case IB_QPT_GSI:
-		return pib_process_gsi_qp_request(dev, qp, send_wqe);
+	case IB_QPT_SMI:
+		return pib_process_ud_qp_request(dev, qp, send_wqe);
 
 	default:
 		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
@@ -540,6 +540,8 @@ completion_error:
 		break;
 
 	case IB_QPT_UD:
+	case IB_QPT_GSI:
+	case IB_QPT_SMI:
 		qp->state = IB_QPS_SQE;
 		pib_util_flush_qp(qp, 1);
 		break;
@@ -601,7 +603,7 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	if (ret < sizeof(struct pib_packet_bth))
 		goto silently_drop;
 
-	bth = (struct pib_packet_bth*)buffer;
+	bth = (struct pib_packet_bth *)buffer;
 
 	buffer += sizeof(*bth);
 	ret    -= sizeof(*bth);
@@ -616,14 +618,20 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 
 	down_read(&dev->rwsem);
 
-	qp = pib_util_find_qp(dev, bth->DestQP);
+	if ((bth->DestQP == PIB_IB_QP0) || (bth->DestQP == PIB_IB_QP1))
+		qp = dev->ports[port_index].qp_info[bth->DestQP];
+	else
+		qp = pib_util_find_qp(dev, bth->DestQP);
+
 	if (qp == NULL) {
 		up_read(&dev->rwsem);
 		goto silently_drop;
 	}
 
 	/* LRH: check port LID and DLID of incoming packet */
-	if (lrh->DLID != dev->ports[port_index].ib_port_attr.lid) {
+	if (((bth->DestQP == PIB_IB_QP0) && (lrh->DLID == 0xFFFF))) /* @todo Permissive LID */
+		;
+	else if (lrh->DLID != dev->ports[port_index].ib_port_attr.lid) {
 		up_read(&dev->rwsem);
 		goto silently_drop;
 	}
@@ -638,18 +646,10 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 		break;
 
 	case IB_QPT_UD:
+	case IB_QPT_GSI:
+	case IB_QPT_SMI:
 		pib_receive_ud_qp_SEND_request(dev, port_num, qp, buffer, ret, lrh, bth);
 		break;
-
-#if 0
-	case IB_QPT_SMI:
-		pib_receive_smi_qp_incoming_message(dev, port_num, qp, buffer, ret, lrh, bth);
-		break;
-
-	case IB_QPT_GSI:
-		pib_receive_gsi_qp_incoming_message(dev, port_num, qp, buffer, ret, lrh, bth);
-		break;
-#endif
 
 	default:
 		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",

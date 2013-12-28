@@ -24,12 +24,24 @@
 #include <rdma/ib_umem.h>
 #include <rdma/ib_mad.h>
 #include <rdma/ib_sa.h>
+#include <rdma/ib_mad.h> /* for ib_mad_hdr */
+#include <rdma/ib_smi.h> /* for ib_smp */
 
 
 #include "pib_packet.h"
 
 
-#define PIB_DRIVER_VERSION   "0.06"
+#define PIB_VERSION_MAJOR	0
+#define PIB_VERSION_MINOR	1
+#define PIB_VERSION_REVISION	0
+#define PIB_DRIVER_VERSION 	"0.1.0"
+
+#define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
+#define PIB_DRIVER_FW_VERSION \
+	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
+
+#define PIB_DRIVER_DEVICE_ID	(1)
+#define PIB_DRIVER_REVISION	(1)
 
 /* IB_USER_VERBS_ABI_VERSION */
 #define PIB_IB_UVERBS_ABI_VERSION  (6)
@@ -45,30 +57,35 @@
 #endif
 
 
-#define PIB_IB_MAX_HCA   (4)
-#define PIB_IB_MAX_PORTS (8)   /* In IBA Spec. Vol.1 17.2.1.3 C17-7.a1, a channel adaptor may support up to 254 ports(1-253).  */
-#define PIB_IB_MAX_LID   (65536)
+#define PIB_IB_MAX_HCA			(4)
+#define PIB_IB_MAX_PORTS		(32) /* In IBA Spec. Vol.1 17.2.1.3 C17-7.a1, a channel adaptor may support up to 254 ports(1-253).  */
+#define PIB_IB_MAX_LID			(65536)
 
-#define PIB_IB_QP0 (0)
-#define PIB_IB_QP1 (1)
+#define PIB_IB_QP0			(0)
+#define PIB_IB_QP1			(1)
+#define PIB_IB_MAD_QPS_CORE		(2)
 
-#define PIB_IB_MAX_SGE                (32)
-#define PIB_IB_MAX_RD_ATOM            (16)
+#define PIB_IB_MAX_SGE			(32)
+#define PIB_IB_MAX_RD_ATOM		(16)
 
-#define PIB_IB_QPN_MASK               (0xFFFFFF)
-#define PIB_IB_PSN_MASK               (0xFFFFFF)
-#define PIB_IB_LID_BASE               (0xC000)
-#define PIB_IB_LOCAL_ACK_TIMEOUT_MASK (0x1F)
-#define PIB_IB_MIN_RNR_NAK_TIMER_MASK (0x1F)
-#define PIB_IB_MAX_MR_PER_PD          (4096)
-#define PIB_IB_MR_INDEX_MASK          (PIB_IB_MAX_MR_PER_PD - 1)
-#define PIB_IB_PACKET_BUFFER          (8192)
-#define PIB_IB_GID_PER_PORT           (16)
-#define PIB_IB_MAX_PAYLOAD_LEN        (0x80000000)
+#define PIB_IB_QPN_MASK			(0xFFFFFF)
+#define PIB_IB_PSN_MASK			(0xFFFFFF)
+#define PIB_IB_LID_BASE			(0xC000)
+#define PIB_IB_LOCAL_ACK_TIMEOUT_MASK	(0x1F)
+#define PIB_IB_MIN_RNR_NAK_TIMER_MASK	(0x1F)
+#define PIB_IB_MAX_MR_PER_PD		(4096)
+#define PIB_IB_MR_INDEX_MASK		(PIB_IB_MAX_MR_PER_PD - 1)
+#define PIB_IB_PACKET_BUFFER		(8192)
+#define PIB_IB_GID_PER_PORT		(16)
+#define PIB_IB_MAX_PAYLOAD_LEN	        (0x80000000)
 
-#define PIB_IB_IMM_DATA_LKEY          (0xA0B0C0D0)
+#define PIB_IB_IMM_DATA_LKEY		(0xA0B0C0D0)
 
-#define PIB_SCHED_TIMEOUT             (0x3FFFFFFF) /* 1/4 of max value of unsigned long */
+#define PIB_SCHED_TIMEOUT		(0x3FFFFFFF) /* 1/4 of max value of unsigned long */
+
+#define PIB_PKEY_TABLE_LEN              (32)
+
+#define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_SYS_IMAGE_GUID|IB_DEVICE_RC_RNR_NAK_GEN)
 
 #define debug_printk(fmt, args...) \
 	printk(KERN_ERR fmt, ## args);
@@ -105,6 +122,14 @@ enum pib_ib_phys_port_state_{
 	PIB_IB_PHYS_PORT_LINK_UP  = 5,
 	PIB_IB_PHYS_PORT_LINK_ERROR_RECOVERY = 6,
 	PIB_IB_PHYS_PORT_PHY_TEST = 7
+};
+
+
+enum pib_port_type {
+	PIB_PORT_CA = 1,
+	PIB_PORT_SW_EXT,
+	PIB_PORT_BASE_SP0,
+	PIB_PORT_ENH_SP0
 };
 
 
@@ -146,10 +171,27 @@ struct pib_dev {
 
 struct pib_ib_port {
 	u8                      port_num;
+
 	struct ib_port_attr     ib_port_attr;
+
+	u8			mkey;
+	u8			mkeyprot;
+	u16			mkey_lease_period;
+	u8			link_down_default_state;
+	u8			link_width_enabled;
+	u8			link_speed_enabled;
+	u8			master_smsl;
+	u8			client_reregister;
+	u8			subnet_timeout;
+	u8			local_phy_errors;
+	u8			overrun_errors;
+
 	struct sockaddr       **lid_table;
 	struct socket          *socket;
-	union ib_gid            gid[PIB_IB_GID_PER_PORT];
+	struct sockaddr        *sockaddr;
+	union ib_gid		gid[PIB_IB_GID_PER_PORT];
+	struct pib_ib_qp       *qp_info[PIB_IB_MAD_QPS_CORE];
+	__be16			pkey_table[PIB_PKEY_TABLE_LEN];
 };
 
 
@@ -197,9 +239,31 @@ struct pib_ib_dev {
 		struct list_head        new_send_wr_qp_head;
 	} thread;
 
-	struct pib_ib_port      ports[PIB_IB_MAX_PORTS];
+	struct pib_ib_port     *ports;
 
 	struct rw_semaphore     rwsem;
+};
+
+
+struct pib_ib_easy_sw {
+	struct task_struct     *task;
+	spinlock_t		lock;
+	struct completion       completion;
+	unsigned long           flags;
+	struct socket          *socket;
+	struct sockaddr        *sockaddr;
+
+	u8                      port_cnt; /* include port 0 */
+	struct pib_ib_port     *ports;
+
+	u16			linear_fdb_top;
+	u8			default_port;
+	u8			default_mcast_primary_port;
+	u8			default_mcast_not_primary_port;
+	u8			life_time_value;
+	u8			port_state_change;
+
+	u8		       *forwarding_table;
 };
 
 
@@ -232,7 +296,6 @@ struct pib_ib_mr {
 	u32                     rkey_prefix;
  
 	int                     is_dma;
-	int                     acc; 
 	u64                     start;
 	u64                     length;
 	u64                     virt_addr;
@@ -484,6 +547,11 @@ struct pib_ib_cqe {
 };
 
 
+extern u64 hca_guid_base;
+extern struct pib_ib_dev *pib_ib_devs[];
+extern struct pib_ib_easy_sw pib_ib_easy_sw;
+extern unsigned int pib_num_hca;
+extern unsigned int pib_phys_port_cnt;
 extern struct kmem_cache *pib_ib_ah_cachep;
 extern struct kmem_cache *pib_ib_mr_cachep;
 extern struct kmem_cache *pib_ib_qp_cachep;
@@ -493,6 +561,7 @@ extern struct kmem_cache *pib_ib_send_wqe_cachep;
 extern struct kmem_cache *pib_ib_recv_wqe_cachep;
 extern struct kmem_cache *pib_ib_ack_cachep;
 extern struct kmem_cache *pib_ib_cqe_cachep;
+
 
 
 static inline struct pib_ib_dev *to_pdev(struct ib_device *ibdev)
@@ -552,7 +621,7 @@ extern int pib_ib_dealloc_pd(struct ib_pd *ibpd);
 extern struct ib_ah *pib_ib_create_ah(struct ib_pd *pd, struct ib_ah_attr *ah_attr);
 extern int pib_ib_destroy_ah(struct ib_ah *ah);
 
-extern struct ib_mr *pib_ib_get_dma_mr(struct ib_pd *pd, int acc);
+extern struct ib_mr *pib_ib_get_dma_mr(struct ib_pd *pd, int access_flags);
 extern struct ib_mr *pib_ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 					u64 virt_addr, int access_flags,
 					struct ib_udata *udata);
@@ -643,8 +712,14 @@ extern void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib
 extern int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
 			       struct ib_wc *in_wc, struct ib_grh *in_grh,
 			       struct ib_mad *in_mad, struct ib_mad *out_mad);
-extern int pib_process_smi_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
-extern int pib_process_gsi_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
+extern void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port_num, enum pib_port_type type);
+extern void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port_num, enum pib_port_type type);
+
+/*
+ *  in pib_easy_sw.c
+ */
+extern int pib_create_switch(struct pib_ib_easy_sw *sw);
+extern void pib_release_switch(struct pib_ib_easy_sw *sw);
 
 /*
  *  in pib_lib.c
@@ -660,5 +735,12 @@ enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode);
 extern u32 pib_get_num_of_packets(struct pib_ib_qp *qp, u32 length);
 extern u32 pib_get_rnr_nak_time(int timeout);
 extern u32 pib_get_local_ack_time(int timeout);
+extern u8 pib_get_local_ca_ack_delay(void);
+extern struct sockaddr *pib_get_sockaddr_from_lid(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u16 lid);
+extern void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr);
+extern void pib_print_smp(const char *direct, const struct ib_smp *smp);
+extern const char *pib_get_mgmt_method(u8 method);
+extern const char *pib_get_smp_attr(__be16 attr_id);
+
 
 #endif /* PIB_H */

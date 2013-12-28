@@ -262,10 +262,21 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 
 	case IB_QPT_SMI:
 		qp_num = PIB_IB_QP0;
-		break;
+		goto special_qp;
 
 	case IB_QPT_GSI:
 		qp_num = PIB_IB_QP1;
+		goto special_qp;
+
+	special_qp:
+		qp->ib_qp.qp_num = qp_num;
+
+		down_write(&dev->rwsem);
+		if (dev->ports[init_attr->port_num - 1].qp_info[qp_num])
+			pr_err("pib: try to create QP%u again\n", qp_num);
+		else
+			dev->ports[init_attr->port_num - 1].qp_info[qp_num] = qp;
+		up_write(&dev->rwsem);
 		break;
 
 	case IB_QPT_RC:
@@ -387,6 +398,7 @@ static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *ca
 
 int pib_ib_destroy_qp(struct ib_qp *ibqp)
 {
+	int qp_num;
 	struct pib_ib_qp *qp;
 	struct pib_ib_dev *dev;
 
@@ -395,6 +407,7 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	if (!ibqp)
 		return -EINVAL;
 
+	qp_num = ibqp->qp_num;
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
 
@@ -405,8 +418,11 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	dealloc_free_wqe(qp);
 	up(&qp->sem);
 
-	if ((ibqp->qp_num != PIB_IB_QP0) && (ibqp->qp_num != PIB_IB_QP1))
+	if ((qp_num == PIB_IB_QP0) || (qp_num == PIB_IB_QP1))
+		dev->ports[qp->ib_qp_init_attr.port_num - 1].qp_info[qp_num] = NULL;
+	else
 		rb_erase(&qp->rb_node, &dev->qp_table);
+
 	up_write(&dev->rwsem);
 
 	kmem_cache_free(pib_ib_qp_cachep, qp);
@@ -524,7 +540,7 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	}
 
 	if (attr_mask & IB_QP_TIMEOUT)
-		qp->ib_qp_attr.timeout     = attr->timeout;
+		qp->ib_qp_attr.timeout     = attr->timeout; /* 解像度は local_ca_ack_delay に制限される */
 
 	if (attr_mask & IB_QP_RETRY_CNT)
 		qp->ib_qp_attr.retry_cnt   = attr->retry_cnt;
@@ -847,9 +863,11 @@ next_wr:
 					res = PIB_RES_IMMEDIATE_RETURN;
 					goto skip;
 				}
-			send_wqe->wr.ud.ah              = ibwr->wr.ud.ah;
-			send_wqe->wr.ud.remote_qpn      = ibwr->wr.ud.remote_qpn;
-			send_wqe->wr.ud.remote_qkey     = ibwr->wr.ud.remote_qkey;
+			send_wqe->wr.ud.ah		= ibwr->wr.ud.ah;
+			send_wqe->wr.ud.remote_qpn	= ibwr->wr.ud.remote_qpn;
+			send_wqe->wr.ud.remote_qkey	= ibwr->wr.ud.remote_qkey;
+			send_wqe->wr.ud.pkey_index	= ibwr->wr.ud.pkey_index;
+			send_wqe->wr.ud.port_num	= ibwr->wr.ud.port_num;
 			break;
 		default:
 			break;
@@ -1085,7 +1103,7 @@ void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type eve
 	ev.device     = qp->ib_qp.device;
 	ev.element.qp = &qp->ib_qp;
 
-	local_bh_disable();
+	local_bh_disable(); /* @todo 取り除け */
 	qp->ib_qp.event_handler(&ev, qp->ib_qp.qp_context);
 	local_bh_enable();
 }

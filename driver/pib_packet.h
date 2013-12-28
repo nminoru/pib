@@ -9,6 +9,9 @@
 #include <linux/module.h>
 #include <linux/init.h>
 
+#include <rdma/ib_mad.h>
+#include <rdma/ib_smi.h>
+
 
 /* NAK Codes */
 enum pib_ib_syndrome {
@@ -126,5 +129,12 @@ struct pib_packet_rc_acknowledge {
 	struct pib_packet_aeth  aeth;
 };
 
+
+struct pib_packet_smp {
+	struct pib_packet_lrh   lrh;
+	struct pib_packet_bth   bth;
+	struct pib_packet_deth  deth;
+	struct ib_smp		smp;
+};
 
 #endif /* PIB_PACKET_H */

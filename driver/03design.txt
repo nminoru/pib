@@ -2,6 +2,27 @@
 
   dev → qp → srq → pd → cq
 
+  mad.c の中で ib_post_send の外側で spin_lock_irqsave している。
+  セマフォではなく spin_lock を使う必要がある。
+
+	spin_lock_irqsave(&qp_info->send_queue.lock, flags);
+	if (qp_info->send_queue.count < qp_info->send_queue.max_active) {
+		ret = ib_post_send(mad_agent->qp, &mad_send_wr->send_wr,
+				   &bad_send_wr);
+		list = &qp_info->send_queue.list;
+	} else {
+		ret = 0;
+		list = &qp_info->overflow_list;
+	}
+
+	if (!ret) {
+		qp_info->send_queue.count++;
+		list_add_tail(&mad_send_wr->mad_list.list, list);
+	}
+	spin_unlock_irqrestore(&qp_info->send_queue.lock, flags);
+
+・スラブを使うのを止める
+
 ・MR
 
   MR の L_Key と R_Key は PD に設けられた mr_table[] のインデックス値とする。
@@ -10,7 +31,15 @@
 
 ・GID
 
-  イーサネットの MAC アドレスをベースに生成する
+  イーサネットの MAC アドレス(48 bit)をベースに生成する
+
+  0x0000 Not use
+  0x0100 Easy Switch
+  0x0200 SystemImageGUID 
+  0xaabb NodeGUID or PortGUID
+         -- aa は 3 から始まる HCA 番号
+         -- bb は 0 なら NodeGUID で、1 以上は PortGUID
+ 
 
 ・輻輳制御
 

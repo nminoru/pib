@@ -249,9 +249,7 @@ pib_util_get_srq(struct pib_ib_srq *srq)
 		ev.device      = srq->ib_srq.device;
 		ev.element.srq = &srq->ib_srq;
 
-		local_bh_disable();		
 		srq->ib_srq.event_handler(&ev, srq->ib_srq.srq_context);
-		local_bh_enable();
 	}
 
 skip:

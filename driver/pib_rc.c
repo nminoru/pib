@@ -126,7 +126,7 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	port_num = qp->ib_qp_attr.port_num;
 	ah_attr  = qp->ib_qp_attr.ah_attr;
 
-	sockaddr = dev->ports[port_num - 1].lid_table[ah_attr.dlid];
+	sockaddr = pib_get_sockaddr_from_lid(dev, port_num, qp, ah_attr.dlid);
 
 	if (!sockaddr) {
 		debug_printk("Not found the destination address in ld_table (ah.dlid=%u)", ah_attr.dlid);
@@ -1225,7 +1225,7 @@ void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp
 	port_num = qp->ib_qp_attr.port_num;
 	dlid     = qp->ib_qp_attr.ah_attr.dlid;
 
-	sockaddr = dev->ports[port_num - 1].lid_table[dlid];
+	sockaddr = pib_get_sockaddr_from_lid(dev, port_num, qp, dlid);
 
 	if (!sockaddr) {
 		debug_printk("Not found the destination address in ld_table (ah.dlid=%u)", dlid);

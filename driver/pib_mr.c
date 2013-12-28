@@ -52,7 +52,7 @@ found:
 
 
 struct ib_mr *
-pib_ib_get_dma_mr(struct ib_pd *ibpd, int acc)
+pib_ib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 {
 	struct pib_ib_pd *pd;
 	struct pib_ib_mr *mr;
@@ -72,8 +72,13 @@ pib_ib_get_dma_mr(struct ib_pd *ibpd, int acc)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	mr->start        = 0;
+	mr->length       = (u64)-1;
+	mr->virt_addr    = 0;
 	mr->is_dma = 1;
-	mr->acc    = acc;
+	mr->access_flags = access_flags;
+
+	debug_printk("pib_ib_get_dma_mr: lkey=%08x, acc=%x\n", mr->ib_mr.lkey, access_flags);
 
 	return &mr->ib_mr;
 }
@@ -88,11 +93,6 @@ pib_ib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	struct pib_ib_mr *mr;
 	struct ib_umem *umem;
 	int ret;
-
-	debug_printk("pib_ib_reg_user_mr: start=%llx, length=%llu, virt_addr=%llx, accesss_flags=%u\n",
-		     (unsigned long long)start,
-		     (unsigned long long)length,
-		     (unsigned long long)virt_addr, access_flags);
 
 	if (!ibpd)
 		return ERR_PTR(-EINVAL);
@@ -120,6 +120,12 @@ pib_ib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		ret = -ENOMEM;
 		goto err_alloc_mr;
 	}
+
+	debug_printk("pib_ib_reg_user_mr: lkey=%08x, start=%llx, length=%llu, virt_addr=%llx, accesss_flags=%u\n",
+		     mr->ib_mr.lkey,
+		     (unsigned long long)start,
+		     (unsigned long long)length,
+		     (unsigned long long)virt_addr, access_flags);
 
 	return &mr->ib_mr;
 
@@ -196,7 +202,7 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 	for (i=0 ; i<num_sge ; i++) {
 		struct ib_sge sge = sge_array[i];
 		struct pib_ib_mr *mr;
-		u64 range, diff;
+		u64 range, mr_base, offset_tmp;
 
 		mr = pd->mr_table[sge.lkey & PIB_IB_MR_INDEX_MASK];
 
@@ -211,20 +217,23 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 
 		range = min_t(u64, sge.length, offset + size);
 
+		offset_tmp = offset;
+
+		if (0 < offset)
+			offset = (sge.length < offset) ? (offset - sge.length) : 0;
+
 		if ((sge.addr         <  mr->start) || (mr->start + mr->length <= sge.addr) ||
 		    (sge.addr + range <= mr->start) || (mr->start + mr->length <  sge.addr + range))
 			continue;
 
-		diff = sge.addr - mr->start;
+		mr_base = sge.addr - mr->start;
 
-		if (offset < range) {
-			u64 chunk_size = range - offset;
-			mr_copy_data(mr, buffer, diff + offset, chunk_size, 0, 0, direction);
+		if (offset_tmp < range) {
+			u64 chunk_size = range - offset_tmp;
+			mr_copy_data(mr, buffer, mr_base + offset_tmp, chunk_size, 0, 0, direction);
 			buffer += chunk_size;
 			size   -= chunk_size;
 		}
-
-		offset -= range;
 
 		if (size == 0)
 			return IB_WC_SUCCESS;
@@ -267,6 +276,11 @@ copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u
 	if ((mr->access_flags & access_flags) != access_flags)
 		return IB_WC_LOC_PROT_ERR;
 
+	if (mr->is_dma) {
+		pr_err("pib_mr.c: Can't use DMA MR in copy_data_with_rkey\n"); /* @todo */
+		return IB_WC_LOC_PROT_ERR;
+	}
+
 	if ((address        <  mr->start) || (mr->start + mr->length <= address) ||
 	    (address + size <= mr->start) || (mr->start + mr->length <  address + size))
 		return IB_WC_LOC_PROT_ERR;
@@ -296,6 +310,11 @@ pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 co
 	if ((mr->access_flags & IB_ACCESS_REMOTE_ATOMIC) != IB_ACCESS_REMOTE_ATOMIC)
 		return IB_WC_LOC_PROT_ERR;
 
+	if (mr->is_dma) {
+		pr_err("pib_mr.c: Can't use DMA MR in pib_util_mr_atomic\n"); /* @todo */
+		return IB_WC_LOC_PROT_ERR;
+	}
+
 	if ((address     <  mr->start) || (mr->start + mr->length <= address) ||
 	    (address + 8 <= mr->start) || (mr->start + mr->length <  address + 8))
 		return IB_WC_LOC_PROT_ERR;
@@ -314,6 +333,9 @@ mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap,
 	u64 addr, res;
 	struct ib_umem *umem;
 	struct ib_umem_chunk *chunk;
+
+	if (mr->is_dma)
+		goto dma;
 
 	if (size == 0)
 		return 0;
@@ -374,6 +396,32 @@ mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap,
 
 			addr  += umem->page_size;
 		}
+	}
+
+	return 0;
+
+dma:
+	switch (direction) {
+					
+	case PIB_MR_COPY_FROM:
+		memcpy(buffer, (void*)offset, size);
+		break;
+
+	case PIB_MR_COPY_TO:
+		memcpy((void*)offset, buffer, size);
+		break;
+
+	case PIB_MR_CAS:
+		*(u64*)buffer = atomic64_cmpxchg((atomic64_t*)offset, compare, swap);
+		return 0;
+
+	case PIB_MR_FETCHADD:
+		res = atomic64_add_return(compare, (atomic64_t*)offset);
+		*(u64*)buffer = res - compare;
+		return 0;
+
+	default:
+		BUG();
 	}
 
 	return 0;

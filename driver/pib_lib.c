@@ -5,8 +5,8 @@
  */
 #include <linux/module.h>
 #include <linux/init.h>
-
 #include <rdma/ib_pack.h>
+
 
 #include "pib.h"
 
@@ -326,13 +326,30 @@ int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 u32 pib_get_num_of_packets(struct pib_ib_qp *qp, u32 length)
 {
 	u32 num_packets;
+	enum ib_mtu path_mtu;
 
-	num_packets = (length / 128U) >> qp->ib_qp_attr.path_mtu;
+	switch (qp->qp_type) {
+
+	case IB_QPT_UD:
+		path_mtu = IB_MTU_4096; /* @todo */
+		break;
+
+	case IB_QPT_GSI:
+	case IB_QPT_SMI:
+		path_mtu = IB_MTU_256;
+		break;
+
+	default:
+		path_mtu = qp->ib_qp_attr.path_mtu;
+		break;
+	}
+
+	num_packets = (length / 128U) >> path_mtu;
 
 	if (num_packets == 0)
 		return 1;
 	
-	if (length > ((num_packets * 128U) << qp->ib_qp_attr.path_mtu))
+	if (length > ((num_packets * 128U) << path_mtu))
 		num_packets++;
 
 	return num_packets;
@@ -357,4 +374,150 @@ u32 pib_get_local_ack_time(int timeout)
 		return 1;
 
 	return local_ack_timeout[timeout];
+}
+
+
+u8 pib_get_local_ca_ack_delay(void)
+{
+	u8 i;
+
+	for (i=1 ; i<ARRAY_SIZE(local_ack_timeout) ; i++)
+		if (local_ack_timeout[i] > 0)
+			return i;
+
+	return 31;
+}
+
+
+const char *pib_get_mgmt_method(u8 method)
+{
+	switch (method) {
+	case IB_MGMT_METHOD_GET:
+		return "GET";
+	case IB_MGMT_METHOD_SET:
+		return "SET";
+	case IB_MGMT_METHOD_GET_RESP:
+		return "GET_RESP";
+	case IB_MGMT_METHOD_SEND:
+		return "SEND";
+	case IB_MGMT_METHOD_TRAP:
+		return "TRAP";
+	case IB_MGMT_METHOD_REPORT:
+		return "REPORT";
+	case IB_MGMT_METHOD_REPORT_RESP:
+		return "REPORT_RESP";
+	case IB_MGMT_METHOD_TRAP_REPRESS:
+		return "TRAP_REPRESS";
+	case IB_MGMT_METHOD_RESP:
+		return "RESP";
+	default:
+		return "Unknown";
+	}
+}
+
+
+const char *pib_get_smp_attr(__be16 attr_id)
+{
+	switch (attr_id) {
+	case IB_SMP_ATTR_NOTICE:
+		return "NOTICE";
+	case IB_SMP_ATTR_NODE_DESC:
+		return "NODE_DESC";
+	case IB_SMP_ATTR_NODE_INFO:
+		return "NODE_INFO";
+	case IB_SMP_ATTR_SWITCH_INFO:
+		return "SWITCH_INFO";
+	case IB_SMP_ATTR_GUID_INFO:
+		return "GUID_INFO";
+	case IB_SMP_ATTR_PORT_INFO:
+		return "PORT_INFO";
+	case IB_SMP_ATTR_PKEY_TABLE:
+		return "PKEY_TABLE";
+	case IB_SMP_ATTR_SL_TO_VL_TABLE:
+		return "SL_TO_VL_TABLE";
+	case IB_SMP_ATTR_VL_ARB_TABLE:
+		return "V_ARB_TABLE";
+	case IB_SMP_ATTR_LINEAR_FORWARD_TABLE:
+		return "LINEAR_FORWARD_TABLE";
+	case IB_SMP_ATTR_RANDOM_FORWARD_TABLE:
+		return "RANDOM_FORWARD_TABLE";
+	case IB_SMP_ATTR_MCAST_FORWARD_TABLE:
+		return "MCAST_FORWARD_TABLE";
+	case IB_SMP_ATTR_SM_INFO:
+		return "SM_INFO";
+	case IB_SMP_ATTR_VENDOR_DIAG:
+		return "VENDOR_DIAG";
+	case IB_SMP_ATTR_LED_INFO:
+		return "lED_INFO";
+	case IB_SMP_ATTR_VENDOR_MASK:
+		return "VENDOR_MASK";
+	default:
+		return "Unknown";
+	}
+}
+
+		
+
+
+void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr)
+{
+	debug_printk("%s: base_version   %u\n",     direct, hdr->base_version);
+	debug_printk("%s: mgmt_class     0x%02x\n", direct, hdr->mgmt_class);
+	debug_printk("%s: class_version  %u\n",     direct, hdr->class_version);
+	debug_printk("%s: method         %s(0x%02x)\n", direct,
+		     pib_get_mgmt_method(hdr->method), hdr->method);
+	debug_printk("%s: status         0x%x\n",   direct, be16_to_cpu(hdr->status));
+	debug_printk("%s: class_specific %u\n",     direct, be16_to_cpu(hdr->class_specific));
+	debug_printk("%s: tid            0x%llx\n", direct, be64_to_cpu(hdr->tid));
+	debug_printk("%s: attr_id        %s(0x%04x)\n", direct,
+		     pib_get_smp_attr(hdr->attr_id), be16_to_cpu(hdr->attr_id));
+	debug_printk("%s: attr_mod       %u\n",     direct, be32_to_cpu(hdr->attr_mod));
+}
+
+
+void pib_print_smp(const char *direct, const struct ib_smp *smp)
+{
+	int i, j = 0;
+	char buffer[1024];
+
+	debug_printk("%s: base_version   %u\n",     direct, smp->base_version);
+	debug_printk("%s: mgmt_class     0x%02x\n", direct, smp->mgmt_class);
+	debug_printk("%s: class_version  %u\n",     direct, smp->class_version);
+	debug_printk("%s: method         %s(0x%02x)\n", direct,
+		     pib_get_mgmt_method(smp->method), smp->method);
+	debug_printk("%s: status         0x%x\n",   direct, be16_to_cpu(smp->status));
+	debug_printk("%s: hop_ptr        %u\n",     direct, smp->hop_ptr);
+	debug_printk("%s: hop_cnt        %u\n",     direct, smp->hop_cnt);
+	debug_printk("%s: tid            0x%llx\n", direct, be64_to_cpu(smp->tid));
+	debug_printk("%s: attr_id        %s(0x%04x)\n", direct,
+		     pib_get_smp_attr(smp->attr_id), be16_to_cpu(smp->attr_id));
+	debug_printk("%s: attr_mod       %u\n",     direct, be32_to_cpu(smp->attr_mod));
+	debug_printk("%s: mkey           %llu\n",   direct, be64_to_cpu(smp->mkey));
+	debug_printk("%s: dr_slid        0x%04x\n", direct, be16_to_cpu(smp->dr_slid));
+	debug_printk("%s: dr_dlid        0x%04x\n", direct, be16_to_cpu(smp->dr_dlid));
+
+	buffer[0] = '\0';
+
+	j = 0;
+	for (i=0 ; i<smp->hop_cnt; i++) {
+		j += sprintf(buffer + j, " %u", (u8)smp->initial_path[i+1]);
+	}
+	debug_printk("Initial Path: %s\n", buffer);
+
+	j = 0;
+	for (i=0 ; i<smp->hop_cnt; i++) {
+		j += sprintf(buffer + j, " %u", (u8)smp->return_path[i+1]);
+	}
+	debug_printk("Return Path: %s\n", buffer);
+
+#if 0
+	for (i=0 ; i < 4 ; i++) {
+		int k;
+		j = 0;
+		for (k=0 ; k < 64/4 ; k++) {
+			j += sprintf(buffer + j, " %02x ", smp->data[i * 16 + k]);
+		}
+		debug_printk("%s\n", buffer);
+	}
+#endif
 }

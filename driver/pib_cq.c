@@ -197,7 +197,6 @@ static int insert_wc(struct pib_ib_cq *cq, const struct ib_wc *wc)
 	spin_lock_irqsave(&cq->lock, flags);
 
 	if (list_empty(&cq->free_cqe_head)) {
-		spin_unlock_irqrestore(&cq->lock, flags);
 		goto cq_overflow;
 	}
 
@@ -205,29 +204,35 @@ static int insert_wc(struct pib_ib_cq *cq, const struct ib_wc *wc)
 	list_del_init(&cqe->list);
 
 	cqe->ib_wc = *wc;
+
+	if (to_pqp(wc->qp)->qp_type == IB_QPT_SMI)
+		cqe->ib_wc.port_num = to_pqp(wc->qp)->ib_qp_init_attr.port_num;
+
 	cq->nr_cqe++;
 
 	list_add_tail(&cqe->list, &cq->cqe_head);
 
-	spin_unlock_irqrestore(&cq->lock, flags);
-
 	/* tell completion channel */
-	local_bh_disable();
 	cq->ib_cq.comp_handler(&cq->ib_cq, cq->ib_cq.cq_context);
-	local_bh_enable();
+
+	spin_unlock_irqrestore(&cq->lock, flags);
 
 	return 0;
 
 cq_overflow:
 	/* CQ overflow */
 
+	/* @todo この実装を正せ */
+
+#if 0
 	ev.event      = IB_EVENT_CQ_ERR;
 	ev.device     = cq->ib_cq.device;
 	ev.element.cq = &cq->ib_cq;
 
-	local_bh_disable();
 	cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
-	local_bh_enable();
+#endif
+
+	spin_unlock_irqrestore(&cq->lock, flags);
 
 	return -ENOMEM;
 }
