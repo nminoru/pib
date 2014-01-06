@@ -456,7 +456,7 @@ static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 			.active_mtu      = IB_MTU_256,
 			.gid_tbl_len     = PIB_IB_GID_PER_PORT,
 			.port_cap_flags  = 0, /* 0x02514868, */
-			.max_msg_sz      = 0x40000000,
+			.max_msg_sz      = PIB_IB_MAX_PAYLOAD_LEN,
 			.bad_pkey_cntr   = 0U,
 			.qkey_viol_cntr  = 128,
 			.pkey_tbl_len    = PIB_PKEY_TABLE_LEN,

@@ -811,8 +811,10 @@ next_wr:
 		total_length = 8;
 	}
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) 
-		; /* @todo */
+	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) { 
+		ret = -EINVAL;
+		goto done;
+	}
 
 	send_wqe->total_length = (u32)total_length;
 
@@ -990,8 +992,10 @@ next_wr:
 		total_length += ibwr->sg_list[i].length;
 	}
 	
-	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) 
-		; /* @todo */
+	if (PIB_IB_MAX_PAYLOAD_LEN < total_length)  {
+		ret = -EINVAL;
+		goto err;
+	}
 
 	recv_wqe->total_length = (u32)total_length;
 

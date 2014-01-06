@@ -189,7 +189,9 @@ err_sock:
 
 static void release_socket(struct pib_ib_dev *dev, int port_index)
 {
+#ifndef PIB_USE_EASY_SWITCH
 	int i;
+#endif
 
 	if (dev->ports[port_index].sockaddr) {
 		kfree(dev->ports[port_index].sockaddr);

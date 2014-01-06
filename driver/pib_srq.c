@@ -118,8 +118,11 @@ int pib_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 
 	srq = to_psrq(ibsrq);
 
-	if (attr_mask & IB_SRQ_MAX_WR)
-		return -EINVAL; /* @todo not yet implemented. */
+	if (attr_mask & IB_SRQ_MAX_WR) {
+		/* @todo not yet implemented. */
+		pr_err("pib: pib_ib_modify_srq doesn't support for IB_SRQ_MAX_WR yet\n");
+		return -EINVAL;
+	}
 
 	if (attr_mask & IB_SRQ_LIMIT) {
 		srq->ib_srq_attr.srq_limit = attr->srq_limit;
@@ -191,8 +194,10 @@ next_wr:
 		total_length += ibwr->sg_list[i].length;
 	}
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) 
-		; /* @todo */
+	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) {
+		ret = -EINVAL;
+		goto err;
+	} 
 
 	recv_wqe->total_length = (u32)total_length;
 
