@@ -19,6 +19,8 @@
 static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 			struct ib_wc *in_wc, struct ib_grh *in_grh,
 			struct ib_mad *in_mad, struct ib_mad *out_mad);
+static int process_subn_get_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
+static int process_subn_set_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
 static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
 static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
@@ -124,99 +126,15 @@ static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 
 	switch (smp->method) {
 	case IB_MGMT_METHOD_GET:
-		switch (smp->attr_id) {
-
-		case IB_SMP_ATTR_NODE_DESC:
-			ret = subn_get_nodedescription(smp, dev, in_port_num);
-			goto bail;
-			
-		case IB_SMP_ATTR_NODE_INFO:
-			ret = subn_get_nodeinfo(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_GUID_INFO:
-			ret = subn_get_guidinfo(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_PORT_INFO:
-			ret = subn_get_portinfo(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_PKEY_TABLE:
-			ret = subn_get_pkey_table(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_SL_TO_VL_TABLE:
-			ret = subn_get_sl_to_vl_table(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_VL_ARB_TABLE:
-			ret = subn_get_vl_arb_table(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_SM_INFO:
-#if 0
-			if (ibdev->port_cap_flags & IB_PORT_SM_DISABLED) {
-				ret = IB_MAD_RESULT_SUCCESS |
-					IB_MAD_RESULT_CONSUMED;
-				goto bail;
-			}
-			if (ibdev->port_cap_flags & IB_PORT_SM) {
-				ret = IB_MAD_RESULT_SUCCESS;
-				goto bail;
-			}
-			/* FALLTHROUGH */
-#endif
-
-		default:
-			pr_err("process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
-			smp->status |= IB_SMP_UNSUP_METH_ATTR;
-			ret = reply(smp);
-			goto bail;
-		}
+		ret = process_subn_get_method(smp, dev, in_port_num);
+		break;
 
 	case IB_MGMT_METHOD_SET:
-		switch (smp->attr_id) {
-		case IB_SMP_ATTR_GUID_INFO:
-			ret = subn_set_guidinfo(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_PORT_INFO:
-			ret = subn_set_portinfo(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_PKEY_TABLE:
-			ret = subn_set_pkey_table(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_SL_TO_VL_TABLE:
-			ret = subn_set_sl_to_vl_table(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_VL_ARB_TABLE:
-			ret = subn_set_vl_arb_table(smp, dev, in_port_num);
-			goto bail;
-
-		case IB_SMP_ATTR_SM_INFO:
-
-#if 0
-			if (ibp->port_cap_flags & IB_PORT_SM_DISABLED) {
-				ret = IB_MAD_RESULT_SUCCESS |
-					IB_MAD_RESULT_CONSUMED;
-				goto bail;
-			}
-			if (ibp->port_cap_flags & IB_PORT_SM) {
-				ret = IB_MAD_RESULT_SUCCESS;
-				goto bail;
-			}
-			/* FALLTHROUGH */
-#endif
-		default:
-			pr_err("process_subn: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
-			smp->status |= IB_SMP_UNSUP_METH_ATTR;
-			ret = reply(smp);
-			goto bail;
-		}
+		ret = process_subn_set_method(smp, dev, in_port_num);
+		if (smp->status & ~IB_SMP_DIRECTION)
+			break;
+		ret = process_subn_get_method(smp, dev, in_port_num);
+		break;
 
 #if 0
 	case IB_MGMT_METHOD_TRAP_REPRESS:
@@ -257,18 +175,105 @@ static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 		ret = reply(smp);
 	}
 
-bail:
 	/* pib_print_smp("out", smp); */
 
 	smp->return_path[smp->hop_ptr + 1] = in_port_num;
+
 	return ret;
+}
+
+
+static int process_subn_get_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+{
+	memset(smp->data, 0, sizeof(smp->data));
+
+	switch (smp->attr_id) {
+
+	case IB_SMP_ATTR_NODE_DESC:
+		return subn_get_nodedescription(smp, dev, in_port_num);
+			
+	case IB_SMP_ATTR_NODE_INFO:
+		return subn_get_nodeinfo(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_GUID_INFO:
+		return subn_get_guidinfo(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_PORT_INFO:
+		return subn_get_portinfo(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_PKEY_TABLE:
+		return subn_get_pkey_table(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_SL_TO_VL_TABLE:
+		return subn_get_sl_to_vl_table(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_VL_ARB_TABLE:
+		return subn_get_vl_arb_table(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_SM_INFO:
+#if 0
+		if (ibdev->port_cap_flags & IB_PORT_SM_DISABLED) {
+			ret = IB_MAD_RESULT_SUCCESS |
+				IB_MAD_RESULT_CONSUMED;
+			goto bail;
+		}
+		if (ibdev->port_cap_flags & IB_PORT_SM) {
+			ret = IB_MAD_RESULT_SUCCESS;
+			goto bail;
+		}
+		/* FALLTHROUGH */
+#endif
+
+	default:
+		pr_err("process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
+		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		return reply(smp);
+	}
+}
+
+
+static int process_subn_set_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+{
+	switch (smp->attr_id) {
+
+	case IB_SMP_ATTR_GUID_INFO:
+		return subn_set_guidinfo(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_PORT_INFO:
+		return subn_set_portinfo(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_PKEY_TABLE:
+		return subn_set_pkey_table(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_SL_TO_VL_TABLE:
+		return subn_set_sl_to_vl_table(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_VL_ARB_TABLE:
+		return subn_set_vl_arb_table(smp, dev, in_port_num);
+
+	case IB_SMP_ATTR_SM_INFO:
+#if 0
+		if (ibp->port_cap_flags & IB_PORT_SM_DISABLED) {
+			ret = IB_MAD_RESULT_SUCCESS |
+				IB_MAD_RESULT_CONSUMED;
+			goto bail;
+		}
+		if (ibp->port_cap_flags & IB_PORT_SM) {
+			ret = IB_MAD_RESULT_SUCCESS;
+			goto bail;
+		}
+		/* FALLTHROUGH */
+#endif
+	default:
+		pr_err("process_subn: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
+		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		return reply(smp);
+	}
 }
 
 
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
-	memset(smp->data, 0, sizeof(smp->data));
-
 	if (smp->attr_mod)
 		smp->status |= IB_SMP_INVALID_FIELD;
 
@@ -281,8 +286,6 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_dev *dev, 
 static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
 	struct pib_mad_node_info *node_info = (struct pib_mad_node_info *)&smp->data;
-
-	memset(smp->data, 0, sizeof(smp->data));
 
 	/* smp->status |= IB_SMP_INVALID_FIELD; */
 
@@ -309,8 +312,6 @@ static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 {
 	pr_err("*** %s ***", __FUNCTION__);
 
-	memset(smp->data, 0, sizeof(smp->data));
-
 	return reply_failure(smp);
 }
 
@@ -327,8 +328,6 @@ static int subn_get_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 	u32 port_num = be32_to_cpu(smp->attr_mod);
 	struct pib_ib_port *port;
-
-	memset(smp->data, 0, sizeof(smp->data));
 
 	if (port_num == 0)
 		port_num = in_port_num;
@@ -503,19 +502,8 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 	
 	pib_subn_set_portinfo(smp, port, port_num, PIB_PORT_CA);
 
-	if (port->ib_port_attr.state < IB_PORT_INIT) {
-		struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
+	if (port->ib_port_attr.state < IB_PORT_INIT)
 		port->ib_port_attr.state = IB_PORT_INIT;
-
-		/*
-		 *  HACK
-		 *  SubnSet() に対する SubnGetResp() では、SubnSet() の内容をそ
-		 *  のままコピーすることになっている(C13-12.1.1)。
-		 *  しかし OpenSM はここで LinkDown ではなく LinkInitialize を
-		 *  返すことを期待している。
-		 */
-		port_info->linkspeed_portstate = (port_info->linkspeed_portstate & 0xF0) | port->ib_port_attr.state;
-	}
 
 #if 0
 	debug_printk("ib_dev(set_portinfo) in_port_num=%u, port_num=%u, lid=%u, state=%u, phys_state=%u\n",
@@ -617,8 +605,6 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in
 {
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
-
-	memset(smp->data, 0, sizeof(smp->data));
 
 	attr_mod      = be32_to_cpu(smp->attr_mod);
 

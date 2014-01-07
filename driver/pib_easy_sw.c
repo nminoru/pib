@@ -26,6 +26,8 @@ static void release_socket(struct pib_ib_easy_sw *sw);
 static void sock_data_ready_callback(struct sock *sk, int bytes);
 static int process_incoming_message(struct pib_ib_easy_sw *sw);
 static int process_smp(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
+static int process_smp_get_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
+static int process_smp_set_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
 static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
 static int subn_get_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
@@ -47,9 +49,6 @@ static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_ib_easy_
 static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
 static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
 static u8  get_sw_port_num(const struct sockaddr *sockaddr);
-
-
-
 
 
 static int reply(struct ib_smp *smp)
@@ -417,100 +416,110 @@ static int process_smp(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port
 	switch (smp->method) {
 
 	case IB_MGMT_METHOD_GET:
-		switch (smp->attr_id) {
-
-		case IB_SMP_ATTR_NODE_DESC:
-			return subn_get_nodedescription(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_NODE_INFO:
-			return subn_get_nodeinfo(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_SWITCH_INFO:
-			return subn_get_switchinfo(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_GUID_INFO:
-			return subn_get_guidinfo(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_PORT_INFO:
-			return subn_get_portinfo(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_PKEY_TABLE:
-			return subn_get_pkey_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_SL_TO_VL_TABLE:
-			return subn_get_sl_to_vl_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_VL_ARB_TABLE:
-			return subn_get_vl_arb_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_LINEAR_FORWARD_TABLE:
-			return subn_get_linear_forward_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_RANDOM_FORWARD_TABLE:
-			return subn_get_random_forward_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_MCAST_FORWARD_TABLE:
-			return subn_get_mcast_forward_table(smp, sw, in_port_num);
-
-		default:
-			pr_err("process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
-			smp->status |= IB_SMP_UNSUP_METH_ATTR;
-			ret = reply(smp);
-			goto bail;
-		}
+		return process_smp_get_method(smp, sw, in_port_num);
 
 	case IB_MGMT_METHOD_SET:
-		switch (smp->attr_id) {
-
-		case IB_SMP_ATTR_SWITCH_INFO:
-			return subn_set_switchinfo(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_GUID_INFO:
-			return subn_set_guidinfo(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_PORT_INFO:
-			return subn_set_portinfo(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_PKEY_TABLE:
-			return subn_set_pkey_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_SL_TO_VL_TABLE:
-			return subn_set_sl_to_vl_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_VL_ARB_TABLE:
-			return subn_set_vl_arb_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_LINEAR_FORWARD_TABLE:
-			return subn_set_linear_forward_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_RANDOM_FORWARD_TABLE:
-			return subn_set_random_forward_table(smp, sw, in_port_num);
-
-		case IB_SMP_ATTR_MCAST_FORWARD_TABLE:
-			return subn_set_mcast_forward_table(smp, sw, in_port_num);
-
-		default:
-			pr_err("process_smp: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
-			smp->status |= IB_SMP_UNSUP_METH_ATTR;
-			ret = reply(smp);
-			goto bail;
-		}
+		ret = process_smp_set_method(smp, sw, in_port_num);
+		if (smp->status & ~IB_SMP_DIRECTION)
+			return ret;
+		return process_smp_get_method(smp, sw, in_port_num);
 
 	default:
 		pr_err("process_smp: %u %u", smp->method, be16_to_cpu(smp->attr_id));
 		smp->status |= IB_SMP_UNSUP_METHOD;
-		ret = reply(smp);
+		return reply(smp);
 	}
+}
 
-bail:
-	return ret;
+
+static int process_smp_get_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+{
+	memset(smp->data, 0, sizeof(smp->data));
+
+	switch (smp->attr_id) {
+
+	case IB_SMP_ATTR_NODE_DESC:
+		return subn_get_nodedescription(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_NODE_INFO:
+		return subn_get_nodeinfo(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_SWITCH_INFO:
+		return subn_get_switchinfo(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_GUID_INFO:
+		return subn_get_guidinfo(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_PORT_INFO:
+		return subn_get_portinfo(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_PKEY_TABLE:
+		return subn_get_pkey_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_SL_TO_VL_TABLE:
+		return subn_get_sl_to_vl_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_VL_ARB_TABLE:
+		return subn_get_vl_arb_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_LINEAR_FORWARD_TABLE:
+		return subn_get_linear_forward_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_RANDOM_FORWARD_TABLE:
+		return subn_get_random_forward_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_MCAST_FORWARD_TABLE:
+		return subn_get_mcast_forward_table(smp, sw, in_port_num);
+
+	default:
+		pr_err("process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
+		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		return reply(smp);
+	}
+}
+
+
+static int process_smp_set_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+{
+	switch (smp->attr_id) {
+
+	case IB_SMP_ATTR_SWITCH_INFO:
+		return subn_set_switchinfo(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_GUID_INFO:
+		return subn_set_guidinfo(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_PORT_INFO:
+		return subn_set_portinfo(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_PKEY_TABLE:
+		return subn_set_pkey_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_SL_TO_VL_TABLE:
+		return subn_set_sl_to_vl_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_VL_ARB_TABLE:
+		return subn_set_vl_arb_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_LINEAR_FORWARD_TABLE:
+		return subn_set_linear_forward_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_RANDOM_FORWARD_TABLE:
+		return subn_set_random_forward_table(smp, sw, in_port_num);
+
+	case IB_SMP_ATTR_MCAST_FORWARD_TABLE:
+		return subn_set_mcast_forward_table(smp, sw, in_port_num);
+
+	default:
+		pr_err("process_smp: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
+		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		return reply(smp);
+	}
 }
 
 
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
 {
-	memset(smp->data, 0, sizeof(smp->data));
-
 	if (smp->attr_mod)
 		smp->status |= IB_SMP_INVALID_FIELD;
 
@@ -523,8 +532,6 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_easy_sw *s
 static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
 {
 	struct pib_mad_node_info *node_info = (struct pib_mad_node_info *)&smp->data;
-
-	memset(smp->data, 0, sizeof(smp->data));
 
 	/* smp->status |= IB_SMP_INVALID_FIELD; */
 
@@ -551,8 +558,6 @@ static int subn_get_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8
 {
 	struct pib_mad_switch_info *switch_info = (struct pib_mad_switch_info *)&smp->data;
 	u8 opimized_sl_to_vl_mapping_programming;
-	
-	memset(smp->data, 0, sizeof(smp->data));
 
 	switch_info->linear_fdb_cap	= cpu_to_be16(768);
 	switch_info->random_fdb_cap	= cpu_to_be16(3072);
@@ -615,8 +620,6 @@ static int subn_get_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 i
 	u32 port_num = be32_to_cpu(smp->attr_mod);
 	struct pib_ib_port *port;
 
-	memset(smp->data, 0, sizeof(smp->data));
-
 	port = &pib_ib_easy_sw.ports[port_num];
 
 	port_info->local_port_num = in_port_num;
@@ -660,8 +663,6 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8
 {
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
-
-	memset(smp->data, 0, sizeof(smp->data));
 
 	attr_mod      = be32_to_cpu(smp->attr_mod);
 
@@ -745,8 +746,6 @@ static int subn_get_linear_forward_table(struct ib_smp *smp, struct pib_ib_easy_
 	u32 i, attr_mod;
 	u8 *table = (u8 *)&smp->data[0];
 
-	memset(smp->data, 0, sizeof(smp->data));
-
 	attr_mod = be32_to_cpu(smp->attr_mod);
 
 	if (767 < attr_mod) {
@@ -794,8 +793,6 @@ static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_ib_easy_
 {
 	u32 i, attr_mod;
 	__be32 *table = (__be32 *)&smp->data[0];
-
-	memset(smp->data, 0, sizeof(smp->data));
 
 	attr_mod = be32_to_cpu(smp->attr_mod);
 
