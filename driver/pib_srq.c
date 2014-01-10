@@ -31,8 +31,6 @@ struct ib_srq *pib_ib_create_srq(struct ib_pd *ibpd,
 	int i;
 	struct pib_ib_srq *srq;
 
-	debug_printk("pib_ib_create_srq\n");
-
 	if (!ibpd || !init_attr)
 		return ERR_PTR(-EINVAL);
 
@@ -82,8 +80,6 @@ int pib_ib_destroy_srq(struct ib_srq *ibsrq)
 	unsigned long flags;
 	struct pib_ib_srq *srq;
 	struct pib_ib_recv_wqe *recv_wqe, *next;
-
-	debug_printk("pib_ib_destroy_srq\n");
 
 	if (!ibsrq)
 		return 0;

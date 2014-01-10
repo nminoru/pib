@@ -78,8 +78,6 @@ pib_ib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	mr->is_dma = 1;
 	mr->access_flags = access_flags;
 
-	debug_printk("pib_ib_get_dma_mr: lkey=%08x, acc=%x\n", mr->ib_mr.lkey, access_flags);
-
 	return &mr->ib_mr;
 }
 
@@ -121,12 +119,6 @@ pib_ib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		goto err_alloc_mr;
 	}
 
-	debug_printk("pib_ib_reg_user_mr: lkey=%08x, start=%llx, length=%llu, virt_addr=%llx, accesss_flags=%u\n",
-		     mr->ib_mr.lkey,
-		     (unsigned long long)start,
-		     (unsigned long long)length,
-		     (unsigned long long)virt_addr, access_flags);
-
 	return &mr->ib_mr;
 
 err_alloc_mr:
@@ -143,8 +135,6 @@ int pib_ib_dereg_mr(struct ib_mr *ibmr)
 	struct pib_ib_mr *mr;
 	struct pib_ib_pd *pd;
 	unsigned long flags;
-
-	debug_printk("pib_ib_dereg_mr\n");
 
 	if (!ibmr)
 		return -EINVAL;
@@ -170,8 +160,7 @@ struct ib_mr *
 pib_ib_alloc_fast_reg_mr(struct ib_pd *ibpd,
 			 int max_page_list_len)
 {
-	debug_printk("pib_ib_alloc_fast_reg_mr\n");
-
+	pr_err("pib: Not supported for alloc_fast_reg_mr callback\n");
 	return ERR_PTR(-ENOMEM);
 }
 
@@ -180,14 +169,13 @@ struct ib_fast_reg_page_list *
 pib_ib_alloc_fast_reg_page_list(struct ib_device *ibdev,
 				int page_list_len)
 {
-	debug_printk("pib_ib_alloc_fast_reg_page_list\n");
+	pr_err("pib: Not supported for alloc_fast_reg_page_list\n");
 	return ERR_PTR(-ENOMEM);
 }
 
 
 void pib_ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list)
 {
-	debug_printk("pib_ib_free_fast_reg_page_list\n");
 }
 
 

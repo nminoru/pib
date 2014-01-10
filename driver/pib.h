@@ -62,7 +62,8 @@
 
 #define PIB_IB_MAX_HCA			(4)
 #define PIB_IB_MAX_PORTS		(32) /* In IBA Spec. Vol.1 17.2.1.3 C17-7.a1, a channel adaptor may support up to 254 ports(1-253).  */
-#define PIB_IB_MAX_LID			(65536)
+#define PIB_MAX_LID			(0x10000)
+#define PIB_MCAST_LID_BASE		(0x0C000)
 
 #define PIB_IB_QP0			(0)
 #define PIB_IB_QP1			(1)
@@ -73,7 +74,6 @@
 
 #define PIB_IB_QPN_MASK			(0xFFFFFF)
 #define PIB_IB_PSN_MASK			(0xFFFFFF)
-#define PIB_IB_LID_BASE			(0xC000)
 #define PIB_IB_LOCAL_ACK_TIMEOUT_MASK	(0x1F)
 #define PIB_IB_MIN_RNR_NAK_TIMER_MASK	(0x1F)
 #define PIB_IB_MAX_MR_PER_PD		(4096)
@@ -86,7 +86,8 @@
 
 #define PIB_SCHED_TIMEOUT		(0x3FFFFFFF) /* 1/4 of max value of unsigned long */
 
-#define PIB_PKEY_TABLE_LEN              (32)
+#define PIB_PKEY_PER_BLOCK              (32)
+#define PIB_PKEY_TABLE_LEN              (PIB_PKEY_PER_BLOCK * 1)
 
 #define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_SYS_IMAGE_GUID|IB_DEVICE_RC_RNR_NAK_GEN)
 
@@ -152,9 +153,8 @@ enum pib_swqe_list {
 
 
 enum pib_thread_flag {
-	PIB_THREAD_READY_TO_DATA,
-	PIB_THREAD_SCHEDULE,
-	PIB_THREAD_NEW_SEND_WR
+	PIB_THREAD_READY_TO_RECV,
+	PIB_THREAD_SCHEDULE
 };
 
 
@@ -194,7 +194,7 @@ struct pib_ib_port {
 	struct sockaddr        *sockaddr;
 	union ib_gid		gid[PIB_IB_GID_PER_PORT];
 	struct pib_ib_qp       *qp_info[PIB_IB_MAD_QPS_CORE];
-	__be16			pkey_table[PIB_PKEY_TABLE_LEN];
+	u16			pkey_table[PIB_PKEY_TABLE_LEN];
 };
 
 
@@ -236,15 +236,21 @@ struct pib_ib_dev {
 		struct completion       completion;
 		struct timer_list       timer;  /* Local ACK Tmeout & RNR NAK Timer for RC */
 		unsigned long           flags;
-
 		void                   *buffer; /* buffer for sendmsg/recvmsg */
 
-		struct list_head        new_send_wr_qp_head;
+		struct sockaddr	       *sockaddr;	/* for sendmsg */
+		size_t			msg_size;	/* for sendmsg */
+		u8			port_num;	/* for sendmsg */
+		int			ready_to_send;	/* for sendmsg */
 	} thread;
 
 	struct pib_ib_port     *ports;
-
 	struct rw_semaphore     rwsem;
+};
+
+
+struct pib_port_bits {
+	u16			pm_blocks[16]; /* portmask blocks */
 };
 
 
@@ -266,7 +272,8 @@ struct pib_ib_easy_sw {
 	u8			life_time_value;
 	u8			port_state_change;
 
-	u8		       *forwarding_table;
+	u8		       *ucast_fwd_table;
+	struct pib_port_bits   *mcast_fwd_table;
 };
 
 
@@ -405,8 +412,7 @@ struct pib_ib_qp {
 
 	struct semaphore        sem;
 
-	int                     has_new_send_wr;
-	struct list_head        new_send_wr_qp_list;
+	unsigned long           local_ack_timeout; /* in jiffies */
 
 	struct {
 		int             on;
@@ -640,6 +646,31 @@ enum ib_wc_status pib_util_mr_validate_rkey(struct pib_ib_pd *pd, u32 rkey, u64 
 enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
 enum ib_wc_status pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
 
+
+extern void pib_util_reschedule_qp(struct pib_ib_qp *qp);
+extern struct pib_ib_qp *pib_util_get_first_scheduling_qp(struct pib_ib_dev *dev);
+
+extern int pib_create_kthread(struct pib_ib_dev *dev);
+extern void pib_release_kthread(struct pib_ib_dev *dev);
+
+/*
+ *  in pib_cq.c
+ */
+extern struct ib_cq *pib_ib_create_cq(struct ib_device *ibdev, int entries, int vector,
+				      struct ib_ucontext *context,
+				      struct ib_udata *udata);
+extern int pib_ib_destroy_cq(struct ib_cq *ibcq);
+extern int pib_ib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
+extern int pib_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
+extern int pib_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
+extern int pib_ib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
+extern void pib_util_remove_cq(struct pib_ib_cq *cq, struct pib_ib_qp *qp);
+extern int pib_util_insert_wc_success(struct pib_ib_cq *cq, const struct ib_wc *wc);
+extern int pib_util_insert_wc_error(struct pib_ib_cq *cq, struct pib_ib_qp *qp, u64 wr_id, enum ib_wc_status status, enum ib_wc_opcode opcode);
+
+/*
+ *  in pib_srq.c
+ */
 extern struct ib_srq *pib_ib_create_srq(struct ib_pd *pd,
 					 struct ib_srq_init_attr *init_attr,
 					 struct ib_udata *udata);
@@ -652,6 +683,9 @@ extern int pib_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
 
 extern struct pib_ib_recv_wqe *pib_util_get_srq(struct pib_ib_srq *srq);
 
+/*
+ *  in pib_qp.c
+ */
 extern struct ib_qp *pib_ib_create_qp(struct ib_pd *pd,
 				       struct ib_qp_init_attr *init_attr,
 				       struct ib_udata *udata);
@@ -660,6 +694,8 @@ extern int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 			     int attr_mask, struct ib_udata *udata);
 extern int pib_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mask,
 			    struct ib_qp_init_attr *qp_init_attr);
+extern int pib_ib_attach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
+extern int pib_ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
 extern int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 			     struct ib_send_wr **bad_wr);
 extern int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
@@ -670,26 +706,6 @@ extern struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num);
 extern void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only);
 extern void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type event);
 extern void pib_util_insert_async_qp_event(struct pib_ib_qp *qp, enum ib_event_type event);
-
-extern void pib_util_reschedule_qp(struct pib_ib_qp *qp);
-extern struct pib_ib_qp *pib_util_get_first_scheduling_qp(struct pib_ib_dev *dev);
-
-
-extern struct ib_cq *pib_ib_create_cq(struct ib_device *ibdev, int entries, int vector,
-				      struct ib_ucontext *context,
-				      struct ib_udata *udata);
-extern int pib_ib_destroy_cq(struct ib_cq *ibcq);
-extern int pib_ib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
-extern int pib_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
-extern int pib_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
-extern int pib_ib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
-extern void pib_util_remove_cq(struct pib_ib_cq *cq, struct pib_ib_qp *qp);
-
-extern int pib_util_insert_wc_success(struct pib_ib_cq *cq, const struct ib_wc *wc);
-extern int pib_util_insert_wc_error(struct pib_ib_cq *cq, struct pib_ib_qp *qp, u64 wr_id, enum ib_wc_status status, enum ib_wc_opcode opcode);
-
-extern int pib_create_kthread(struct pib_ib_dev *dev);
-extern void pib_release_kthread(struct pib_ib_dev *dev);
 
 /*
  *  in pib_dma.c 
@@ -707,7 +723,7 @@ extern void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, 
  */
 extern int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
 extern void pib_receive_rc_qp_incoming_message(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth);
-extern void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
+extern int pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
 
 /*
  *  in pib_mad.c
@@ -732,12 +748,13 @@ extern const char *pib_get_qp_state(enum ib_qp_state state);
 extern const char *pib_get_wc_status(enum ib_wc_status status);
 extern u32 pib_get_maxium_packet_length(enum ib_mtu mtu);
 extern int pib_is_recv_ok(enum ib_qp_state state);
+extern int pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode);
 extern int pib_opcode_is_acknowledge(int OpCode);
 extern int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode);
 enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode);
 extern u32 pib_get_num_of_packets(struct pib_ib_qp *qp, u32 length);
 extern u32 pib_get_rnr_nak_time(int timeout);
-extern u32 pib_get_local_ack_time(int timeout);
+extern unsigned long pib_get_local_ack_time(int timeout);
 extern u8 pib_get_local_ca_ack_delay(void);
 extern struct sockaddr *pib_get_sockaddr_from_lid(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u16 lid);
 extern void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr);

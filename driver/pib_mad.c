@@ -472,7 +472,10 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 	u32 port_num = be32_to_cpu(smp->attr_mod);
 	struct pib_ib_port *port;
+	struct ib_event event;
 	u16 old_lid, new_lid;
+	u16 old_sm_lid, new_sm_lid;
+	enum ib_port_state old_state;
 
 	if (port_num == 0)
 		port_num = in_port_num;
@@ -486,8 +489,10 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 
 	port = &dev->ports[port_index];
 
-	old_lid = port->ib_port_attr.lid;
-	new_lid = be16_to_cpu(port_info->lid);
+	old_lid    = port->ib_port_attr.lid;
+	new_lid    = be16_to_cpu(port_info->lid);
+	old_sm_lid = port->ib_port_attr.sm_lid;
+	new_sm_lid = be16_to_cpu(port_info->sm_lid);
 
 #ifdef PIB_USE_EASY_SWITCH
 	if (old_lid != new_lid) {
@@ -499,8 +504,33 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 				dev->ports[port_num - 1].sockaddr;
 	}
 #endif
+
+	old_state = port->ib_port_attr.state;
 	
 	pib_subn_set_portinfo(smp, port, port_num, PIB_PORT_CA);
+
+	event.device           = &dev->ib_dev;
+	event.element.port_num = port_num;
+
+	if ((port->ib_port_attr.state != IB_PORT_ACTIVE) && (old_state == IB_PORT_ACTIVE)) {
+		event.event = IB_EVENT_PORT_ERR;
+		ib_dispatch_event(&event);
+	}
+
+	if ((port->ib_port_attr.state == IB_PORT_ACTIVE) && (old_state != IB_PORT_ACTIVE)) {
+		event.event = IB_EVENT_PORT_ACTIVE;
+		ib_dispatch_event(&event);
+	}
+
+	if (old_sm_lid != new_sm_lid) {
+		event.event = IB_EVENT_SM_CHANGE;
+		ib_dispatch_event(&event);
+	}
+
+	if (old_lid != new_lid) {
+		event.event = IB_EVENT_LID_CHANGE;
+		ib_dispatch_event(&event);
+	}
 
 	if (port->ib_port_attr.state < IB_PORT_INIT)
 		port->ib_port_attr.state = IB_PORT_INIT;
@@ -521,6 +551,10 @@ bail:
 void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port_num, enum pib_port_type type)
 {
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
+
+	/*
+	 *  lid と sm_lid は 1以上、PIB_MCAST_LID_BASE 未満のこと
+	 */
 
 	/*
 	 * m-key check
@@ -603,6 +637,7 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 
 static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
+	int i;
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
 
@@ -617,7 +652,8 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in
 		goto bail;
 	}
 
-	memcpy(pkey_table, dev->ports[in_port_num - 1].pkey_table, 64);
+	for (i=0; i<PIB_PKEY_PER_BLOCK; i++)
+		pkey_table[i] = cpu_to_be16(dev->ports[in_port_num - 1].pkey_table[i]);
 
 bail:
 	return reply(smp);
@@ -626,6 +662,8 @@ bail:
 
 static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
+	int i;
+	int changed = 0;
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
 
@@ -640,7 +678,29 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in
 		goto bail;
 	}
 
-	memcpy(dev->ports[in_port_num - 1].pkey_table, pkey_table, 64);
+	for (i=0; i<PIB_PKEY_PER_BLOCK; i++) {
+		u16 key  = be16_to_cpu(pkey_table[i]);
+		u16 okey = dev->ports[in_port_num - 1].pkey_table[i];
+
+		if (key == okey)
+			continue;
+
+		if (okey & 0x7FFF)
+			changed = 1;
+
+		if (key & 0x7FFF)
+			changed = 1;
+
+		dev->ports[in_port_num - 1].pkey_table[i] = key;
+	}
+
+	if (changed) {
+		struct ib_event event;
+		event.device           = &dev->ib_dev;
+		event.event            = IB_EVENT_PKEY_CHANGE;
+		event.element.port_num = in_port_num;
+		ib_dispatch_event(&event);
+	}
 
 bail:
 	return reply(smp);

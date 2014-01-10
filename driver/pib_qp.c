@@ -186,6 +186,8 @@ static void reset_qp(struct pib_ib_qp *qp)
 
 static void reset_qp_attr(struct pib_ib_qp *qp)
 {
+	qp->local_ack_timeout      = pib_get_local_ack_time(qp->ib_qp_attr.timeout);
+
 	qp->requester.psn	   = 0;
 	qp->requester.expected_psn = 0;
 	qp->requester.nr_rd_atomic = 0;
@@ -215,8 +217,6 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 	struct pib_ib_qp *qp;
 	u32 qp_num;
 
-	debug_printk("pib_ib_create_qp: pd=%p, init_attr=%p, udata=%p\n", ibpd, init_attr, udata);
-
 	if (!ibpd || !init_attr)
 		return ERR_PTR(-EINVAL);
 
@@ -244,8 +244,6 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 	qp->recv_cq         = to_pcq(init_attr->recv_cq);
 
 	sema_init(&qp->sem, 1);
-
-	INIT_LIST_HEAD(&qp->new_send_wr_qp_list);
 
 	INIT_LIST_HEAD(&qp->requester.submitted_swqe_head);
 	INIT_LIST_HEAD(&qp->requester.sending_swqe_head);
@@ -300,8 +298,8 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		break;
 
 	default:
-		debug_printk("pib_ib_create_qp: unknown QP type %s(%d)\n",
-			     pib_get_qp_type(init_attr->qp_type), init_attr->qp_type);
+		pr_err("pib: pib_ib_create_qp: unknown QP type %s(%d)\n",
+		       pib_get_qp_type(init_attr->qp_type), init_attr->qp_type);
 		return ERR_PTR(-ENOSYS);
 	}
 
@@ -372,24 +370,36 @@ static int qp_init_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_i
 
 static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *cap, int use_srq)
 {
-	if ((cap->max_send_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_send_wr))
+	if ((cap->max_send_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_send_wr)) {
+		printk(KERN_DEBUG "pib: wrong max_send_wr=%u in qp_cap_is_ok\n", cap->max_send_wr);
 		return 0;
+	}
 
-	if ((cap->max_send_sge < 1) || (dev->ib_dev_attr.max_sge < cap->max_send_sge))
+	if ((cap->max_send_sge < 1) || (dev->ib_dev_attr.max_sge < cap->max_send_sge)) {
+		printk(KERN_DEBUG "pib: wrong max_send_sge=%u in qp_cap_is_ok\n", cap->max_send_sge);
 		return 0;
+	}
 
 	if (use_srq) {
-		if (cap->max_recv_wr != 0)
+		if (cap->max_recv_wr != 0) {
+			printk(KERN_DEBUG "pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
 			return 0;
-
-		if (cap->max_recv_sge != 0)
-			return 0;
-	} else {
-		if ((cap->max_recv_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_recv_wr))
-			return 0;
+		}
 		
-		if ((cap->max_recv_sge < 1) || (dev->ib_dev_attr.max_sge < cap->max_recv_sge))
+		if (cap->max_recv_sge != 0) {
+			printk(KERN_DEBUG "pib: wrong max_recv_sge=%u in qp_cap_is_ok\n", cap->max_recv_sge);
 			return 0;
+		}
+	} else {
+		if ((cap->max_recv_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_recv_wr)) {
+			printk(KERN_DEBUG "pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
+			return 0;
+		}
+		
+		if ((cap->max_recv_sge < 1) || (dev->ib_dev_attr.max_sge < cap->max_recv_sge)) {
+			printk(KERN_DEBUG "pib: wrong max_recv_sge=%u in qp_cap_is_ok\n", cap->max_recv_sge);
+			return 0;
+		}
 	}
 
 	return 1;
@@ -401,8 +411,6 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	int qp_num;
 	struct pib_ib_qp *qp;
 	struct pib_ib_dev *dev;
-
-	debug_printk("pib_ib_destroy_qp\n");
 
 	if (!ibqp)
 		return -EINVAL;
@@ -539,8 +547,10 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		}
 	}
 
-	if (attr_mask & IB_QP_TIMEOUT)
+	if (attr_mask & IB_QP_TIMEOUT) {
 		qp->ib_qp_attr.timeout     = attr->timeout; /* 解像度は local_ca_ack_delay に制限される */
+		qp->local_ack_timeout      = pib_get_local_ack_time(attr->timeout);
+	}
 
 	if (attr_mask & IB_QP_RETRY_CNT)
 		qp->ib_qp_attr.retry_cnt   = attr->retry_cnt;
@@ -616,11 +626,11 @@ int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 			qp->issue_sq_drained = 0;
 	}
 
-	up(&qp->sem);
-
 	/* 送信可能状態に */
 	if (pending_send_wr)
 		get_ready_to_send(dev, qp);
+
+	up(&qp->sem);
 
 	return 0;
 
@@ -643,48 +653,70 @@ static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp 
 		if (qp->qp_type == IB_QPT_SMI ||
 		    qp->qp_type == IB_QPT_GSI ||
 		    attr->port_num == 0 ||
-		    attr->port_num > dev->ib_dev.phys_port_cnt)
+		    attr->port_num > dev->ib_dev.phys_port_cnt) {
+			printk(KERN_DEBUG "pib: wrong port_num=%u in modify_qp_is_ok\n", attr->port_num);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_AV)
-		if (attr->ah_attr.dlid >= PIB_IB_LID_BASE)
+		if (attr->ah_attr.dlid >= PIB_MCAST_LID_BASE) {
+			printk(KERN_DEBUG "pib: wrong dlid=0x%04x in modify_qp_is_ok\n", attr->ah_attr.dlid);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_PATH_MTU)
-		if ((attr->path_mtu < IB_MTU_256) || (IB_MTU_4096 < attr->path_mtu))
+		if ((attr->path_mtu < IB_MTU_256) || (IB_MTU_4096 < attr->path_mtu)) {
+			printk(KERN_DEBUG "pib: wrong path_mtu=%u in modify_qp_is_ok\n", attr->path_mtu);
 			return 0;
+		}
 	
 	if (attr_mask & IB_QP_TIMEOUT)
-		if (attr->timeout & ~PIB_IB_LOCAL_ACK_TIMEOUT_MASK)
+		if (attr->timeout & ~PIB_IB_LOCAL_ACK_TIMEOUT_MASK) {
+			printk(KERN_DEBUG "pib: wrong timeout=%u in modify_qp_is_ok\n", attr->timeout);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_RETRY_CNT)
-		if (attr->retry_cnt & ~7) /* @todo */
+		if (attr->retry_cnt & ~7) {
+			printk(KERN_DEBUG "pib: wrong retry_cnt=%u in modify_qp_is_ok\n", attr->retry_cnt);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_MIN_RNR_TIMER)
-		if (attr->min_rnr_timer & ~PIB_IB_MIN_RNR_NAK_TIMER_MASK)
+		if (attr->min_rnr_timer & ~PIB_IB_MIN_RNR_NAK_TIMER_MASK) {
+			printk(KERN_DEBUG "pib: wrong min_rnr_timer=%u in modify_qp_is_ok\n", attr->min_rnr_timer);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_RNR_RETRY)
-		if (attr->rnr_retry & ~7) /* @todo */
+		if (attr->rnr_retry & ~7) {
+			printk(KERN_DEBUG "pib: wrong rnr_retry=%u in modify_qp_is_ok\n", attr->rnr_retry);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_MAX_QP_RD_ATOMIC)
-		if (attr->max_rd_atomic > dev->ib_dev_attr.max_qp_rd_atom)
+		if (attr->max_rd_atomic > dev->ib_dev_attr.max_qp_init_rd_atom) {
+			printk(KERN_DEBUG "pib: wrong max_rd_atomic=%u in modify_qp_is_ok\n", attr->max_rd_atomic);
 			return 0;
+		}
 	
 	if (attr_mask & IB_QP_MAX_DEST_RD_ATOMIC)
-		if (attr->max_dest_rd_atomic > dev->ib_dev_attr.max_qp_rd_atom)
+		if (attr->max_dest_rd_atomic > dev->ib_dev_attr.max_qp_rd_atom) {
+			printk(KERN_DEBUG "pib: wrong max_dest_rd_atomic=%u in modify_qp_is_ok\n", attr->max_dest_rd_atomic);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_RQ_PSN)
-		if (attr->rq_psn & ~PIB_IB_PSN_MASK)
+		if (attr->rq_psn & ~PIB_IB_PSN_MASK) {
+			printk(KERN_DEBUG "pib: wrong rq_psn=0x%08x in modify_qp_is_ok\n", attr->rq_psn);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_SQ_PSN)
-		if (attr->sq_psn & ~PIB_IB_PSN_MASK)
+		if (attr->sq_psn & ~PIB_IB_PSN_MASK) {
+			printk(KERN_DEBUG "pib: wrong sq_psn=0x%08x in modify_qp_is_ok\n", attr->sq_psn);
 			return 0;
+		}
 
 	if (attr_mask & IB_QP_CAP)
 		if (!qp_cap_is_ok(dev, &attr->cap, (qp->ib_qp_init_attr.srq != NULL)))
@@ -727,6 +759,24 @@ int pib_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_
 	qp_attr->rq_psn       = qp->responder.psn & PIB_IB_PSN_MASK;
 
 	up(&qp->sem);
+
+	return 0;
+}
+
+
+int pib_ib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
+{
+	pr_info("pib: pib_ib_attach_mcast(qp=0x%06x, lid=0x%04x)\n",
+		(int)ibqp->qp_num, lid);
+
+	return 0;
+}
+
+
+int pib_ib_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
+{
+	pr_info("pib: pib_ib_detach_mcast(qp=0x%06x, lid=0x%04x)\n",
+		(int)ibqp->qp_num, lid);
 
 	return 0;
 }
@@ -828,22 +878,12 @@ next_wr:
 			break;
 
 		case IB_WR_RDMA_READ:
-			if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic) {
-				res = PIB_RES_IMMEDIATE_RETURN;
-				goto skip;
-			}
-			qp->requester.nr_rd_atomic++;
 			send_wqe->wr.rdma.remote_addr   = ibwr->wr.rdma.remote_addr;
 			send_wqe->wr.rdma.rkey          = ibwr->wr.rdma.rkey;
 			break;
 
 		case IB_WR_ATOMIC_CMP_AND_SWP:
 		case IB_WR_ATOMIC_FETCH_AND_ADD:
-			if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic) {
-				res = PIB_RES_IMMEDIATE_RETURN;
-				goto skip;
-			}
-			qp->requester.nr_rd_atomic++;
 			send_wqe->wr.atomic.remote_addr = ibwr->wr.atomic.remote_addr;
 			send_wqe->wr.atomic.compare_add = ibwr->wr.atomic.compare_add;
 			send_wqe->wr.atomic.swap        = ibwr->wr.atomic.swap;
@@ -929,15 +969,13 @@ skip:
 		goto next_wr;
 
 done:
+	if (pending_send_wr)
+		get_ready_to_send(dev, qp);
+
 	up(&qp->sem);
 
-	if (ret == 0) {
-		if (pending_send_wr)
-			get_ready_to_send(dev, qp);
-	} else {
-		if (bad_wr)
-			*bad_wr = ibwr;
-	}
+	if (bad_wr)
+		*bad_wr = ibwr;
 
 	return ret;
 }
@@ -1084,14 +1122,7 @@ void pib_util_free_recv_wqe(struct pib_ib_qp *qp, struct pib_ib_recv_wqe *recv_w
 
 static void get_ready_to_send(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 {
-	down_write(&dev->rwsem);
-	if (!qp->has_new_send_wr) {
-		list_add_tail(&qp->new_send_wr_qp_list, &dev->thread.new_send_wr_qp_head);
-		qp->has_new_send_wr = 1;
-	}
-	up_write(&dev->rwsem);
-
-	set_bit(PIB_THREAD_NEW_SEND_WR, &dev->thread.flags);
+	pib_util_reschedule_qp(qp);
 	complete(&dev->thread.completion);
 }
 

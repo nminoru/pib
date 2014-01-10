@@ -48,7 +48,7 @@ static void push_atomic_acknowledge(struct pib_ib_qp *qp, u32 psn, u64 res);
 /*
  * Responder: Generating Acknowledge Packets
  */
-static int generate_Normal_or_Atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr);
+static void generate_Normal_or_Atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr);
 static int generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr);
 static int pack_acknowledge_packet(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_ib_syndrome syndrome, int with_atomiceth, u64 res);
 
@@ -91,13 +91,10 @@ static enum pib_ib_syndrome get_resources_not_ready(struct pib_ib_qp *qp)
 
 int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
 {
-	int ret;
 	int with_reth = 0;
 	int with_imm = 0;
 	struct pib_ib_pd *pd;
 	void *buffer;
-	struct msghdr msghdr;
-	struct kvec iov;
 	u8 port_num;
 	struct ib_ah_attr ah_attr;
 	struct sockaddr *sockaddr;
@@ -238,18 +235,10 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	if (status != IB_WC_SUCCESS)
 		goto completion_error;
 
-	memset(&msghdr, 0, sizeof(msghdr));
-	
-	msghdr.msg_name    = sockaddr;
-	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
-		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
-
-	iov.iov_base = dev->thread.buffer;
-	iov.iov_len  = rc_packet->lrh.PktLen * 4;
-
-	ret = kernel_sendmsg(dev->ports[port_num - 1].socket, &msghdr, &iov, 1, iov.iov_len);
-	if (ret < 0)
-		return ret;
+	dev->thread.sockaddr	= sockaddr;
+	dev->thread.msg_size    = rc_packet->lrh.PktLen * 4;
+	dev->thread.port_num    = port_num;
+	dev->thread.ready_to_send = 1;
 
 	if (send_wqe->opcode != IB_WR_RDMA_READ) {
 		send_wqe->processing.sent_packets++;
@@ -262,8 +251,7 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	send_wqe->processing.list_type = PIB_SWQE_WAITING;
 
 	/* Calucate the next time in jififes to resend this request by local ACK timer */
-	send_wqe->processing.local_ack_time =
-		jiffies + pib_get_local_ack_time(qp->ib_qp_attr.timeout);
+	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;
 
 	return 0;
 
@@ -334,7 +322,7 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 	/* calculate packet length & pad count */
 	packet_length = buffer - dev->thread.buffer;
 
-	rc_packet->lrh.PktLen = ((packet_length + 3) & ~3) / 4;
+	rc_packet->lrh.PktLen = (packet_length + 3) / 4;
 	rc_packet->bth.PadCnt = rc_packet->lrh.PktLen * 4 - packet_length;
 
 	return IB_WC_SUCCESS;
@@ -355,7 +343,6 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 
 	remote_addr = send_wqe->wr.rdma.remote_addr;
 	dmalen      = send_wqe->total_length;
-
 	offset      = (128U << qp->ib_qp_attr.path_mtu) * send_wqe->processing.sent_packets;
 
 	if (0 < offset) {
@@ -377,7 +364,7 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 		 *   payload data and PSNs regardless of whether it is a response
 		 *   to the original request or a retried request.
 		 */
-		remote_addr -= offset;
+		remote_addr += offset;
 		dmalen      -= offset;
 	}
 
@@ -495,7 +482,9 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 		case IB_OPCODE_RC_COMPARE_SWAP:
 		case IB_OPCODE_RC_FETCH_ADD:
 			for (i=1 ; i <= qp->ib_qp_attr.max_dest_rd_atomic ; i++) {
-				slot = qp->responder.slots[((unsigned int)(qp->responder.slot_index - i)) % PIB_IB_MAX_RD_ATOM];
+				int slot_index = ((unsigned int)(qp->responder.slot_index - i)) % PIB_IB_MAX_RD_ATOM;
+
+				slot = qp->responder.slots[slot_index];
 
 				if ((slot.OpCode != OpCode) ||
 				    (get_psn_diff(psn, slot.psn)          <   0) ||
@@ -504,7 +493,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 
 				if (OpCode == IB_OPCODE_RC_RDMA_READ_REQUEST)
 					receive_RDMA_READ_request(dev, port_num, psn, qp, buffer, size,
-								   0, i);
+								  0, slot_index);
 				else
 					push_atomic_acknowledge(qp, psn, slot.data.atomic.res);
 
@@ -1212,7 +1201,7 @@ push_atomic_acknowledge(struct pib_ib_qp *qp, u32 psn, u64 res)
 /* Responder: Generating Acknowledge Packets                                  */
 /******************************************************************************/
 
-void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
+int pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 {
 	u8 port_num;
 	u16 dlid;
@@ -1220,7 +1209,7 @@ void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp
 	struct pib_ib_ack *ack, *ack_next;
 
 	if (!pib_is_recv_ok(qp->state))
-		return;
+		return 0;
 
 	port_num = qp->ib_qp_attr.port_num;
 	dlid     = qp->ib_qp_attr.ah_attr.dlid;
@@ -1229,12 +1218,11 @@ void pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp
 
 	if (!sockaddr) {
 		debug_printk("Not found the destination address in ld_table (ah.dlid=%u)", dlid);
-		return; /* @todo */
+		return -1; /* @todo */
 	}
 
-restart:
 	if (list_empty(&qp->responder.ack_head))
-		return;
+		return 0;
 
 	/* IBA Spec. Vol.1 9.7.5.1.2. Coalesced Acknowledge Messages */
 	ack = list_first_entry(&qp->responder.ack_head, struct pib_ib_ack, list);
@@ -1249,9 +1237,10 @@ restart:
 			} else
 				break;
 		}
+
 		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, &ack_tmp, sockaddr);
 
-		goto restart;
+		return 1;
 	}
 
 	/* Other acknowledges */
@@ -1268,10 +1257,10 @@ restart:
 		break;
 
 	case PIB_IB_ACK_RMDA_READ:
-		do {
-			generate_RDMA_READ_response(dev, port_num, qp, ack, sockaddr);
-		} while ((ack->data.rdma_read.offset < ack->data.rdma_read.size) &&
-			 (dev->thread.flags & PIB_THREAD_READY_TO_DATA) == 0);
+		generate_RDMA_READ_response(dev, port_num, qp, ack, sockaddr);
+
+		if (ack->data.rdma_read.offset < ack->data.rdma_read.size)
+			return 1;
 
 		qp->responder.nr_rd_atomic--;
 		break;
@@ -1283,16 +1272,14 @@ restart:
 	list_del_init(&ack->list);
 	kmem_cache_free(pib_ib_ack_cachep, ack);
 
-	goto restart;
+	return 1;
 }
 
 
-static int
+static void
 generate_Normal_or_Atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr)
 {
-	int ret, size;
-	struct msghdr msghdr;
-	struct kvec iov;
+	int size;
 
 	if (ack->type == PIB_IB_ACK_NORMAL)
 		size = pack_acknowledge_packet(dev, port_num, qp,
@@ -1303,32 +1290,23 @@ generate_Normal_or_Atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struc
 					       IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE, ack->psn,
 					       1, PIB_IB_ACK_CODE, 1, ack->data.atomic.res);
 
-	memset(&msghdr, 0, sizeof(msghdr));
-	
-	msghdr.msg_name    = sockaddr;
-	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
-		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
+	dev->thread.sockaddr	= sockaddr;
+	dev->thread.msg_size    = size;
+	dev->thread.port_num    = port_num;
 
-	iov.iov_base = dev->thread.buffer;
-	iov.iov_len  = size;
-
-	ret = kernel_sendmsg(dev->ports[port_num - 1].socket, &msghdr, &iov, 1, iov.iov_len);
-
-	return ret;
+	dev->thread.ready_to_send = 1;
 }
 
 
 static int
 generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr)
 {
-	int ret, pmtu, size;
+	int pmtu, size;
 	int with_aeth = 1;
 	u32 psn_offset;
 	int OpCode;
 	struct pib_ib_pd *pd;
-	struct msghdr msghdr;
-	struct kvec iov;
-	u32 payload_size;
+	u32 data_size, payload_size;
 	enum ib_wc_status status;
 	unsigned long flags;
 
@@ -1351,8 +1329,10 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 	size = pack_acknowledge_packet(dev, port_num, qp, OpCode, ack->psn + psn_offset,
 				       with_aeth, PIB_IB_ACK_CODE, 0, 0);
 
-	payload_size = (ack->data.rdma_read.size - ack->data.rdma_read.offset < pmtu) ?
+	data_size = (ack->data.rdma_read.size - ack->data.rdma_read.offset < pmtu) ?
 		(ack->data.rdma_read.size - ack->data.rdma_read.offset) : pmtu;
+	
+	payload_size = (data_size + 3) & ~3;
 
 	((struct pib_packet_lrh*)dev->thread.buffer)->PktLen += payload_size / 4;
 
@@ -1363,29 +1343,25 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 						 ack->data.rdma_read.rkey,
 						 dev->thread.buffer + size,
 						 ack->data.rdma_read.vaddress + ack->data.rdma_read.offset,
-						 payload_size,
+						 data_size,
 						 IB_ACCESS_REMOTE_READ,
 						 PIB_MR_COPY_FROM);
 	spin_unlock_irqrestore(&pd->lock, flags);
+
+	/* @todo data_size が 4 の倍数で終わらない場合に尻尾にゴミが入っている */
 
 	if (status != IB_WC_SUCCESS)
 		/* receive_RDMA_READ_request でチェックしているから本当はないはず */
 		return status;
 
-	memset(&msghdr, 0, sizeof(msghdr));
-	
-	msghdr.msg_name    = sockaddr;
-	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
-		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
+	dev->thread.sockaddr	= sockaddr;
+	dev->thread.msg_size    = size + payload_size;
+	dev->thread.port_num    = port_num;
+	dev->thread.ready_to_send = 1;
 
-	iov.iov_base = dev->thread.buffer;
-	iov.iov_len  = size + payload_size;
+	ack->data.rdma_read.offset += data_size;
 
-	ret = kernel_sendmsg(dev->ports[port_num - 1].socket, &msghdr, &iov, 1, iov.iov_len);
-	
-	ack->data.rdma_read.offset += payload_size;
-
-	return ret;
+	return IB_WC_SUCCESS;
 }
 
 
@@ -1673,6 +1649,9 @@ receive_ACK_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, 
 
 	/* @todo QP を再 enqueue する条件を考えよ */
 
+	/* ACK が受理できれば local_ack_time は延長可能 */
+	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
+
 	return -1;
 
 completion_error:
@@ -1712,16 +1691,9 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 		/* Ignore duplicated acknowledge */
 		return RET_STOP;
 
-	switch (send_wqe->opcode) {
-
-	case IB_WR_RDMA_READ:
-	case IB_WR_ATOMIC_CMP_AND_SWP:
-	case IB_WR_ATOMIC_FETCH_AND_ADD:
+	if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode)) {
 		send_wqe->processing.status = IB_WC_BAD_RESP_ERR;
 		return RET_ERROR;
-
-	default:
-		break;
 	}
 
 	if (no_packets < send_wqe->processing.all_packets) {
@@ -1760,6 +1732,7 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 	struct pib_ib_pd *pd;
 	enum ib_wc_status status;
 	unsigned long flags;
+	u32 dmalen, offset;
 
 	send_wqe = match_send_wqe(qp, psn, &first_send_wqe, &nr_swqe_p);
 
@@ -1778,12 +1751,22 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 	if (!pib_is_recv_ok(qp->state))
 		return 0;
 
+	if (get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.ack_packets, psn) != 0)
+		/* 順序通りに PSN を受けること @todo 再送すべき */
+		return 0;
+
+	dmalen      = send_wqe->total_length;
+	offset      = send_wqe->processing.ack_packets * 128U << qp->ib_qp_attr.path_mtu;
+
+	if (dmalen - offset < size)
+		size = dmalen - offset; /* 最後のパケットにある余白 */
+
 	pd = to_ppd(qp->ib_qp.pd);
 
 	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
 				       buffer,
-				       send_wqe->processing.sent_packets * 128U << qp->ib_qp_attr.path_mtu,
+				       offset,
 				       size,
 				       IB_ACCESS_LOCAL_WRITE,
 				       PIB_MR_COPY_TO);
@@ -1794,7 +1777,11 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 		return 0;
 	}
 
+	/* ACK が受理できれば local_ack_time は延長可能 */
+	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
+
 	send_wqe->processing.sent_packets++;
+	send_wqe->processing.ack_packets++;
 
 	if (send_wqe->processing.sent_packets < send_wqe->processing.all_packets)
 		return 0;
@@ -1881,6 +1868,9 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 		send_wqe->processing.status = status;
 		return 0;
 	}
+
+	/* ACK が受理できれば local_ack_time は延長可能 */
+	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
 
 	if ((qp->ib_qp_init_attr.sq_sig_type == IB_SIGNAL_ALL_WR) || 
 	    (send_wqe->send_flags & IB_SEND_SIGNALED)) {

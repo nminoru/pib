@@ -27,25 +27,21 @@
 
 
 static int kthread_routine(void *data);
-
 static int create_socket(struct pib_ib_dev *dev, int port_index);
 static void release_socket(struct pib_ib_dev *dev, int port_index);
-static void sock_data_ready_callback(struct sock *sk, int bytes);
-static void timer_timeout_callback(unsigned long opaque);
-
-static void process_new_send_wr(struct pib_ib_dev *dev);
 static void process_on_scheduler(struct pib_ib_dev *dev);
-static void set_expected_sq_psn(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
+static int  process_new_send_wr(struct pib_ib_qp *qp);
 static int process_send_wr(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
 static int process_incoming_message(struct pib_ib_dev *dev, int port_index);
+static void process_sendmsg(struct pib_ib_dev *dev);
+static void sock_data_ready_callback(struct sock *sk, int bytes);
+static void timer_timeout_callback(unsigned long opaque);
 
 
 int pib_create_kthread(struct pib_ib_dev *dev)
 {
 	int i, j, ret;
 	struct task_struct *task;
-
-	INIT_LIST_HEAD(&dev->thread.new_send_wr_qp_head);
 
 	init_completion(&dev->thread.completion);
 	init_timer(&dev->thread.timer);
@@ -245,9 +241,9 @@ static int kthread_routine(void *data)
 		init_completion(&dev->thread.completion);
 
 		while (dev->thread.flags) {
-			schedule();
+			cond_resched();
 
-			if (test_and_clear_bit(PIB_THREAD_READY_TO_DATA, &dev->thread.flags)) {
+			if (test_and_clear_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags)) {
 				int i, ret;
 				for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
 					do {
@@ -256,67 +252,12 @@ static int kthread_routine(void *data)
 				}
 			}
 
-			if (test_and_clear_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags)) {
+			if (test_and_clear_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags))
 				process_on_scheduler(dev);
-				continue; /* skip process_new_send_wr */
-			}
-			
-			if (test_and_clear_bit(PIB_THREAD_NEW_SEND_WR, &dev->thread.flags)) {
-				process_new_send_wr(dev);
-				continue;
-			}
 		}
 	}
 
 	return 0;
-}
-
-
-static void process_new_send_wr(struct pib_ib_dev *dev)
-{
-	down_write(&dev->rwsem);
-
-	while (!list_empty(&dev->thread.new_send_wr_qp_head)) {
-		struct pib_ib_qp *qp;
-		struct pib_ib_send_wqe *send_wqe;
-
-		qp = list_first_entry(&dev->thread.new_send_wr_qp_head, struct pib_ib_qp, new_send_wr_qp_list);
-
-		list_del_init(&qp->new_send_wr_qp_list);
-		qp->has_new_send_wr = 0;
-
-		down(&qp->sem);
-
-		if ((qp->state != IB_QPS_RTS) || list_empty(&qp->requester.submitted_swqe_head))
-			goto loop_end;
-
-		send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_ib_send_wqe, list);
-
-		set_expected_sq_psn(qp, send_wqe);
-
-		list_del_init(&send_wqe->list);
-		qp->requester.nr_submitted_swqe--;
-
-		list_add_tail(&send_wqe->list, &qp->requester.sending_swqe_head);
-		qp->requester.nr_sending_swqe++;
-
-		send_wqe->processing.list_type = PIB_SWQE_SENDING;
-
-		pib_util_reschedule_qp(qp);
-
-		if (!list_empty(&qp->requester.submitted_swqe_head)) {
-			list_add_tail(&qp->new_send_wr_qp_list, &dev->thread.new_send_wr_qp_head);
-			qp->has_new_send_wr = 1;
-		}
-
-	loop_end:
-		up(&qp->sem);
-	}
-
-	if (!list_empty(&dev->thread.new_send_wr_qp_head))
-		set_bit(PIB_THREAD_NEW_SEND_WR, &dev->thread.flags);
-	
-	up_write(&dev->rwsem);
 }
 
 
@@ -334,7 +275,6 @@ restart:
 	down_write(&dev->rwsem);
 
 	qp = pib_util_get_first_scheduling_qp(dev);
-
 	if (!qp) {
 		up_write(&dev->rwsem);
 		return;
@@ -346,7 +286,8 @@ restart:
 
 	/* Responder: generating acknowledge packets */
 	if (qp->qp_type == IB_QPT_RC)
-		pib_generate_rc_qp_acknowledge(dev, qp);
+		if (pib_generate_rc_qp_acknowledge(dev, qp) == 1)
+			goto done;
 
 	/* Requester: generating request packets */
 	if ((qp->state != IB_QPS_RTS) && (qp->state != IB_QPS_SQD))
@@ -382,8 +323,13 @@ restart:
 	}
 	    
 first_sending_wsqe:
-	if (list_empty(&qp->requester.sending_swqe_head))
-		goto done;
+	if (list_empty(&qp->requester.sending_swqe_head)) {
+		/* sending list が空になったら新しい SWQE を取り出す */
+		if (process_new_send_wr(qp))
+			goto first_sending_wsqe;
+		else
+			goto done;
+	}
 
 	send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
 
@@ -411,42 +357,30 @@ first_sending_wsqe:
 
 	send_wqe->processing.schedule_time = now;
 
-	while (!list_empty(&qp->requester.sending_swqe_head)) {
-		struct pib_ib_send_wqe *send_wqe;
-
-		send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
-
-		ret = process_send_wr(dev, qp, send_wqe);
+	ret = process_send_wr(dev, qp, send_wqe);
 			
-		switch (send_wqe->processing.list_type) {
+	switch (send_wqe->processing.list_type) {
 
-		case PIB_SWQE_FREE:
-			/* list からは外されている */
-			pib_util_free_send_wqe(qp, send_wqe);
-			break;
+	case PIB_SWQE_FREE:
+		/* list からは外されている */
+		pib_util_free_send_wqe(qp, send_wqe);
+		break;
 
-		case PIB_SWQE_SENDING:
-			/* no change */
-			break;
+	case PIB_SWQE_SENDING:
+		/* no change */
+		break;
 
-		case PIB_SWQE_WAITING:
-			list_del_init(&send_wqe->list);
-			qp->requester.nr_sending_swqe--;
-			list_add_tail(&send_wqe->list, &qp->requester.waiting_swqe_head);
-			qp->requester.nr_waiting_swqe++;
-			break;
+	case PIB_SWQE_WAITING:
+		list_del_init(&send_wqe->list);
+		qp->requester.nr_sending_swqe--;
+		list_add_tail(&send_wqe->list, &qp->requester.waiting_swqe_head);
+		qp->requester.nr_waiting_swqe++;
+		break;
 
-		default:
-			printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
-			       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
-			BUG();
-		}
-			
-		if (ret || (dev->thread.flags & PIB_THREAD_READY_TO_DATA)) {
-			set_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags);
-			up(&qp->sem);
-			return;
-		}
+	default:
+		pr_emerg("pib: Error qp_type=%s in %s at %s:%u\n",
+			 pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
+		BUG();
 	}
 
 done:
@@ -454,7 +388,10 @@ done:
 
 	up(&qp->sem);
 
-	if (dev->thread.flags & PIB_THREAD_READY_TO_DATA)
+	if (dev->thread.ready_to_send)
+		process_sendmsg(dev);
+
+	if (dev->thread.flags & PIB_THREAD_READY_TO_RECV)
 		return;
 
 	spin_lock_irqsave(&dev->schedule.lock, flags);
@@ -464,14 +401,44 @@ done:
 	}
 	spin_unlock_irqrestore(&dev->schedule.lock, flags);
 
+	cond_resched();
+
 	goto restart;
 }
 
 
-static void set_expected_sq_psn(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
+static int process_new_send_wr(struct pib_ib_qp *qp)
 {
+	struct pib_ib_send_wqe *send_wqe;
 	u32 num_packets;
-	unsigned long now = jiffies;
+	unsigned long now;
+
+	if (qp->state != IB_QPS_RTS)
+		return 0;
+
+	if (list_empty(&qp->requester.submitted_swqe_head))
+		return 0;
+
+	send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_ib_send_wqe, list);
+
+	if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode)) {
+		if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic)
+			return 0;
+		qp->requester.nr_rd_atomic++;
+	}
+
+	list_del_init(&send_wqe->list);
+	qp->requester.nr_submitted_swqe--;
+
+	list_add_tail(&send_wqe->list, &qp->requester.sending_swqe_head);
+	qp->requester.nr_sending_swqe++;
+
+	send_wqe->processing.list_type = PIB_SWQE_SENDING;
+
+	/*
+	 *  Set expected PSN for SQ and etc.
+	 */
+	now = jiffies;
 
 	num_packets = pib_get_num_of_packets(qp, send_wqe->total_length);
 
@@ -489,6 +456,8 @@ static void set_expected_sq_psn(struct pib_ib_qp *qp, struct pib_ib_send_wqe *se
 
 	send_wqe->processing.retry_cnt     = qp->ib_qp_attr.retry_cnt;
 	send_wqe->processing.rnr_retry     = qp->ib_qp_attr.rnr_retry;
+
+	return 1;
 }
 
 
@@ -522,8 +491,8 @@ static int process_send_wr(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct 
 		return pib_process_ud_qp_request(dev, qp, send_wqe);
 
 	default:
-		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
-		       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
+		pr_emerg("pib: Error qp_type=%s in %s at %s:%u\n",
+			 pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 		BUG();
 	}
 
@@ -551,8 +520,8 @@ completion_error:
 		break;
 
 	default:
-		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
-		       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
+		pr_emerg("pib: Error qp_type=%s in %s at %s:%u\n",
+			 pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 		BUG();
 	}
 
@@ -581,7 +550,7 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 
 	if (ret < 0) {
 		if (ret == -EINTR)
-			set_bit(PIB_THREAD_READY_TO_DATA, &dev->thread.flags);
+			set_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags);
 		return ret;
 	} else if (ret == 0)
 		return -EAGAIN;
@@ -656,8 +625,8 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 		break;
 
 	default:
-		printk(KERN_EMERG "pib: Error qp_type=%s in %s at %s:%u\n",
-		       pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
+		pr_emerg("pib: Error qp_type=%s in %s at %s:%u\n",
+			 pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 		BUG();
 	}
 
@@ -665,10 +634,12 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 
 	up(&qp->sem);
 
+	if (dev->thread.ready_to_send)
+		process_sendmsg(dev);
+
 silently_drop:
 	return 0;
 }
-
 
 
 /******************************************************************************/
@@ -733,6 +704,16 @@ void pib_util_reschedule_qp(struct pib_ib_qp *qp)
 
 		if (time_before(send_wqe->processing.schedule_time, schedule_time))
 			schedule_time = send_wqe->processing.schedule_time;
+	}
+
+	if ((qp->state == IB_QPS_RTS) && !list_empty(&qp->requester.submitted_swqe_head)) {
+		send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_ib_send_wqe, list);
+
+		if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode))
+			if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic)
+				goto skip;
+
+		schedule_time = now;
 	}
 
 skip:
@@ -806,12 +787,42 @@ done:
 /******************************************************************************/
 /*                                                                            */
 /******************************************************************************/
+static void process_sendmsg(struct pib_ib_dev *dev)
+{
+	int ret;
+	struct msghdr	msghdr;
+	struct kvec	iov;
+
+	BUG_ON(dev->thread.sockaddr == NULL);
+	BUG_ON(dev->thread.msg_size == 0);
+
+	memset(&msghdr, 0, sizeof(msghdr));
+
+	msghdr.msg_name    = dev->thread.sockaddr;
+	msghdr.msg_namelen = (dev->thread.sockaddr->sa_family == AF_INET6) ?
+		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);	
+
+	iov.iov_base = dev->thread.buffer;
+	iov.iov_len  = dev->thread.msg_size;
+
+	ret = kernel_sendmsg(dev->ports[dev->thread.port_num - 1].socket,
+			     &msghdr, &iov, 1, iov.iov_len);
+
+	dev->thread.sockaddr = NULL;
+	dev->thread.msg_size = 0;
+	dev->thread.ready_to_send = 0;
+}
+
+
+/******************************************************************************/
+/*                                                                            */
+/******************************************************************************/
 
 static void sock_data_ready_callback(struct sock *sk, int bytes)
 {
 	struct pib_ib_dev* dev  = (struct pib_ib_dev*)sk->sk_user_data;
 
-	set_bit(PIB_THREAD_READY_TO_DATA, &dev->thread.flags);
+	set_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags);
 	complete(&dev->thread.completion);
 }
 

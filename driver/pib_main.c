@@ -152,7 +152,9 @@ static int pib_ib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 {
 	struct pib_ib_dev *dev;
 
+#if 0
 	debug_printk("pib_ib_modify_port: port=%u, mask=%x,%x,%x\n", port_num, mask, props->set_port_cap_mask, props->clr_port_cap_mask);
+#endif
 
 	if (mask & ~(IB_PORT_SHUTDOWN|IB_PORT_INIT_TYPE|IB_PORT_RESET_QKEY_CNTR))
 		return -EOPNOTSUPP;
@@ -329,7 +331,7 @@ static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 
 	dev = (struct pib_ib_dev *)ib_alloc_device(sizeof *dev);
 	if (!dev) {
-		debug_printk(KERN_WARNING "Device struct alloc failed\n");
+		pr_err("pib: Device struct alloc failed\n");
 		return NULL;
 	}
 
@@ -376,8 +378,8 @@ static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 		(1ULL << IB_USER_VERBS_CMD_DESTROY_QP)		|
 		(1ULL << IB_USER_VERBS_CMD_POST_SEND)		|
 		(1ULL << IB_USER_VERBS_CMD_POST_RECV)		|
-		/* (1ULL << IB_USER_VERBS_CMD_ATTACH_MCAST)        | */
-		/* (1ULL << IB_USER_VERBS_CMD_DETACH_MCAST)        | */
+		(1ULL << IB_USER_VERBS_CMD_ATTACH_MCAST)        |
+		(1ULL << IB_USER_VERBS_CMD_DETACH_MCAST)        |
 		(1ULL << IB_USER_VERBS_CMD_CREATE_SRQ)		|
 		(1ULL << IB_USER_VERBS_CMD_MODIFY_SRQ)		|
 		(1ULL << IB_USER_VERBS_CMD_QUERY_SRQ)		|
@@ -421,10 +423,8 @@ static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 	dev->ib_dev.alloc_fast_reg_mr 	= pib_ib_alloc_fast_reg_mr;
 	dev->ib_dev.alloc_fast_reg_page_list = pib_ib_alloc_fast_reg_page_list;
 	dev->ib_dev.free_fast_reg_page_list  = pib_ib_free_fast_reg_page_list;
-#if 0
-	dev->ib_dev.attach_mcast	= pib_ib_mcg_attach;
-	dev->ib_dev.detach_mcast	= pib_ib_mcg_detach;
-#endif
+	dev->ib_dev.attach_mcast	= pib_ib_attach_mcast;
+	dev->ib_dev.detach_mcast	= pib_ib_detach_mcast;
 	dev->ib_dev.process_mad	= pib_ib_process_mad;
 	dev->ib_dev.dma_ops		= &pib_dma_mapping_ops;
 
@@ -478,7 +478,7 @@ static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 		if (lid_table != NULL) {
 			dev->ports[i].lid_table = lid_table;
 		} else {
-			dev->ports[i].lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_IB_MAX_LID);
+			dev->ports[i].lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
 			if (!dev->ports[i].lid_table)
 				goto err_ld_table;
 		}
@@ -509,6 +509,9 @@ static struct pib_ib_dev *pib_ib_add(struct device *dma_device, int ib_dev_id)
 	for (i = 0; i < ARRAY_SIZE(pib_class_attributes); i++)
 		if (device_create_file(&dev->ib_dev.dev, pib_class_attributes[i]))
 			goto err_create_file;
+
+	pr_info("pib: add channel adaptor (dev_id=%d, ports=%u)\n",
+		dev->ib_dev_id, dev->ib_dev.phys_port_cnt);
 
 	return dev;
 
@@ -542,7 +545,7 @@ static void pib_ib_remove(struct pib_ib_dev *dev)
 {
 	int i;
 
-	debug_printk("pib_ib_remove\n");
+	pr_info("pib: remove channel adaptor (dev_id=%d)\n", dev->ib_dev_id);
 
 	ib_unregister_device(&dev->ib_dev);
 
@@ -563,11 +566,11 @@ struct sockaddr *pib_get_sockaddr_from_lid(struct pib_ib_dev *dev, u8 port_num, 
 {
 	int port_index;
 	struct sockaddr *sockaddr;
+	unsigned long flags;
 
 	port_index = port_num - 1;
 
 	if (qp->qp_type == IB_QPT_SMI) {
-		unsigned long flags;
 		spin_lock_irqsave(&pib_ib_easy_sw.lock, flags);
 		sockaddr = pib_ib_easy_sw.sockaddr;
 		spin_unlock_irqrestore(&pib_ib_easy_sw.lock, flags);
@@ -576,8 +579,13 @@ struct sockaddr *pib_get_sockaddr_from_lid(struct pib_ib_dev *dev, u8 port_num, 
 			sockaddr = dev->ports[port_index].sockaddr; /* @todo */
 		else if (lid == dev->ports[port_index].ib_port_attr.lid)
 			sockaddr = dev->ports[port_index].sockaddr; /* loopback */
-		else
+		else if (lid < PIB_MCAST_LID_BASE) /* unicast */
 			sockaddr = dev->ports[port_index].lid_table[lid];
+		else { /* multicast */
+			spin_lock_irqsave(&pib_ib_easy_sw.lock, flags);
+			sockaddr = pib_ib_easy_sw.sockaddr;
+			spin_unlock_irqrestore(&pib_ib_easy_sw.lock, flags);
+		}
 	}
 
 	return sockaddr;
@@ -730,13 +738,15 @@ static int __init pib_ib_init(void)
 {
 	int i, j, err = 0;
 
+	pr_info("pib: " PIB_DRIVER_DESCRIPTION " v" PIB_DRIVER_VERSION "\n");
+
 	if ((pib_num_hca < 1) || (PIB_IB_MAX_HCA < pib_num_hca)) {
-		printk(KERN_ERR "pib_num_hca: %u\n", pib_num_hca);
+		pr_err("pib_num_hca: %u\n", pib_num_hca);
 		return -EINVAL;
 	}
 
 	if ((pib_phys_port_cnt < 1) || (PIB_IB_MAX_PORTS < pib_phys_port_cnt)) {
-		printk(KERN_ERR "phys_port_cnt: %u\n", pib_phys_port_cnt);
+		pr_err("phys_port_cnt: %u\n", pib_phys_port_cnt);
 		return -EINVAL;
 	}
 
@@ -757,7 +767,7 @@ static int __init pib_ib_init(void)
 	get_hca_guid_base();
 
 #ifdef PIB_USE_EASY_SWITCH
-	lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_IB_MAX_LID);	
+	lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
 	if (!lid_table)
 		goto err_alloc_lid_table;
 #endif
@@ -812,6 +822,8 @@ err_class_create:
 static void __exit pib_ib_cleanup(void)
 {
 	int i;
+
+	pr_info("pib: unload\n");
 
 	for (i = pib_num_hca - 1 ; 0 <= i ; i--)
 		if (pib_ib_devs[i])

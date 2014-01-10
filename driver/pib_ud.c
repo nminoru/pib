@@ -37,8 +37,6 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	int push_wc;
 	struct pib_ib_pd *pd;
 	void *buffer;
-	struct msghdr msghdr;
-	struct kvec iov;
 	u8 port_num;
 	struct pib_ib_ah *ah;
 	struct sockaddr *sockaddr;
@@ -184,18 +182,10 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		}
 	}
 
-	memset(&msghdr, 0, sizeof(msghdr));
-	
-	msghdr.msg_name    = sockaddr;
-	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
-		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
-
-	iov.iov_base = dev->thread.buffer;
-	iov.iov_len  = total_length;
-
-	ret = kernel_sendmsg(dev->ports[port_num - 1].socket, &msghdr, &iov, 1, iov.iov_len);
-	if (ret < 0)
-		return ret;
+	dev->thread.sockaddr	= sockaddr;
+	dev->thread.msg_size    = total_length;
+	dev->thread.port_num    = port_num;
+	dev->thread.ready_to_send = 1;
 
 	qp->ib_qp_attr.sq_psn++;
 

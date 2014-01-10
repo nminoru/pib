@@ -99,10 +99,10 @@ static const u32 rnr_nak_timeout[] = {
 
 
 #define NSEC_TO_JIFFIES(value)					\
-	((u32)(((value ## ULL) * 1000) / (HZ * 1000000ULL)))
+	((unsigned long)(((value ## ULL) * 1000) / (HZ * 1000000ULL)))
 
 /* IBA Spec. Vol.1 9.7.6.1.3 */
-static const u64 local_ack_timeout[] = {
+static const unsigned long local_ack_timeout[] = {
 	/* [ 0] is inifinity */
 	[ 1] = NSEC_TO_JIFFIES(         8192),
 	[ 2] = NSEC_TO_JIFFIES(        16384),
@@ -239,6 +239,19 @@ int pib_is_recv_ok(enum ib_qp_state state)
 }
 
 
+int pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode)
+{
+	switch (opcode) {
+	case IB_WR_RDMA_READ:
+	case IB_WR_ATOMIC_CMP_AND_SWP:
+	case IB_WR_ATOMIC_FETCH_AND_ADD:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+
 int pib_opcode_is_acknowledge(int OpCode)
 {
 	return (attr_OpCode[OpCode & 0xFF] & PIB_ACKNOWLEDGE_OPCODE) == PIB_ACKNOWLEDGE_OPCODE;
@@ -365,7 +378,7 @@ u32 pib_get_rnr_nak_time(int timeout)
 }
 
 
-u32 pib_get_local_ack_time(int timeout)
+unsigned long pib_get_local_ack_time(int timeout)
 {
 	if (timeout == 0)
 		return PIB_SCHED_TIMEOUT;

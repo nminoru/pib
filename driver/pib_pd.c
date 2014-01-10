@@ -16,8 +16,6 @@ pib_ib_alloc_pd(struct ib_device *ibdev,
 {
 	struct pib_ib_pd *pd;
 
-	debug_printk("pib_ib_alloc_pd: ucontext=%p, udata=%p\n", ibucontext, udata);
-
 	if (!ibdev)
 		return ERR_PTR(-EINVAL);
 
@@ -45,8 +43,6 @@ int pib_ib_dealloc_pd(struct ib_pd *ibpd)
 	struct pib_ib_pd *pd;
 	unsigned long flags;
 
-	debug_printk("pib_ib_dealloc_pd\n");
-
 	if (!ibpd)
 		return 0;
 
@@ -54,7 +50,7 @@ int pib_ib_dealloc_pd(struct ib_pd *ibpd)
 
 	spin_lock_irqsave(&pd->lock, flags);
 	if (pd->nr_mr > 0)
-		debug_printk("pib_ib_dealloc_pd: nr_mr=%d\n", pd->nr_mr);
+		pr_err("pib: pib_ib_dealloc_pd: nr_mr=%d\n", pd->nr_mr);
 	spin_unlock_irqrestore(&pd->lock, flags);
 
 	vfree(pd->mr_table);

@@ -124,9 +124,13 @@ int pib_create_switch(struct pib_ib_easy_sw *sw)
 		sw->ports[port_num].link_speed_enabled = 0x7; /* 2.5 or 5.0 or 10.0 Gbps */
 	}
 
-	sw->forwarding_table = vzalloc(PIB_IB_MAX_LID);
-	if (!sw->forwarding_table)
-		goto err_vmalloc_forwarding_table;
+	sw->ucast_fwd_table = vzalloc(PIB_MCAST_LID_BASE);
+	if (!sw->ucast_fwd_table)
+		goto err_vmalloc_ucast_fwd_table;
+
+	sw->mcast_fwd_table = vzalloc((PIB_MAX_LID - PIB_MCAST_LID_BASE) * sizeof(struct pib_port_bits));
+	if (!sw->mcast_fwd_table)
+		goto err_vmalloc_mcast_fwd_table;
 
 	ret = create_socket(sw);
 	if (ret < 0)
@@ -140,6 +144,8 @@ int pib_create_switch(struct pib_ib_easy_sw *sw)
 
 	wake_up_process(task);
 
+	pr_info("pib: add internal switch (ports=%u)\n", sw->port_cnt - 1);
+
 	return 0;
 
 err_task:
@@ -148,9 +154,11 @@ err_task:
 	release_socket(sw);
 err_sock:
 
-	vfree(sw->forwarding_table);
+	vfree(sw->mcast_fwd_table);
+err_vmalloc_mcast_fwd_table:
 
-err_vmalloc_forwarding_table:
+	vfree(sw->ucast_fwd_table);
+err_vmalloc_ucast_fwd_table:
 
 	vfree(sw->ports);
 
@@ -162,14 +170,16 @@ err_vmalloc_ports:
 
 void pib_release_switch(struct pib_ib_easy_sw *sw)
 {
+	pr_info("pib: remove internal switch\n");
+
 	complete(&sw->completion);
 	/* flush_kthread_worker(worker); */
 	kthread_stop(sw->task);
 
 	release_socket(sw);
 
-	vfree(sw->forwarding_table);
-
+	vfree(sw->mcast_fwd_table);
+	vfree(sw->ucast_fwd_table);
 	vfree(sw->ports);
 }
 
@@ -264,7 +274,7 @@ static int kthread_routine(void *data)
 		wait_for_completion_interruptible(&sw->completion);
 		init_completion(&sw->completion);
 
-		if (test_and_clear_bit(PIB_THREAD_READY_TO_DATA, &sw->flags)) {
+		if (test_and_clear_bit(PIB_THREAD_READY_TO_RECV, &sw->flags)) {
 			int ret;
 			do {
 				ret = process_incoming_message(sw);
@@ -280,7 +290,7 @@ static void sock_data_ready_callback(struct sock *sk, int bytes)
 {
 	struct pib_ib_easy_sw* sw = (struct pib_ib_easy_sw*)sk->sk_user_data;
 
-	set_bit(PIB_THREAD_READY_TO_DATA, &sw->flags);
+	set_bit(PIB_THREAD_READY_TO_RECV, &sw->flags);
 	complete(&sw->completion);
 }
 
@@ -306,7 +316,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 
 	if (ret < 0) {
 		if (ret == -EINTR)
-			set_bit(PIB_THREAD_READY_TO_DATA, &sw->flags);
+			set_bit(PIB_THREAD_READY_TO_RECV, &sw->flags);
 		return ret;
 	} else if (ret == 0)
 		return -EAGAIN;
@@ -384,7 +394,9 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 		goto silently_drop;
 	}
 
-	dev = pib_ib_devs[(out_sw_port_num - 1 ) / pib_phys_port_cnt];
+	BUG_ON((out_sw_port_num == 0) || (sw->port_cnt <= out_sw_port_num));
+
+	dev = pib_ib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
 
 	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
 
@@ -661,6 +673,7 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 i
 
 static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
 {
+	int i;
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
 
@@ -679,7 +692,8 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8
 		goto bail;
 	}
 
-	memcpy(pkey_table, sw->ports[sw_port_index].pkey_table, 64);
+	for (i=0; i<PIB_PKEY_PER_BLOCK; i++)
+		pkey_table[i] = cpu_to_be16(sw->ports[sw_port_index].pkey_table[i]);
 
 bail:
 	return reply(smp);
@@ -688,6 +702,7 @@ bail:
 
 static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
 {
+	int i;
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
 
@@ -706,7 +721,8 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8
 		goto bail;
 	}
 
-	memcpy(sw->ports[sw_port_index].pkey_table, pkey_table, 64);
+	for (i=0; i<PIB_PKEY_PER_BLOCK; i++)
+		sw->ports[sw_port_index].pkey_table[i] = be16_to_cpu(pkey_table[i]);
 
 bail:
 	return reply(smp);
@@ -755,7 +771,7 @@ static int subn_get_linear_forward_table(struct ib_smp *smp, struct pib_ib_easy_
 	
 	for (i = 0 ; i < 64 ; i++)
 		if (attr_mod * 64 + i <= sw->linear_fdb_top)
-			table[i] = sw->forwarding_table[attr_mod * 64 + i];
+			table[i] = sw->ucast_fwd_table[attr_mod * 64 + i];
 
 bail:
 	return reply(smp);
@@ -775,7 +791,7 @@ static int subn_set_linear_forward_table(struct ib_smp *smp, struct pib_ib_easy_
 	}
 	
 	for (i = 0 ; i < 64 ; i++)
-		sw->forwarding_table[attr_mod * 64 + i] = table[i];
+		sw->ucast_fwd_table[attr_mod * 64 + i] = table[i];
 
 bail:
 	return reply(smp);
@@ -807,7 +823,7 @@ static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_ib_easy_
 
 		/* @todo LMC */
 		
-		sw->forwarding_table[dlid] = (value & 0x8000U) ?
+		sw->ucast_fwd_table[dlid] = (value & 0x8000U) ?
 			(value & 0xFFU) : sw->default_port;
 	}
 
@@ -818,15 +834,38 @@ bail:
 
 static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
-	return reply_failure(smp);
+	u32 attr_mod;
+	u32 i, mcast_lid_offset, port_index;
+	__be16 *table = (__be16 *)&smp->data[0];
+
+	attr_mod = be32_to_cpu(smp->attr_mod);
+	
+	mcast_lid_offset = (attr_mod & 0xFF) * 32;
+	port_index       = (attr_mod >> 28);
+
+	for (i=0 ; i<32 ; i++)
+		table[i] = cpu_to_be16(sw->mcast_fwd_table[mcast_lid_offset + i].pm_blocks[port_index]);
+
+	return reply(smp);
 }
 
 
 static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
-	return reply_failure(smp);
+	u32 attr_mod;
+	u32 i, mcast_lid_offset, port_index;
+	__be16 *table = (__be16 *)&smp->data[0];
+
+	attr_mod = be32_to_cpu(smp->attr_mod);
+	
+	mcast_lid_offset = (attr_mod & 0xFF) * 32;
+	port_index       = (attr_mod >> 28);
+
+	for (i=0 ; i<32 ; i++)
+		sw->mcast_fwd_table[mcast_lid_offset + i].pm_blocks[port_index] =
+			be16_to_cpu(table[i]);
+
+	return reply(smp);
 }
 
 

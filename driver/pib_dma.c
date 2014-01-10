@@ -73,8 +73,6 @@ static int pib_dma_map_sg(struct ib_device *dev, struct scatterlist *sgl,
 	int i;
 	int ret = nents;
 
-	debug_printk("pib_dma_map_sg\n");
-
 	for_each_sg(sgl, sg, nents, i) {
 		addr = (u64) page_address(sg_page(sg));
 		/* TODO: handle highmem pages */
@@ -91,15 +89,12 @@ static void pib_dma_unmap_sg(struct ib_device *dev,
 			 struct scatterlist *sg, int nents,
 			 enum dma_data_direction direction)
 {
-	debug_printk("pib_dma_unmap_sg\n");
 }
 
 
 static u64 pib_dma_address(struct ib_device *dev, struct scatterlist *sg)
 {
 	u64 addr;
-
-	debug_printk("pib_dma_address\n");
 
 	addr = (u64) page_address(sg_page(sg));
 
@@ -112,22 +107,18 @@ static u64 pib_dma_address(struct ib_device *dev, struct scatterlist *sg)
 static unsigned int pib_dma_len(struct ib_device *dev,
 				struct scatterlist *sg)
 {
-	debug_printk("pib_dma_address\n");
-
 	return sg->length;
 }
 
 static void pib_dma_sync_single_for_cpu(struct ib_device *dev, u64 addr,
 					size_t size, enum dma_data_direction dir)
 {
-	debug_printk("pib_dma_sync_single_for_cpu: addr=%llx, size=%zu\n", (unsigned long long)addr, size);
 }
 
 static void pib_dma_sync_single_for_device(struct ib_device *dev, u64 addr,
 					   size_t size,
 					   enum dma_data_direction dir)
 {
-	debug_printk("pib_dma_sync_single_for_device: addr=%llx, size=%zu\n", (unsigned long long)addr, size);
 }
 
 static void *pib_dma_alloc_coherent(struct ib_device *dev, size_t size,
@@ -135,8 +126,6 @@ static void *pib_dma_alloc_coherent(struct ib_device *dev, size_t size,
 {
 	struct page *p;
 	void *addr = NULL;
-
-	debug_printk("pib_dma_alloc_coherent: size=%zu\n", size);
 
 	p = alloc_pages(flag, get_order(size));
 	if (p)
@@ -150,8 +139,6 @@ static void *pib_dma_alloc_coherent(struct ib_device *dev, size_t size,
 static void pib_dma_free_coherent(struct ib_device *dev, size_t size,
 				  void *cpu_addr, u64 dma_handle)
 {
-	debug_printk("pib_dma_free_coherent: size=%zu\n", size);
-
 	free_pages((unsigned long) cpu_addr, get_order(size));
 }
 

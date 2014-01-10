@@ -14,8 +14,6 @@ pib_ib_alloc_ucontext(struct ib_device *ibdev,
 		      struct ib_udata *udata)
 {
 	struct pib_ib_ucontext *ucontext;
-	
-	debug_printk("pib_ib_alloc_ucontex\n");
 
 	ucontext = kzalloc(sizeof *ucontext, GFP_KERNEL);
 	if (!ucontext)
@@ -28,8 +26,6 @@ pib_ib_alloc_ucontext(struct ib_device *ibdev,
 int pib_ib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 {
 	struct pib_ib_ucontext *ucontext = to_pucontext(ibcontext);
-
-	debug_printk("pib_ib_dealloc_ucontext\n");
 
 	kfree(ucontext);
 
