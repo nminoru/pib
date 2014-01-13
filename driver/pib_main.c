@@ -39,6 +39,10 @@ u64 hca_guid_base;
 struct pib_ib_dev *pib_ib_devs[PIB_IB_MAX_HCA];
 struct pib_ib_easy_sw  pib_ib_easy_sw;
 
+int pib_debug_level;
+module_param_named(debug_level, pib_debug_level, int, 0644);
+MODULE_PARM_DESC(debug_level, "Enable debug tracing if > 0");
+
 unsigned int pib_num_hca = 2;
 module_param_named(num_hca, pib_num_hca, uint, S_IRUGO);
 MODULE_PARM_DESC(num_hca, "Number of pib HCAs");
@@ -124,7 +128,7 @@ static int pib_ib_modify_device(struct ib_device *ibdev, int mask,
 {
 	struct pib_ib_dev *dev;
 
-	debug_printk("pib_ib_modify_device: mask=%x\n", mask);
+	pib_debug("pib: pib_ib_modify_device: mask=%x\n", mask);
 
 	if (mask & ~(IB_DEVICE_MODIFY_SYS_IMAGE_GUID|IB_DEVICE_MODIFY_NODE_DESC))
 		return -EOPNOTSUPP;
@@ -152,9 +156,8 @@ static int pib_ib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 {
 	struct pib_ib_dev *dev;
 
-#if 0
-	debug_printk("pib_ib_modify_port: port=%u, mask=%x,%x,%x\n", port_num, mask, props->set_port_cap_mask, props->clr_port_cap_mask);
-#endif
+	pib_debug("pib: pib_ib_modify_port: port=%u, mask=%x,%x,%x\n",
+		  port_num, mask, props->set_port_cap_mask, props->clr_port_cap_mask);
 
 	if (mask & ~(IB_PORT_SHUTDOWN|IB_PORT_INIT_TYPE|IB_PORT_RESET_QKEY_CNTR))
 		return -EOPNOTSUPP;
@@ -164,13 +167,13 @@ static int pib_ib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 	down_write(&dev->rwsem);
 
 	if (mask & IB_PORT_INIT_TYPE)
-		debug_printk("pib_ib_modify_port: init type\n");
+		pr_err("pib: pib_ib_modify_port: init type\n");
 
 	if (mask & IB_PORT_SHUTDOWN)
-		debug_printk("pib_ib_modify_port: port shutdown\n");
+		pr_err("pib: pib_ib_modify_port: port shutdown\n");
 
 	if (mask & IB_PORT_RESET_QKEY_CNTR)
-		debug_printk("pib_ib_modify_port: port reset qkey control\n");
+		pr_err("pib: pib_ib_modify_port: port reset qkey control\n");
 
 	dev->ports[port_num - 1].ib_port_attr.port_cap_flags |= props->set_port_cap_mask;
 	dev->ports[port_num - 1].ib_port_attr.port_cap_flags &= ~props->clr_port_cap_mask;
@@ -185,7 +188,8 @@ static int pib_ib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 
 static int pib_ib_mmap(struct ib_ucontext *context, struct vm_area_struct *vma)
 {
-	debug_printk("pib_ib_mmap\n");
+	pib_debug("pib: pib_ib_mmap\n");
+
 	return -EINVAL;
 }
 
@@ -741,12 +745,12 @@ static int __init pib_ib_init(void)
 	pr_info("pib: " PIB_DRIVER_DESCRIPTION " v" PIB_DRIVER_VERSION "\n");
 
 	if ((pib_num_hca < 1) || (PIB_IB_MAX_HCA < pib_num_hca)) {
-		pr_err("pib_num_hca: %u\n", pib_num_hca);
+		pr_err("pib: pib_num_hca: %u\n", pib_num_hca);
 		return -EINVAL;
 	}
 
 	if ((pib_phys_port_cnt < 1) || (PIB_IB_MAX_PORTS < pib_phys_port_cnt)) {
-		pr_err("phys_port_cnt: %u\n", pib_phys_port_cnt);
+		pr_err("pib: phys_port_cnt: %u\n", pib_phys_port_cnt);
 		return -EINVAL;
 	}
 

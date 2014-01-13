@@ -130,6 +130,14 @@ struct pib_packet_rc_acknowledge {
 };
 
 
+struct pib_packet_mad {
+	struct pib_packet_lrh   lrh;
+	struct pib_packet_bth   bth;
+	struct pib_packet_deth  deth;
+	struct ib_mad		mad;
+};
+
+
 struct pib_packet_smp {
 	struct pib_packet_lrh   lrh;
 	struct pib_packet_bth   bth;

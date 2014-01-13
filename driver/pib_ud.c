@@ -92,7 +92,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	sockaddr = pib_get_sockaddr_from_lid(dev, port_num, qp, ah->ib_ah_attr.dlid);
 
 	if (!sockaddr) {
-		debug_printk("Not found the destination address in ld_table (ah.dlid=%u)", ah->ib_ah_attr.dlid);
+		pr_err("pib: Not found the destination address in ld_table (ah.dlid=%u)", ah->ib_ah_attr.dlid);
 		return 0;
 	}
 

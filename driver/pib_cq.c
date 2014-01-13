@@ -99,14 +99,14 @@ int pib_ib_destroy_cq(struct ib_cq *ibcq)
 
 int pib_ib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period)
 {
-	debug_printk("pib_ib_modify_cq\n");
+	pr_err("pib: pib_ib_modify_cq\n");
 	return 0;
 }
 
 
 int pib_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 {
-	debug_printk("pib_ib_resize_cq\n");
+	pr_err("pib: pib_ib_resize_cq\n");
 	return 0;
 }
 

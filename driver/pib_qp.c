@@ -371,33 +371,33 @@ static int qp_init_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_i
 static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *cap, int use_srq)
 {
 	if ((cap->max_send_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_send_wr)) {
-		printk(KERN_DEBUG "pib: wrong max_send_wr=%u in qp_cap_is_ok\n", cap->max_send_wr);
+		pib_debug("pib: wrong max_send_wr=%u in qp_cap_is_ok\n", cap->max_send_wr);
 		return 0;
 	}
 
 	if ((cap->max_send_sge < 1) || (dev->ib_dev_attr.max_sge < cap->max_send_sge)) {
-		printk(KERN_DEBUG "pib: wrong max_send_sge=%u in qp_cap_is_ok\n", cap->max_send_sge);
+		pib_debug("pib: wrong max_send_sge=%u in qp_cap_is_ok\n", cap->max_send_sge);
 		return 0;
 	}
 
 	if (use_srq) {
 		if (cap->max_recv_wr != 0) {
-			printk(KERN_DEBUG "pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
+			pib_debug("pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
 			return 0;
 		}
 		
 		if (cap->max_recv_sge != 0) {
-			printk(KERN_DEBUG "pib: wrong max_recv_sge=%u in qp_cap_is_ok\n", cap->max_recv_sge);
+			pib_debug("pib: wrong max_recv_sge=%u in qp_cap_is_ok\n", cap->max_recv_sge);
 			return 0;
 		}
 	} else {
 		if ((cap->max_recv_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_recv_wr)) {
-			printk(KERN_DEBUG "pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
+			pib_debug("pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
 			return 0;
 		}
 		
 		if ((cap->max_recv_sge < 1) || (dev->ib_dev_attr.max_sge < cap->max_recv_sge)) {
-			printk(KERN_DEBUG "pib: wrong max_recv_sge=%u in qp_cap_is_ok\n", cap->max_recv_sge);
+			pib_debug("pib: wrong max_recv_sge=%u in qp_cap_is_ok\n", cap->max_recv_sge);
 			return 0;
 		}
 	}
@@ -654,67 +654,67 @@ static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp 
 		    qp->qp_type == IB_QPT_GSI ||
 		    attr->port_num == 0 ||
 		    attr->port_num > dev->ib_dev.phys_port_cnt) {
-			printk(KERN_DEBUG "pib: wrong port_num=%u in modify_qp_is_ok\n", attr->port_num);
+			pib_debug("pib: wrong port_num=%u in modify_qp_is_ok\n", attr->port_num);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_AV)
 		if (attr->ah_attr.dlid >= PIB_MCAST_LID_BASE) {
-			printk(KERN_DEBUG "pib: wrong dlid=0x%04x in modify_qp_is_ok\n", attr->ah_attr.dlid);
+			pib_debug("pib: wrong dlid=0x%04x in modify_qp_is_ok\n", attr->ah_attr.dlid);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_PATH_MTU)
 		if ((attr->path_mtu < IB_MTU_256) || (IB_MTU_4096 < attr->path_mtu)) {
-			printk(KERN_DEBUG "pib: wrong path_mtu=%u in modify_qp_is_ok\n", attr->path_mtu);
+			pib_debug("pib: wrong path_mtu=%u in modify_qp_is_ok\n", attr->path_mtu);
 			return 0;
 		}
 	
 	if (attr_mask & IB_QP_TIMEOUT)
 		if (attr->timeout & ~PIB_IB_LOCAL_ACK_TIMEOUT_MASK) {
-			printk(KERN_DEBUG "pib: wrong timeout=%u in modify_qp_is_ok\n", attr->timeout);
+			pib_debug("pib: wrong timeout=%u in modify_qp_is_ok\n", attr->timeout);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_RETRY_CNT)
 		if (attr->retry_cnt & ~7) {
-			printk(KERN_DEBUG "pib: wrong retry_cnt=%u in modify_qp_is_ok\n", attr->retry_cnt);
+			pib_debug("pib: wrong retry_cnt=%u in modify_qp_is_ok\n", attr->retry_cnt);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_MIN_RNR_TIMER)
 		if (attr->min_rnr_timer & ~PIB_IB_MIN_RNR_NAK_TIMER_MASK) {
-			printk(KERN_DEBUG "pib: wrong min_rnr_timer=%u in modify_qp_is_ok\n", attr->min_rnr_timer);
+			pib_debug("pib: wrong min_rnr_timer=%u in modify_qp_is_ok\n", attr->min_rnr_timer);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_RNR_RETRY)
 		if (attr->rnr_retry & ~7) {
-			printk(KERN_DEBUG "pib: wrong rnr_retry=%u in modify_qp_is_ok\n", attr->rnr_retry);
+			pib_debug("pib: wrong rnr_retry=%u in modify_qp_is_ok\n", attr->rnr_retry);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_MAX_QP_RD_ATOMIC)
 		if (attr->max_rd_atomic > dev->ib_dev_attr.max_qp_init_rd_atom) {
-			printk(KERN_DEBUG "pib: wrong max_rd_atomic=%u in modify_qp_is_ok\n", attr->max_rd_atomic);
+			pib_debug("pib: wrong max_rd_atomic=%u in modify_qp_is_ok\n", attr->max_rd_atomic);
 			return 0;
 		}
 	
 	if (attr_mask & IB_QP_MAX_DEST_RD_ATOMIC)
 		if (attr->max_dest_rd_atomic > dev->ib_dev_attr.max_qp_rd_atom) {
-			printk(KERN_DEBUG "pib: wrong max_dest_rd_atomic=%u in modify_qp_is_ok\n", attr->max_dest_rd_atomic);
+			pib_debug("pib: wrong max_dest_rd_atomic=%u in modify_qp_is_ok\n", attr->max_dest_rd_atomic);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_RQ_PSN)
 		if (attr->rq_psn & ~PIB_IB_PSN_MASK) {
-			printk(KERN_DEBUG "pib: wrong rq_psn=0x%08x in modify_qp_is_ok\n", attr->rq_psn);
+			pib_debug("pib: wrong rq_psn=0x%08x in modify_qp_is_ok\n", attr->rq_psn);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_SQ_PSN)
 		if (attr->sq_psn & ~PIB_IB_PSN_MASK) {
-			printk(KERN_DEBUG "pib: wrong sq_psn=0x%08x in modify_qp_is_ok\n", attr->sq_psn);
+			pib_debug("pib: wrong sq_psn=0x%08x in modify_qp_is_ok\n", attr->sq_psn);
 			return 0;
 		}
 

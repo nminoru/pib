@@ -139,7 +139,7 @@ static int create_socket(struct pib_ib_dev *dev, int port_index)
 
 	ret = kernel_bind(socket, (struct sockaddr *)&sockaddr_in, sizeof(sockaddr_in));
 	if (ret < 0) {
-		debug_printk("kernel_bind: ret=%d\n", ret);
+		pr_err("pib: kernel_bind: ret=%d\n", ret);
 		goto err_sock;
 	}
 
@@ -148,18 +148,18 @@ static int create_socket(struct pib_ib_dev *dev, int port_index)
 	addrlen = sizeof(sockaddr_in);
 	ret = kernel_getsockname(socket,(struct sockaddr *)&sockaddr_in, &addrlen);
 	if (ret < 0) {
-		debug_printk("kernel_getsockname: ret=%d\n", ret);
+		pr_err("pib: kernel_getsockname: ret=%d\n", ret);
 		goto err_sock;
 	}
 
 #if 0
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-	debug_printk("kernel_getsockname: %pISpc\n",
-		     (const struct sockaddr*)&sockaddr_in);
+	pib_debug("kernel_getsockname: %pISpc\n",
+		  (const struct sockaddr*)&sockaddr_in);
 #else
-	debug_printk("kernel_getsockname: %08x:%u\n",
-		     ntohl(sockaddr_in.sin_addr.s_addr),
-		     ntohs(sockaddr_in.sin_port));
+	pib_debug("kernel_getsockname: %08x:%u\n",
+		  ntohl(sockaddr_in.sin_addr.s_addr),
+		  ntohs(sockaddr_in.sin_port));
 #endif
 #endif
 

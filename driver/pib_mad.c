@@ -34,6 +34,10 @@ static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u
 static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
 static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
 
+static int process_subn_adm(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
+			    struct ib_wc *in_wc, struct ib_grh *in_grh,
+			    struct ib_mad *in_mad, struct ib_mad *out_mad);
+
 
 static int reply(struct ib_smp *smp)
 {
@@ -77,9 +81,10 @@ int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
 		return process_subn(ibdev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
 
-	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
-
 	case IB_MGMT_CLASS_SUBN_ADM:
+		return process_subn_adm(ibdev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
+
+	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
 	case IB_MGMT_CLASS_PERF_MGMT:
 	case IB_MGMT_CLASS_BM:
 	case IB_MGMT_CLASS_DEVICE_MGMT:
@@ -92,9 +97,9 @@ int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
 	case IB_MGMT_CLASS_VENDOR_RANGE2_START:
 	case IB_MGMT_CLASS_VENDOR_RANGE2_END:
 	default:
-		pr_err("Not Implementation class: %u\n", in_mad->mad_hdr.mgmt_class);
-		pib_print_mad("IN", &in_mad->mad_hdr);
-		pib_print_mad("OUT", &out_mad->mad_hdr);
+		pr_err("pib: Not Implementation class: %u\n", in_mad->mad_hdr.mgmt_class);
+		pib_print_mad("pib: IN", &in_mad->mad_hdr);
+		pib_print_mad("pib: OUT", &out_mad->mad_hdr);
 		break;
 	}
 
@@ -102,6 +107,10 @@ done:
 	return ret;
 }
 
+
+/******************************************************************************/
+/* Subnet Management class                                                    */
+/******************************************************************************/
 
 static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 			struct ib_wc *in_wc, struct ib_grh *in_grh,
@@ -118,10 +127,10 @@ static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 	dev = to_pdev(ibdev);
 
 #if 0
-	debug_printk("pib: hca    %s %s dev-id=%u status=0x%x attr_mod=0x%x in_port_num=%u\n",
-		     pib_get_mgmt_method(smp->method), pib_get_smp_attr(smp->attr_id),
-		     dev->ib_dev_id,
-		     smp->status, be32_to_cpu(smp->attr_mod), in_port_num);
+	pib_debug("pib: hca    %s %s dev-id=%u status=0x%x attr_mod=0x%x in_port_num=%u\n",
+		  pib_get_mgmt_method(smp->method), pib_get_smp_attr(smp->attr_id),
+		  dev->ib_dev_id,
+		  smp->status, be32_to_cpu(smp->attr_mod), in_port_num);
 #endif
 
 	switch (smp->method) {
@@ -170,7 +179,7 @@ static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 #endif
 
 	default:
-		pr_err("*** process_subn: %u %u ***", smp->method, be16_to_cpu(smp->attr_id));
+		pr_err("pib: *** process_subn: %u %u ***", smp->method, be16_to_cpu(smp->attr_id));
 		smp->status |= IB_SMP_UNSUP_METHOD;
 		ret = reply(smp);
 	}
@@ -225,7 +234,7 @@ static int process_subn_get_method(struct ib_smp *smp, struct pib_ib_dev *dev, u
 #endif
 
 	default:
-		pr_err("process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
+		pr_err("pib: process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
 		smp->status |= IB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
@@ -265,7 +274,7 @@ static int process_subn_set_method(struct ib_smp *smp, struct pib_ib_dev *dev, u
 		/* FALLTHROUGH */
 #endif
 	default:
-		pr_err("process_subn: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
+		pr_err("pib: process_subn: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
 		smp->status |= IB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
@@ -310,7 +319,7 @@ static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 
 static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
+	pr_err("pib: *** %s ***", __FUNCTION__);
 
 	return reply_failure(smp);
 }
@@ -318,7 +327,8 @@ static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 
 static int subn_set_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
+	pr_err("pib: *** %s ***", __FUNCTION__);
+
 	return reply_failure(smp);
 }
 
@@ -358,9 +368,9 @@ void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 	 */
 
 #if 0
-	debug_printk("pib_subn_get_portinfo: type=%u, port_num=%u, tid=%llx, lid=%u, state=%u phy_state=%u\n",
-		     type, port_num, (unsigned long long)cpu_to_be16(smp->tid), port->ib_port_attr.lid,
-		     port->ib_port_attr.state, port->ib_port_attr.phys_state);
+	pib_debug("pib: pib_subn_get_portinfo: type=%u, port_num=%u, tid=%llx, lid=%u, state=%u phy_state=%u\n",
+		  type, port_num, (unsigned long long)cpu_to_be16(smp->tid), port->ib_port_attr.lid,
+		  port->ib_port_attr.state, port->ib_port_attr.phys_state);
 #endif
 
 	if (type != PIB_PORT_SW_EXT) {
@@ -536,11 +546,11 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 		port->ib_port_attr.state = IB_PORT_INIT;
 
 #if 0
-	debug_printk("ib_dev(set_portinfo) in_port_num=%u, port_num=%u, lid=%u, state=%u, phys_state=%u\n",
-		     in_port_num, port_num,
-		     port->ib_port_attr.lid,
-		     port->ib_port_attr.state,
-		     port->ib_port_attr.phys_state);
+	pr_debug("pib: ib_dev(set_portinfo) in_port_num=%u, port_num=%u, lid=%u, state=%u, phys_state=%u\n",
+		 in_port_num, port_num,
+		 port->ib_port_attr.lid,
+		 port->ib_port_attr.state,
+		 port->ib_port_attr.phys_state);
 #endif
 
 bail:
@@ -628,9 +638,9 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 	}
 
 #if 0
-	debug_printk("pib_subn_set_portinfo: type=%u, port_num=%u, tid=%llx, lid=%u, state=%u phy_state=%u\n",
-		     type, port_num, (unsigned long long)cpu_to_be16(smp->tid), port->ib_port_attr.lid,
-		     port->ib_port_attr.state, port->ib_port_attr.phys_state);
+	pib_debug("pib: pib_subn_set_portinfo: type=%u, port_num=%u, tid=%llx, lid=%u, state=%u phy_state=%u\n",
+		  type, port_num, (unsigned long long)cpu_to_be16(smp->tid), port->ib_port_attr.lid,
+		  port->ib_port_attr.state, port->ib_port_attr.phys_state);
 #endif
 }
 
@@ -647,7 +657,7 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in
 	sw_port_index = (attr_mod >> 16) & 0xFFFF;
 
 	if (block_index != 0) {
-		pr_err("*** %s: block_index = %u ***", __FUNCTION__, block_index);
+		pr_err("pib: *** %s: block_index = %u ***", __FUNCTION__, block_index);
 		smp->status |= IB_SMP_INVALID_FIELD;
 		goto bail;
 	}
@@ -673,7 +683,7 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in
 	sw_port_index = (attr_mod >> 16) & 0xFFFF;
 
 	if (block_index != 0) {
-		pr_err("*** %s: block_index = %u ***", __FUNCTION__, block_index);
+		pr_err("pib: *** %s: block_index = %u ***", __FUNCTION__, block_index);
 		smp->status |= IB_SMP_INVALID_FIELD;
 		goto bail;
 	}
@@ -709,27 +719,83 @@ bail:
 
 static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
+	pr_err("pib: *** %s ***", __FUNCTION__);
+
 	return reply_failure(smp);
 }
 
 
 static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
+	pr_err("pib: *** %s ***", __FUNCTION__);
+
 	return reply_failure(smp);
 }
 
 
 static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
+	pr_err("pib: *** %s ***", __FUNCTION__);
+
 	return reply_failure(smp);
 }
 
 
 static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
 {
-	pr_err("*** %s ***", __FUNCTION__);
+	pr_err("pib: *** %s ***", __FUNCTION__);
+
 	return reply_failure(smp);
+}
+
+
+/******************************************************************************/
+/* Subnet Administration class                                                */
+/******************************************************************************/
+
+static int process_subn_adm(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
+			    struct ib_wc *in_wc, struct ib_grh *in_grh,
+			    struct ib_mad *in_mad, struct ib_mad *out_mad)
+{
+	struct pib_ib_dev *dev;
+	struct ib_sa_mad *sa_mad;
+
+	*out_mad = *in_mad;
+	
+	sa_mad = (struct ib_sa_mad*)out_mad;
+
+	dev = to_pdev(ibdev);
+
+	pib_debug("pib: process SubnAdm dev-id=%u in_port_num=%u\n", dev->ib_dev_id, in_port_num);
+	pib_print_sa_mad("pib: IN", sa_mad);
+
+	switch (be16_to_cpu(sa_mad->mad_hdr.attr_id)) {
+
+	case IB_SA_ATTR_CLASS_PORTINFO:
+	case IB_SA_ATTR_NOTICE:
+	case IB_SA_ATTR_INFORM_INFO:
+	case IB_SA_ATTR_NODE_REC:
+	case IB_SA_ATTR_PORT_INFO_REC:
+	case IB_SA_ATTR_SL2VL_REC:
+	case IB_SA_ATTR_SWITCH_REC:
+	case IB_SA_ATTR_LINEAR_FDB_REC:
+	case IB_SA_ATTR_RANDOM_FDB_REC:
+	case IB_SA_ATTR_MCAST_FDB_REC:
+	case IB_SA_ATTR_SM_INFO_REC:
+	case IB_SA_ATTR_LINK_REC:
+	case IB_SA_ATTR_GUID_INFO_REC:
+	case IB_SA_ATTR_SERVICE_REC:
+	case IB_SA_ATTR_PARTITION_REC:
+	case IB_SA_ATTR_PATH_REC:
+	case IB_SA_ATTR_VL_ARB_REC:
+	case IB_SA_ATTR_MC_MEMBER_REC:
+	case IB_SA_ATTR_TRACE_REC:
+	case IB_SA_ATTR_MULTI_PATH_REC:
+	case IB_SA_ATTR_SERVICE_ASSOC_REC:
+	case IB_SA_ATTR_INFORM_INFO_REC:
+	default:
+		break;
+	}
+	
+	return 0;
 }

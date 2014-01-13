@@ -470,19 +470,88 @@ const char *pib_get_smp_attr(__be16 attr_id)
 }
 
 
+const char *pib_get_sa_attr(__be16 attr_id)
+{
+	switch (be16_to_cpu(attr_id)) {
+	case IB_SA_ATTR_CLASS_PORTINFO:
+		return "CLASS_PORTINFO";
+	case IB_SA_ATTR_NOTICE:
+		return "NOTICE";
+	case IB_SA_ATTR_INFORM_INFO:
+		return "INFORM_INFO";
+	case IB_SA_ATTR_NODE_REC:
+		return "NODE_REC";
+	case IB_SA_ATTR_PORT_INFO_REC:
+		return "PORT_INFO_REC";
+	case IB_SA_ATTR_SL2VL_REC:
+		return "SL2VL_REC";
+	case IB_SA_ATTR_SWITCH_REC:
+		return "SWITCH_REC";
+	case IB_SA_ATTR_LINEAR_FDB_REC:
+		return "LINEAR_FDB_REC";
+	case IB_SA_ATTR_RANDOM_FDB_REC:
+		return "RANDOM_FDB_REC";
+	case IB_SA_ATTR_MCAST_FDB_REC:
+		return "MCAST_FDB_REC";
+	case IB_SA_ATTR_SM_INFO_REC:
+		return "SM_INFO_REC";
+	case IB_SA_ATTR_LINK_REC:
+		return "LINK_REC";
+	case IB_SA_ATTR_GUID_INFO_REC:
+		return "GUID_INFO_REC";
+	case IB_SA_ATTR_SERVICE_REC:
+		return "SERVICE_REC";
+	case IB_SA_ATTR_PARTITION_REC:
+		return "PARTITION_REC";
+	case IB_SA_ATTR_PATH_REC:
+		return "PATH_REC";
+	case IB_SA_ATTR_VL_ARB_REC:
+		return "VL_ARB_REC";
+	case IB_SA_ATTR_MC_MEMBER_REC:
+		return "MC_MEMBER_REC";
+	case IB_SA_ATTR_TRACE_REC:
+		return "TRACE_REC";
+	case IB_SA_ATTR_MULTI_PATH_REC:
+		return "MULTI_PATH_REC";
+	case IB_SA_ATTR_SERVICE_ASSOC_REC:
+		return "SERVICE_ASSOC_REC";
+	case IB_SA_ATTR_INFORM_INFO_REC:
+		return "INFORM_INFO_REC";
+	default:
+		return "Unknown";
+	}	
+}
+
+
 void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr)
 {
-	debug_printk("%s: base_version   %u\n",     direct, hdr->base_version);
-	debug_printk("%s: mgmt_class     0x%02x\n", direct, hdr->mgmt_class);
-	debug_printk("%s: class_version  %u\n",     direct, hdr->class_version);
-	debug_printk("%s: method         %s(0x%02x)\n", direct,
-		     pib_get_mgmt_method(hdr->method), hdr->method);
-	debug_printk("%s: status         0x%x\n",   direct, be16_to_cpu(hdr->status));
-	debug_printk("%s: class_specific %u\n",     direct, be16_to_cpu(hdr->class_specific));
-	debug_printk("%s: tid            0x%llx\n", direct, be64_to_cpu(hdr->tid));
-	debug_printk("%s: attr_id        %s(0x%04x)\n", direct,
-		     pib_get_smp_attr(hdr->attr_id), be16_to_cpu(hdr->attr_id));
-	debug_printk("%s: attr_mod       %u\n",     direct, be32_to_cpu(hdr->attr_mod));
+	pr_info("%s: base_version   %u\n",     direct, hdr->base_version);
+	pr_info("%s: mgmt_class     0x%02x\n", direct, hdr->mgmt_class);
+	pr_info("%s: class_version  %u\n",     direct, hdr->class_version);
+	pr_info("%s: method         %s(0x%02x)\n", direct,
+		pib_get_mgmt_method(hdr->method), hdr->method);
+	pr_info("%s: status         0x%x\n",   direct, be16_to_cpu(hdr->status));
+	pr_info("%s: class_specific %u\n",     direct, be16_to_cpu(hdr->class_specific));
+	pr_info("%s: tid            0x%llx\n", direct, be64_to_cpu(hdr->tid));
+
+	switch (hdr->mgmt_class) {
+
+	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
+	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
+		pr_info("%s: attr_id        %s(0x%04x)\n", direct,
+			pib_get_smp_attr(hdr->attr_id), be16_to_cpu(hdr->attr_id));
+		break;
+
+	case IB_MGMT_CLASS_SUBN_ADM:
+		pr_info("%s: attr_id        %s(0x%04x)\n", direct,
+			pib_get_sa_attr(hdr->attr_id), be16_to_cpu(hdr->attr_id));
+		break;
+
+	default:
+		break;
+	}
+
+	pr_info("%s: attr_mod       %u\n",     direct, be32_to_cpu(hdr->attr_mod));
 }
 
 
@@ -491,21 +560,21 @@ void pib_print_smp(const char *direct, const struct ib_smp *smp)
 	int i, j = 0;
 	char buffer[1024];
 
-	debug_printk("%s: base_version   %u\n",     direct, smp->base_version);
-	debug_printk("%s: mgmt_class     0x%02x\n", direct, smp->mgmt_class);
-	debug_printk("%s: class_version  %u\n",     direct, smp->class_version);
-	debug_printk("%s: method         %s(0x%02x)\n", direct,
-		     pib_get_mgmt_method(smp->method), smp->method);
-	debug_printk("%s: status         0x%x\n",   direct, be16_to_cpu(smp->status));
-	debug_printk("%s: hop_ptr        %u\n",     direct, smp->hop_ptr);
-	debug_printk("%s: hop_cnt        %u\n",     direct, smp->hop_cnt);
-	debug_printk("%s: tid            0x%llx\n", direct, be64_to_cpu(smp->tid));
-	debug_printk("%s: attr_id        %s(0x%04x)\n", direct,
-		     pib_get_smp_attr(smp->attr_id), be16_to_cpu(smp->attr_id));
-	debug_printk("%s: attr_mod       %u\n",     direct, be32_to_cpu(smp->attr_mod));
-	debug_printk("%s: mkey           %llu\n",   direct, be64_to_cpu(smp->mkey));
-	debug_printk("%s: dr_slid        0x%04x\n", direct, be16_to_cpu(smp->dr_slid));
-	debug_printk("%s: dr_dlid        0x%04x\n", direct, be16_to_cpu(smp->dr_dlid));
+	pr_info("%s: base_version   %u\n",     direct, smp->base_version);
+	pr_info("%s: mgmt_class     0x%02x\n", direct, smp->mgmt_class);
+	pr_info("%s: class_version  %u\n",     direct, smp->class_version);
+	pr_info("%s: method         %s(0x%02x)\n", direct,
+		pib_get_mgmt_method(smp->method), smp->method);
+	pr_info("%s: status         0x%x\n",   direct, be16_to_cpu(smp->status));
+	pr_info("%s: hop_ptr        %u\n",     direct, smp->hop_ptr);
+	pr_info("%s: hop_cnt        %u\n",     direct, smp->hop_cnt);
+	pr_info("%s: tid            0x%llx\n", direct, be64_to_cpu(smp->tid));
+	pr_info("%s: attr_id        %s(0x%04x)\n", direct,
+		pib_get_smp_attr(smp->attr_id), be16_to_cpu(smp->attr_id));
+	pr_info("%s: attr_mod       %u\n",     direct, be32_to_cpu(smp->attr_mod));
+	pr_info("%s: mkey           %llu\n",   direct, be64_to_cpu(smp->mkey));
+	pr_info("%s: dr_slid        0x%04x\n", direct, be16_to_cpu(smp->dr_slid));
+	pr_info("%s: dr_dlid        0x%04x\n", direct, be16_to_cpu(smp->dr_dlid));
 
 	buffer[0] = '\0';
 
@@ -513,13 +582,13 @@ void pib_print_smp(const char *direct, const struct ib_smp *smp)
 	for (i=0 ; i<smp->hop_cnt; i++) {
 		j += sprintf(buffer + j, " %u", (u8)smp->initial_path[i+1]);
 	}
-	debug_printk("Initial Path: %s\n", buffer);
+	pr_info("%s: Initial Path: %s\n", direct, buffer);
 
 	j = 0;
 	for (i=0 ; i<smp->hop_cnt; i++) {
 		j += sprintf(buffer + j, " %u", (u8)smp->return_path[i+1]);
 	}
-	debug_printk("Return Path: %s\n", buffer);
+	pr_info("%s: Return Path: %s\n", direct, buffer);
 
 #if 0
 	for (i=0 ; i < 4 ; i++) {
@@ -528,7 +597,20 @@ void pib_print_smp(const char *direct, const struct ib_smp *smp)
 		for (k=0 ; k < 64/4 ; k++) {
 			j += sprintf(buffer + j, " %02x ", smp->data[i * 16 + k]);
 		}
-		debug_printk("%s\n", buffer);
+		pr_info("%s: %s\n", direct, buffer);
 	}
 #endif
+}
+
+
+void pib_print_sa_mad(const char *direct, const struct ib_sa_mad* sa_mad)
+{
+	pib_print_mad(direct, &sa_mad->mad_hdr);
+
+	pr_info("%s: sm_key         0x%llx\n",
+		direct, (unsigned long long)be64_to_cpu(sa_mad->sa_hdr.sm_key));
+	pr_info("%s: attr_offset    0x%x\n",
+		direct, be16_to_cpu(sa_mad->sa_hdr.attr_offset));
+	pr_info("%s: comp_mask      0x%x\n",
+		direct, be16_to_cpu(sa_mad->sa_hdr.comp_mask));
 }

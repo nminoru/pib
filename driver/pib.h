@@ -91,9 +91,11 @@
 
 #define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_SYS_IMAGE_GUID|IB_DEVICE_RC_RNR_NAK_GEN)
 
-#define debug_printk(fmt, args...) \
-	printk(KERN_ERR fmt, ## args);
-
+#define pib_debug(fmt, args...)					\
+	do {							\
+		if (pib_debug_level > 0)			\
+			printk(KERN_DEBUG fmt, ## args);	\
+	} while (0)
 
 enum pib_behavior {
 	/*
@@ -259,6 +261,8 @@ struct pib_ib_easy_sw {
 	spinlock_t		lock;
 	struct completion       completion;
 	unsigned long           flags;
+	void                   *buffer; /* buffer for sendmsg/recvmsg */
+
 	struct socket          *socket;
 	struct sockaddr        *sockaddr;
 
@@ -556,6 +560,7 @@ struct pib_ib_cqe {
 };
 
 
+extern int pib_debug_level;
 extern u64 hca_guid_base;
 extern struct pib_ib_dev *pib_ib_devs[];
 extern struct pib_ib_easy_sw pib_ib_easy_sw;
@@ -757,10 +762,12 @@ extern u32 pib_get_rnr_nak_time(int timeout);
 extern unsigned long pib_get_local_ack_time(int timeout);
 extern u8 pib_get_local_ca_ack_delay(void);
 extern struct sockaddr *pib_get_sockaddr_from_lid(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u16 lid);
-extern void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr);
-extern void pib_print_smp(const char *direct, const struct ib_smp *smp);
 extern const char *pib_get_mgmt_method(u8 method);
 extern const char *pib_get_smp_attr(__be16 attr_id);
+extern const char *pib_get_sa_attr(__be16 attr_id);
+extern void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr);
+extern void pib_print_smp(const char *direct, const struct ib_smp *smp);
+extern void pib_print_sa_mad(const char *direct, const struct ib_sa_mad* sa_mad);
 
 
 #endif /* PIB_H */
