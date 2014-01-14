@@ -18,6 +18,7 @@ static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp 
 static void get_ready_to_send(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
 static void reset_qp(struct pib_ib_qp *qp);
 static void reset_qp_attr(struct pib_ib_qp *qp);
+static int copy_inline_data(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, u64 total_length);
 
 
 struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num)
@@ -303,6 +304,14 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		return ERR_PTR(-ENOSYS);
 	}
 
+	/* allocate inline data area */
+	if (init_attr->cap.max_inline_data > 0) {
+		qp->requester.inline_data_buffer = vzalloc(
+			init_attr->cap.max_inline_data * init_attr->cap.max_send_wr);
+		if (!qp->requester.inline_data_buffer)
+			goto err_alloc_inlin_data_buffer;
+	}
+
 	/* allocate Send WQEs and Recv WQEs */
 
 	for (i=0 ; i<init_attr->cap.max_send_wr ; i++) {
@@ -314,6 +323,10 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 
 		INIT_LIST_HEAD(&send_wqe->list);
 		list_add_tail(&send_wqe->list, &qp->requester.free_swqe_head);
+
+		if (init_attr->cap.max_inline_data > 0)
+			send_wqe->inline_data_buffer = 
+				qp->requester.inline_data_buffer + (init_attr->cap.max_inline_data * i);
 	}
 
 	for (i=0 ; i<init_attr->cap.max_recv_wr ; i++) {
@@ -332,6 +345,10 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 err_alloc_wqe:
 	dealloc_free_wqe(qp);
 
+	if (qp->requester.inline_data_buffer)
+		vfree(qp->requester.inline_data_buffer);
+
+err_alloc_inlin_data_buffer:
 	if (is_register_qp_table) {
 		down_write(&dev->rwsem);
 		rb_erase(&qp->rb_node, &dev->qp_table);
@@ -402,6 +419,11 @@ static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *ca
 		}
 	}
 
+	if (PIB_IB_MAX_INLINE < cap->max_inline_data) {
+		pib_debug("pib: too large max_inline_data=%u in qp_cap_is_ok\n", cap->max_inline_data);
+		return 0;
+	}
+
 	return 1;
 }
 
@@ -415,6 +437,8 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	if (!ibqp)
 		return -EINVAL;
 
+	/* @todo ここより先で他のスレッドが qp を実行できないことをどう保証するか？ */
+
 	qp_num = ibqp->qp_num;
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
@@ -425,6 +449,9 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	reset_qp(qp);
 	dealloc_free_wqe(qp);
 	up(&qp->sem);
+
+	if (qp->requester.inline_data_buffer)
+		vfree(qp->requester.inline_data_buffer);
 
 	if ((qp_num == PIB_IB_QP0) || (qp_num == PIB_IB_QP1))
 		dev->ports[qp->ib_qp_init_attr.port_num - 1].qp_info[qp_num] = NULL;
@@ -790,7 +817,6 @@ int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 	struct pib_ib_dev *dev;
 	struct pib_ib_send_wqe *send_wqe;
 	struct pib_ib_qp *qp;
-	enum pib_result_type res = PIB_RES_SCCUESS;
 	u64 total_length = 0;
 	u32 imm_data;
 
@@ -809,8 +835,31 @@ int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 	}
 
 next_wr:
-	imm_data = ibwr->ex.imm_data;
+	/* QP check */
+	switch (qp->state) {
 
+	case IB_QPS_RESET:
+	case IB_QPS_INIT:
+		pr_err("pib: call pib_ib_post_send when QP is in RESET or INIT\n");
+		ret = -EINVAL;
+		goto done;
+
+	case IB_QPS_ERR:
+	case IB_QPS_SQE:
+		pib_util_insert_wc_error(qp->send_cq, qp, ibwr->wr_id,
+					 IB_WC_WR_FLUSH_ERR, ibwr->opcode);
+		goto skip;
+
+	case IB_QPS_RTS:
+		pending_send_wr = 1;
+		break;
+
+	case IB_QPS_RTR:
+	case IB_QPS_SQD:
+		break;
+	}
+
+	imm_data = ibwr->ex.imm_data;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	for (i = ibwr->num_sge - 1 ; i >= 0 ; i--) {
@@ -838,13 +887,14 @@ next_wr:
 	}
 
 	send_wqe = list_first_entry(&qp->requester.free_swqe_head, struct pib_ib_send_wqe, list);
-	list_del_init(&send_wqe->list); /* list_del でいい？ */
 
 	send_wqe->wr_id      = ibwr->wr_id;
 	send_wqe->opcode     = ibwr->opcode;
 	send_wqe->send_flags = ibwr->send_flags;
-	send_wqe->imm_data   = imm_data;
 	send_wqe->num_sge    = ibwr->num_sge;
+	send_wqe->imm_data   = imm_data;
+	memset(&send_wqe->processing, 0, sizeof(send_wqe->processing));
+	memset(&send_wqe->wr, 0, sizeof(send_wqe->wr));
 
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		send_wqe->sge_array[i] = ibwr->sg_list[i];
@@ -867,6 +917,13 @@ next_wr:
 	}
 
 	send_wqe->total_length = (u32)total_length;
+
+	/* inline data */
+	if (send_wqe->send_flags & IB_SEND_INLINE)
+		if (copy_inline_data(qp, send_wqe, total_length)) {
+			ret = -EFAULT;
+			goto done;
+		}
 
 	switch (qp->qp_type) {
 	case IB_QPT_RC:
@@ -902,8 +959,8 @@ next_wr:
 		case IB_WR_SEND_WITH_IMM:
 			if (!pib_ib_get_behavior(dev, PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR))
 				if (!ibwr->wr.ud.ah || qp->ib_qp.pd != ibwr->wr.ud.ah->pd) {
-					res = PIB_RES_IMMEDIATE_RETURN;
-					goto skip;
+					ret = -EINVAL;
+					goto done;
 				}
 			send_wqe->wr.ud.ah		= ibwr->wr.ud.ah;
 			send_wqe->wr.ud.remote_qpn	= ibwr->wr.ud.remote_qpn;
@@ -920,51 +977,16 @@ next_wr:
 		break;
 	}
 
-	switch (qp->state) {
-
-	case IB_QPS_ERR:
-	case IB_QPS_SQE:
-		res = PIB_RES_WR_FLUSH_ERR;
-		goto skip;
-
-	case IB_QPS_RTS:
-		pending_send_wr = 1;
-		break;
-
-	case IB_QPS_RTR:
-	case IB_QPS_SQD:
-		break;
-
-	case IB_QPS_RESET:
-	case IB_QPS_INIT:
-		BUG();
-	}
-
 	send_wqe->processing.list_type = PIB_SWQE_SUBMITTED;
 	send_wqe->processing.status    = IB_WC_SUCCESS;
 
+	list_del_init(&send_wqe->list); /* list_del でいい？ */
 	list_add_tail(&send_wqe->list, &qp->requester.submitted_swqe_head);
 	qp->requester.nr_submitted_swqe++;
 
 skip:
-	switch (res) {
-
-	case PIB_RES_IMMEDIATE_RETURN:
-		pib_util_free_send_wqe(qp, send_wqe);
-		ret = -EINVAL;
-		goto done;
-
-	case PIB_RES_WR_FLUSH_ERR:
-		pib_util_free_send_wqe(qp, send_wqe);
-		pib_util_insert_wc_error(qp->send_cq, qp, ibwr->wr_id,
-					 IB_WC_WR_FLUSH_ERR, ibwr->opcode);
-		break;
-
-	default:
-		break;
-	}
-
 	ibwr = ibwr->next;
+
 	if (ibwr)
 		goto next_wr;
 
@@ -974,10 +996,43 @@ done:
 
 	up(&qp->sem);
 
-	if (bad_wr)
+	if (ret && bad_wr)
 		*bad_wr = ibwr;
 
 	return ret;
+}
+
+
+static int copy_inline_data(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, u64 total_length)
+{
+	int i;
+	void *buffer = send_wqe->inline_data_buffer;
+	u32 offset = 0;
+
+	if ((total_length <= 0) || (qp->ib_qp_attr.cap.max_inline_data < total_length))
+		return 0;
+
+	switch (send_wqe->opcode) {
+	case IB_WR_SEND:
+	case IB_WR_SEND_WITH_IMM:
+	case IB_WR_RDMA_WRITE:
+	case IB_WR_RDMA_WRITE_WITH_IMM:
+		break;
+
+	default:
+		return 0;
+	}
+
+	for (i=0 ; i<send_wqe->num_sge ; i++) {
+		if (copy_from_user(buffer + offset,
+				   (const void __user *)(unsigned long)send_wqe->sge_array[i].addr,
+				   send_wqe->sge_array[i].length)) {
+			return -EFAULT;
+		}
+		offset += send_wqe->sge_array[i].length;
+	}
+
+	return 0;
 }
 
 
@@ -988,7 +1043,6 @@ int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 	struct pib_ib_dev *dev;
 	struct pib_ib_recv_wqe *recv_wqe;
 	struct pib_ib_qp *qp;
-	enum pib_result_type res = PIB_RES_SCCUESS;
 	u64 total_length = 0;
 
 	if (!ibqp || !ibwr)
@@ -1004,6 +1058,29 @@ int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 	down(&qp->sem);
 
 next_wr:
+	/* QP check */
+	switch (qp->state) {
+	case IB_QPS_RESET:
+	default:
+		pr_err("pib: call pib_ib_post_recv when QP is in RESET\n");
+		ret = -EINVAL;
+		goto err;
+
+	case IB_QPS_ERR:
+		pib_util_insert_wc_error(qp->recv_cq, qp, ibwr->wr_id,
+					 IB_WC_WR_FLUSH_ERR, IB_WC_RECV);
+		ret = -EPERM; /* @todo ? */
+		goto skip;
+
+	case IB_QPS_INIT:
+	case IB_QPS_RTR:
+	case IB_QPS_RTS:
+	case IB_QPS_SQD:
+	case IB_QPS_SQE:
+		/* OK */
+		break;
+	}
+
 	if ((ibwr->num_sge < 1) || (qp->ib_qp_init_attr.cap.max_recv_sge < ibwr->num_sge)) {
 		ret = -EINVAL;
 		goto err;
@@ -1015,7 +1092,6 @@ next_wr:
 	}
 
 	recv_wqe = list_first_entry(&qp->responder.free_rwqe_head, struct pib_ib_recv_wqe, list);
-	list_del_init(&recv_wqe->list); /* list_del でいい？ */
 
 	recv_wqe->wr_id   = ibwr->wr_id;
 	recv_wqe->num_sge = ibwr->num_sge;
@@ -1037,48 +1113,11 @@ next_wr:
 
 	recv_wqe->total_length = (u32)total_length;
 
-	/* QP check */
-	switch (qp->state) {
-	case IB_QPS_RESET:
-	default:
-		res = PIB_RES_IMMEDIATE_RETURN;
-		goto skip;
-
-	case IB_QPS_ERR:
-		res = PIB_RES_WR_FLUSH_ERR;
-		goto skip;
-
-	case IB_QPS_INIT:
-	case IB_QPS_RTR:
-	case IB_QPS_RTS:
-	case IB_QPS_SQD:
-	case IB_QPS_SQE:
-		/* OK */
-		break;
-	}
-
+	list_del_init(&recv_wqe->list); /* list_del でいい？ */
 	list_add_tail(&recv_wqe->list, &qp->responder.recv_wqe_head);
 	qp->responder.nr_recv_wqe++;
 
 skip:
-	switch (res) {
-
-	case PIB_RES_IMMEDIATE_RETURN:
-		pib_util_free_recv_wqe(qp, recv_wqe);
-		ret = -EINVAL;
-		goto err;
-
-	case PIB_RES_WR_FLUSH_ERR:
-		pib_util_free_recv_wqe(qp, recv_wqe);
-		pib_util_insert_wc_error(qp->recv_cq, qp, ibwr->wr_id,
-					 IB_WC_WR_FLUSH_ERR, IB_WC_RECV);
-		ret = -EPERM; /* @todo ? */
-		break;
-
-	default:
-		break;
-	}
-
 	ibwr = ibwr->next;
 	if (ibwr)
 		goto next_wr;
@@ -1086,9 +1125,8 @@ skip:
 err:
 	up(&qp->sem);
 
-	if (ret)
-		if (bad_wr)
-			*bad_wr = ibwr;
+	if (ret && bad_wr)
+		*bad_wr = ibwr;
 
 	return ret;
 }
@@ -1096,7 +1134,6 @@ err:
 
 void pib_util_free_send_wqe(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
 {
-	memset(send_wqe, 0, sizeof(*send_wqe));
 	INIT_LIST_HEAD(&send_wqe->list);
 
 	list_add_tail(&send_wqe->list, &qp->requester.free_swqe_head);

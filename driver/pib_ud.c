@@ -149,12 +149,18 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		goto completion_error;
 	}
 
-	spin_lock_irqsave(&pd->lock, flags);
-	status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
-				       buffer, 0, send_wqe->total_length,
-				       0,
-				       PIB_MR_COPY_FROM);
-	spin_unlock_irqrestore(&pd->lock, flags);
+	if (send_wqe->total_length == 0) {
+		
+	} else if (send_wqe->send_flags & IB_SEND_INLINE) {
+		memcpy(buffer, send_wqe->inline_data_buffer, send_wqe->total_length);
+	} else {
+		spin_lock_irqsave(&pd->lock, flags);
+		status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
+					       buffer, 0, send_wqe->total_length,
+					       0,
+					       PIB_MR_COPY_FROM);
+		spin_unlock_irqrestore(&pd->lock, flags);
+	}
 
 	if (status != IB_WC_SUCCESS)
 		goto completion_error;

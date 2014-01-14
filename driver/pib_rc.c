@@ -271,10 +271,10 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 	u64 mr_offset;
 	u32 payload_size;
 	u32 packet_length;
-	enum ib_wc_status status;
+	enum ib_wc_status status = IB_WC_SUCCESS;
 	unsigned long flags;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN <= send_wqe->total_length)
+	if (PIB_IB_MAX_PAYLOAD_LEN < send_wqe->total_length)
 		return IB_WC_LOC_LEN_ERR;
 
 	rc_packet = (struct pib_packet_rc_request*)buffer;
@@ -305,14 +305,20 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 	else
 		payload_size = (128U << qp->ib_qp_attr.path_mtu);
 
-	pd = to_ppd(qp->ib_qp.pd);
+	if (payload_size == 0) {
 
-	spin_lock_irqsave(&pd->lock, flags);
-	status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
-				       buffer, mr_offset, payload_size,
-				       0,
-				       PIB_MR_COPY_FROM);
-	spin_unlock_irqrestore(&pd->lock, flags);
+	} else if (send_wqe->send_flags & IB_SEND_INLINE) {
+		memcpy(buffer, send_wqe->inline_data_buffer + mr_offset, payload_size);
+	} else {
+		pd = to_ppd(qp->ib_qp.pd);
+
+		spin_lock_irqsave(&pd->lock, flags);
+		status = pib_util_mr_copy_data(pd, send_wqe->sge_array, send_wqe->num_sge,
+					       buffer, mr_offset, payload_size,
+					       0,
+					       PIB_MR_COPY_FROM);
+		spin_unlock_irqrestore(&pd->lock, flags);
+	}
 
 	if (status != IB_WC_SUCCESS)
 		return status;
@@ -338,7 +344,7 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 	u64 remote_addr;
 	u32 dmalen, offset;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN <= send_wqe->total_length)
+	if (PIB_IB_MAX_PAYLOAD_LEN < send_wqe->total_length)
 		return IB_WC_LOC_LEN_ERR;
 
 	remote_addr = send_wqe->wr.rdma.remote_addr;
@@ -846,7 +852,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 	if (finit && (qp->responder.rdma_write.dmalen != qp->responder.offset + size))
 		goto nak_invalid_request;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN <= qp->responder.rdma_write.dmalen) {
+	if (PIB_IB_MAX_PAYLOAD_LEN < qp->responder.rdma_write.dmalen) {
 		status = IB_WC_LOC_LEN_ERR;
 		goto skip;
 	}
@@ -1047,7 +1053,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 	dmalen      = reth->DMALen;
 
 	/* Check */
-	if (PIB_IB_MAX_PAYLOAD_LEN <= dmalen)
+	if (PIB_IB_MAX_PAYLOAD_LEN < dmalen)
 		goto legth_error_or_too_many_rdma_read;
 
 	if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)

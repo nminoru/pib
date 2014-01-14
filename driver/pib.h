@@ -72,6 +72,8 @@
 #define PIB_IB_MAX_SGE			(32)
 #define PIB_IB_MAX_RD_ATOM		(16)
 
+#define PIB_IB_MAX_INLINE		(2048)
+
 #define PIB_IB_QPN_MASK			(0xFFFFFF)
 #define PIB_IB_PSN_MASK			(0xFFFFFF)
 #define PIB_IB_LOCAL_ACK_TIMEOUT_MASK	(0x1F)
@@ -445,6 +447,8 @@ struct pib_ib_qp {
 		int			nr_rd_atomic;
 
 		struct list_head        free_swqe_head;
+
+		void		       *inline_data_buffer;
 	} requester;
 
 	/* responder side */
@@ -514,12 +518,12 @@ struct pib_ib_send_wqe {
 	struct ib_sge           sge_array[PIB_IB_MAX_SGE];
 
 	struct list_head        list; /* link from QP */
-	struct pib_ib_qp       *qp;
 
 	struct pib_ib_swqe_processing processing;
 
 	__be32		        imm_data;
-	
+	void		       *inline_data_buffer;
+
 	union {
 		struct {
 			u64	remote_addr;

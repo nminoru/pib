@@ -184,7 +184,7 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 {
 	int i;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN <= size)
+	if (PIB_IB_MAX_PAYLOAD_LEN < size)
 		return IB_WC_LOC_LEN_ERR;
 
 	for (i=0 ; i<num_sge ; i++) {
@@ -250,7 +250,7 @@ copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u
 {
 	struct pib_ib_mr *mr;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN <= size)
+	if (PIB_IB_MAX_PAYLOAD_LEN < size)
 		return IB_WC_LOC_LEN_ERR;
 
 	mr = pd->mr_table[rkey & PIB_IB_MR_INDEX_MASK];
