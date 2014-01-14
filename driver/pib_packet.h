@@ -37,7 +37,7 @@ struct pib_packet_lrh {
 	u32 SLID   : 16;
 	u32 PktLen : 11; /* Packet Length */
 	u32        :  5;
-};
+} __attribute__ ((packed));
 
 
 /* Base Transport Header */
@@ -55,7 +55,7 @@ struct pib_packet_bth {
 	u32 PSN    : 24; /* Packet Sequence Number */
 	u32        :  7;
 	u32 A      :  1; /* Acknowledge Request */
-};
+} __attribute__ ((packed));
 
 
 /* Datagram Extended Transport Header */
@@ -63,7 +63,7 @@ struct pib_packet_deth {
 	u32 Q_Key;       /* Queue Key */
 
 	u32 SrcQP;       /* Source QP  (The most significant 8-bits must be zero.) */
-};
+} __attribute__ ((packed));
 
 
 /* RDMA Extended Trasnport Header */
@@ -75,7 +75,7 @@ struct pib_packet_reth {
 	u32 R_Key;      /* Remote Key */
 
 	u32 DMALen;     /* DMA Length */
-};
+} __attribute__ ((packed));
 
 
 /* Atomic Extended Trasnport Header */
@@ -93,41 +93,47 @@ struct pib_packet_atomiceth {
 	u32 CmpDt_hi;   /* Compare Data [high] */
 
 	u32 CmpDt_lo;   /* Compare Data [low] */
-};
+} __attribute__ ((packed));
 
 
 /* ACK Extended Transport Header */
 struct pib_packet_aeth {
 	u32 MSN      : 24; /* Message Sequence Number */
 	u32 Syndrome :  8; /* Syndrome */ 
-};
+} __attribute__ ((packed));
 
 
 /* Atomic ACK Extended Transport Header */
 struct pib_packet_atomicacketh {
 	u32 OrigRemDt_hi;
 	u32 OrigRemDt_lo;
-};
+} __attribute__ ((packed));
+
+
+struct pib_packet_min_request {
+	struct pib_packet_lrh   lrh;
+	struct pib_packet_bth   bth;
+} __attribute__ ((packed));
 
 
 struct pib_packet_ud_request {
 	struct pib_packet_lrh   lrh;
 	struct pib_packet_bth   bth;
 	struct pib_packet_deth  deth;
-};
+} __attribute__ ((packed));
 
 
 struct pib_packet_rc_request {
 	struct pib_packet_lrh   lrh;
 	struct pib_packet_bth   bth;
-};
+} __attribute__ ((packed));
 
 
 struct pib_packet_rc_acknowledge {
 	struct pib_packet_lrh   lrh;
 	struct pib_packet_bth   bth;
 	struct pib_packet_aeth  aeth;
-};
+} __attribute__ ((packed));
 
 
 struct pib_packet_mad {
@@ -135,7 +141,7 @@ struct pib_packet_mad {
 	struct pib_packet_bth   bth;
 	struct pib_packet_deth  deth;
 	struct ib_mad		mad;
-};
+} __attribute__ ((packed));
 
 
 struct pib_packet_smp {
@@ -143,6 +149,6 @@ struct pib_packet_smp {
 	struct pib_packet_bth   bth;
 	struct pib_packet_deth  deth;
 	struct ib_smp		smp;
-};
+} __attribute__ ((packed));
 
 #endif /* PIB_PACKET_H */

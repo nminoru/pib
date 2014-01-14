@@ -312,7 +312,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 	struct sockaddr_in6 sockaddr_in6;
 	struct kvec iov;
 	struct pib_ib_dev *dev;
-	struct pib_packet_rc_request *base_packet;
+	struct pib_packet_min_request *base_packet;
 	struct pib_packet_mad *mad_packet;
 	struct pib_packet_smp *smp_packet;
 
@@ -333,10 +333,9 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 
 	recvmsg_size = ret;
 
+	base_packet = (struct pib_packet_min_request *)sw->buffer;
 	if (recvmsg_size < sizeof(*base_packet))
 		goto silently_drop;
-
-	base_packet = (struct pib_packet_rc_request *)sw->buffer;
 
 	if (base_packet->bth.DestQP != 0) {
 		pr_crit("pib: pib_easy_sw: QPN=0x%06x\n", base_packet->bth.DestQP);
@@ -379,7 +378,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 		goto silently_drop;
 	}
 
-#if 0	
+#if 0
 	pib_debug("pib: recvmsg: inw_sw_port_num=%u, slid=0x%x, dlid=0x%x, dr_slid=0x%x, dr_dlid=0x%x, hop_cnt=%u, hop_ptr=%u\n",
 		  in_sw_port_num,		     
 		  smp_packet->lrh.SLID,
