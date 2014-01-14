@@ -308,6 +308,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 	int ret, recvmsg_size, self_reply;
 	u8 in_sw_port_num, out_sw_port_num;
 	u8 dest_port_num;
+	u32 dest_qpn;
 	struct msghdr msghdr = {.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
 	struct sockaddr_in6 sockaddr_in6;
 	struct kvec iov;
@@ -337,8 +338,9 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 	if (recvmsg_size < sizeof(*base_packet))
 		goto silently_drop;
 
-	if (base_packet->bth.DestQP != 0) {
-		pr_crit("pib: pib_easy_sw: QPN=0x%06x\n", base_packet->bth.DestQP);
+	dest_qpn = be32_to_cpu(base_packet->bth.destQP);
+	if ((dest_qpn != 0) || (dest_qpn & ~PIB_IB_QPN_MASK)) {
+		pr_crit("pib: pib_easy_sw: QPN=0x%06x\n", dest_qpn);
 		BUG();
 	}
 
@@ -430,9 +432,9 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 	}
 
 	if (self_reply) {
-		smp_packet->lrh.DLID = smp_packet->lrh.SLID;
+		smp_packet->lrh.dlid = smp_packet->lrh.slid;
 		if (smp_packet->smp.dr_slid == IB_LID_PERMISSIVE)
-			smp_packet->lrh.SLID = 0xFFFF;
+			smp_packet->lrh.slid = IB_LID_PERMISSIVE;
 	}
 
 	if (ret & IB_MAD_RESULT_FAILURE) {

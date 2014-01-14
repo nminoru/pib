@@ -192,7 +192,9 @@ static int insert_wc(struct pib_ib_cq *cq, const struct ib_wc *wc)
 {
 	unsigned long flags;
 	struct pib_ib_cqe *cqe;
+#if 0
 	struct ib_event ev;
+#endif
 
 	spin_lock_irqsave(&cq->lock, flags);
 

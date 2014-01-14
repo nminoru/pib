@@ -27,86 +27,112 @@ enum pib_ib_syndrome {
 
 /* Local Route Header */
 struct pib_packet_lrh {
-	u32 DLID   : 16;
-	u32 LNH    :  2; /* Link Next Header */
-	u32        :  2;
-	u32 SL     :  4; /* Service Level */
-	u32 LVer   :  4; /* Llink Version */
-	u32 VL     :  4; /* Virtual Lane */
+	__be16	dlid;
 
-	u32 SLID   : 16;
-	u32 PktLen : 11; /* Packet Length */
-	u32        :  5;
+	/*
+	 * Virtual Lane      4 bits
+	 * Link Version      4 bits
+	 */
+	u8	vl_lver;
+
+	/*
+	 * Service Level     4 bits
+	 * Reserved          2 bits
+	 * Link Next Header  2 bits
+	 */
+	u8	sl_rsv_lnh;
+
+	__be16	slid;
+
+	/*
+	 * Reserved          5 bits
+	 * Packet Length    11 bits
+	 */
+	__be16  pktlen;
+
 } __attribute__ ((packed));
+
+
+static inline u16 pib_packet_lrh_get_pktlen(const struct pib_packet_lrh *lrh)
+{
+	return be16_to_cpu(lrh->pktlen) & 0x7FF;
+}
+
+
+static inline void pib_packet_lrh_set_pktlen(struct pib_packet_lrh *lrh, u16 value)
+{
+	lrh->pktlen = cpu_to_be16(value & 0x7FF);
+}
 
 
 /* Base Transport Header */
 struct pib_packet_bth {
+	u8	OpCode;	/* Opcode */
+	
+	/*
+	 * Solicited Event          1 bit
+	 * MigReq                   1 bit
+	 * Pad Count                2 bits
+	 * Transport Header Version 4 bits
+	 */
+	u8	se_m_padcnt_tver;
 
-	u32 P_Key  : 16; /* Partition Key */
-	u32 TVer   :  4; /* Transport Header Version */
-	u32 PadCnt :  2; /* Pad Count */
-	u32 M      :  1; /* MigReq */
-	u32 SE     :  1; /* Solicited Event */
-	u32 OpCode :  8; /* Opcode */
-
-	u32 DestQP;      /* Destinatino QP (The most significant 8-bits must be zero.) */
-
-	u32 PSN    : 24; /* Packet Sequence Number */
-	u32        :  7;
-	u32 A      :  1; /* Acknowledge Request */
+	__be16	pkey;	/* Partition Key */
+	__be32	destQP;	/* Destinatino QP (The most significant 8-bits must be zero.) */
+	__be32	psn;	/* Packet Sequence Number (The MSB is A bit) */
 } __attribute__ ((packed));
+
+
+static inline u8 pib_packet_bth_get_padcnt(const struct pib_packet_bth *bth)
+{
+	return (bth->se_m_padcnt_tver >> 4) & 0x3;
+}
+
+
+static inline void pib_packet_bth_set_padcnt(struct pib_packet_bth *bth, u8 padcnt)
+{
+	bth->se_m_padcnt_tver &= ~0x30;
+	bth->se_m_padcnt_tver |= ((padcnt & 0x3) << 4);
+}
 
 
 /* Datagram Extended Transport Header */
 struct pib_packet_deth {
-	u32 Q_Key;       /* Queue Key */
-
-	u32 SrcQP;       /* Source QP  (The most significant 8-bits must be zero.) */
+	__be32	qkey;	/* Queue Key */
+	__be32	srcQP;	/* Source QP  (The most significant 8-bits must be zero.) */
 } __attribute__ ((packed));
 
 
 /* RDMA Extended Trasnport Header */
 struct pib_packet_reth {
-	u32 VA_hi;      /* Virtual Address (high) */
-
-	u32 VA_lo;      /* Virtual Address (low) */
-
-	u32 R_Key;      /* Remote Key */
-
-	u32 DMALen;     /* DMA Length */
+	__u64	vaddr;	/* Virtual Address */
+	__u32	rkey;	/* Remote Key */
+	__u32	dmalen;	/* DMA Length */
 } __attribute__ ((packed));
 
 
 /* Atomic Extended Trasnport Header */
 struct pib_packet_atomiceth {
-	u32 VA_hi;      /* Virtual Address [high] */
-
-	u32 VA_lo;      /* Virtual Address [low] */
-
-	u32 R_Key;      /* Remote Key */
-
-	u32 SwapDt_hi;  /* Swap (or Add) Data [high] */
-
-	u32 SwapDt_lo;  /* Swap (or Add) Data [low] */
-
-	u32 CmpDt_hi;   /* Compare Data [high] */
-
-	u32 CmpDt_lo;   /* Compare Data [low] */
+	__u64	vaddr;	/* Virtual Address */
+	__u32	rkey;	/* Remote Key */
+	__u64	swap_dt;/* Swap (or Add) Data */	
+	__u64	cmp_dt;	/* Compare Data */
 } __attribute__ ((packed));
 
 
 /* ACK Extended Transport Header */
 struct pib_packet_aeth {
-	u32 MSN      : 24; /* Message Sequence Number */
-	u32 Syndrome :  8; /* Syndrome */ 
+	/*
+	 * Syndrome                  8 bits
+	 * Message Sequence Number  24 bits
+	 */
+	__u32	syndrome_msn;
 } __attribute__ ((packed));
 
 
 /* Atomic ACK Extended Transport Header */
 struct pib_packet_atomicacketh {
-	u32 OrigRemDt_hi;
-	u32 OrigRemDt_lo;
+	__u64	orig_rem_dt;	/* Virtual Address */
 } __attribute__ ((packed));
 
 

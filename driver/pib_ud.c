@@ -40,12 +40,12 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	u8 port_num;
 	struct pib_ib_ah *ah;
 	struct sockaddr *sockaddr;
-	u64 total_length = 0;
 	struct pib_packet_ud_request *ud_packet;
 	enum ib_wr_opcode opcode;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	int with_imm;
 	unsigned long flags;
+	u32 packet_length, fix_packet_length;
 
 	opcode = send_wqe->opcode;
 
@@ -110,20 +110,13 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 
 	ud_packet->bth.OpCode = with_imm ? IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE : IB_OPCODE_UD_SEND_ONLY;
 
-	ud_packet->lrh.VL     = 0;
-	ud_packet->lrh.LVer   = 0;
-	ud_packet->lrh.SL     = ah->ib_ah_attr.sl;
-	ud_packet->lrh.LNH    = 1; /* Transport: IBA & Next Header: BTH */
-	ud_packet->lrh.DLID   = ah->ib_ah_attr.dlid;
-	ud_packet->lrh.SLID   = dev->ports[port_num - 1].ib_port_attr.lid;
+	ud_packet->lrh.sl_rsv_lnh = (ah->ib_ah_attr.sl << 4) | 1; /* Transport: IBA & Next Header: BTH */
+	ud_packet->lrh.dlid   = cpu_to_be16(ah->ib_ah_attr.dlid);
+	ud_packet->lrh.slid   = cpu_to_be16(dev->ports[port_num - 1].ib_port_attr.lid);
 
-	ud_packet->bth.SE     = 0;
-	ud_packet->bth.M      = 0;
-	ud_packet->bth.TVer   = 0;
-	ud_packet->bth.P_Key  = send_wqe->wr.ud.pkey_index; /* @todo from QP for UD/RC QP */
-	ud_packet->bth.DestQP = send_wqe->wr.ud.remote_qpn;
-	ud_packet->bth.A      = 0;
-	ud_packet->bth.PSN    = qp->ib_qp_attr.sq_psn;
+	ud_packet->bth.pkey   = cpu_to_be16(send_wqe->wr.ud.pkey_index); /* @todo from QP for UD/RC QP */
+	ud_packet->bth.destQP = cpu_to_be32(send_wqe->wr.ud.remote_qpn);
+	ud_packet->bth.psn    = cpu_to_be32(qp->ib_qp_attr.sq_psn & PIB_IB_PSN_MASK); /* A-bit is 0 */
 
 	/*
 	 *  An attempt to send a Q_Key with the most siginificant bit set results
@@ -131,10 +124,10 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	 *
 	 *  @see IBA Spec. Vol.1 3.5.3 KEYS
 	 */
-	ud_packet->deth.Q_Key = ((s32)send_wqe->wr.ud.remote_qkey < 0) ?
-		qp->ib_qp_attr.qkey : send_wqe->wr.ud.remote_qkey;
+	ud_packet->deth.qkey  = cpu_to_be32(((s32)send_wqe->wr.ud.remote_qkey < 0) ?
+					    qp->ib_qp_attr.qkey : send_wqe->wr.ud.remote_qkey);
 
-	ud_packet->deth.SrcQP = qp->ib_qp.qp_num;
+	ud_packet->deth.srcQP = cpu_to_be32(qp->ib_qp.qp_num);
 
 	buffer += sizeof(*ud_packet);
 
@@ -168,28 +161,27 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	buffer += send_wqe->total_length;
 
 	/* サイズの再計算 */
-	total_length = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.buffer;
+	fix_packet_length = (packet_length + 3) & ~3;
 
-	ud_packet->lrh.PktLen = ((total_length + 3) & ~3) / 4;
-	ud_packet->bth.PadCnt = ud_packet->lrh.PktLen * 4 - total_length;
+	pib_packet_lrh_set_pktlen(&ud_packet->lrh, fix_packet_length / 4); 
+	pib_packet_bth_set_padcnt(&ud_packet->bth, fix_packet_length - packet_length);
 
-	total_length = ud_packet->lrh.PktLen * 4;
-
-	if (ud_packet->bth.DestQP == PIB_IB_QP0) {
+	if (send_wqe->wr.ud.remote_qpn == PIB_IB_QP0) {
 		struct pib_packet_smp *packet;
 		
 		packet = (struct pib_packet_smp *)buffer;
 
 		if (packet->smp.mgmt_class == IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE) {
 			if (packet->smp.dr_slid == IB_LID_PERMISSIVE)
-				ud_packet->lrh.SLID = 0xFFFF;
+				ud_packet->lrh.slid = IB_LID_PERMISSIVE;
 			if (packet->smp.dr_dlid == IB_LID_PERMISSIVE)
-				ud_packet->lrh.DLID = 0xFFFF;
+				ud_packet->lrh.dlid = IB_LID_PERMISSIVE;
 		}
 	}
 
 	dev->thread.sockaddr	= sockaddr;
-	dev->thread.msg_size    = total_length;
+	dev->thread.msg_size    = fix_packet_length;
 	dev->thread.port_num    = port_num;
 	dev->thread.ready_to_send = 1;
 
@@ -237,6 +229,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 	struct pib_ib_pd *pd;
 	struct pib_ib_recv_wqe *recv_wqe = NULL;
 	struct pib_packet_deth *deth;
+	u32 qkey;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	__be32 imm_data = 0;
 	unsigned long flags;
@@ -255,7 +248,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 	}
 
 	/* UD don't set acknowledge request bit */
-	if (bth->A)
+	if (be32_to_cpu(bth->psn) & 0x80000000U) /* A-bit */
 		goto silently_drop;
 
 	/* Analyze Datagram Extended Transport Header */
@@ -271,18 +264,20 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 		if (qp->ib_qp_attr.port_num != port_num)
 			goto silently_drop;
 
+	qkey = be32_to_cpu(deth->qkey);
+
 	/* BTH: Q_Key check */
 	switch (qp->qp_type) {
 	case IB_QPT_SMI:
 		break;
 
 	case IB_QPT_GSI:
-		if (deth->Q_Key != IB_QP1_QKEY)
+		if (qkey != IB_QP1_QKEY)
 			goto silently_drop;
 		break;
 
 	default:
-		if (deth->Q_Key != qp->ib_qp_attr.qkey)
+		if (qkey != qp->ib_qp_attr.qkey)
 			goto silently_drop;
 		break;
 	}
@@ -339,8 +334,8 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 			.byte_len    = size + 40,
 			.qp          = &qp->ib_qp,
 			.ex.imm_data = imm_data,
-			.src_qp      = deth->SrcQP,
-			.slid        = lrh->SLID,
+			.src_qp      = be32_to_cpu(deth->srcQP) & PIB_IB_QPN_MASK,
+			.slid        = be16_to_cpu(lrh->slid),
 			.wc_flags    = (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) ? IB_WC_WITH_IMM : 0,
 		};
 

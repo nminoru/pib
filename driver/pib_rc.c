@@ -99,6 +99,7 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	struct ib_ah_attr ah_attr;
 	struct sockaddr *sockaddr;
 	struct pib_packet_rc_request *rc_packet;
+	u32 psn;
 	enum ib_wc_status status;
 
 	/*
@@ -137,20 +138,17 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	/* write IB Packet Header (LRH, BTH) */
 	rc_packet = (struct pib_packet_rc_request*)buffer;
 
-	rc_packet->lrh.VL     = 0;
-	rc_packet->lrh.LVer   = 0;
-	rc_packet->lrh.SL     = ah_attr.sl;
-	rc_packet->lrh.LNH    = 1; /* Transport: IBA & Next Header: BTH */
-	rc_packet->lrh.DLID   = ah_attr.dlid;
-	rc_packet->lrh.SLID   = dev->ports[port_num - 1].ib_port_attr.lid;
+	memset(rc_packet, 0, sizeof(*rc_packet));
 
-	rc_packet->bth.SE     = 0; /* @todo */
-	rc_packet->bth.M      = 0;
-	rc_packet->bth.TVer   = 0;
-	rc_packet->bth.P_Key  = qp->ib_qp_attr.pkey_index;
-	rc_packet->bth.DestQP = qp->ib_qp_attr.dest_qp_num;
-	rc_packet->bth.A      = 0;
-	rc_packet->bth.PSN    = send_wqe->processing.based_psn + send_wqe->processing.sent_packets;
+	rc_packet->lrh.sl_rsv_lnh = (ah_attr.sl << 4) | 1; /* Transport: IBA & Next Header: BTH */
+	rc_packet->lrh.dlid   = cpu_to_be16(ah_attr.dlid);
+	rc_packet->lrh.slid   = cpu_to_be16(dev->ports[port_num - 1].ib_port_attr.lid);
+
+	psn = send_wqe->processing.based_psn + send_wqe->processing.sent_packets;
+
+	rc_packet->bth.pkey   = cpu_to_be16(qp->ib_qp_attr.pkey_index);
+	rc_packet->bth.destQP = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
+	rc_packet->bth.psn    = cpu_to_be32(psn & PIB_IB_PSN_MASK); /* A-bit is 0 */
 
 	switch (send_wqe->opcode) {
 
@@ -236,7 +234,7 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		goto completion_error;
 
 	dev->thread.sockaddr	= sockaddr;
-	dev->thread.msg_size    = rc_packet->lrh.PktLen * 4;
+	dev->thread.msg_size    = pib_packet_lrh_get_pktlen(&rc_packet->lrh) * 4;
 	dev->thread.port_num    = port_num;
 	dev->thread.ready_to_send = 1;
 
@@ -269,8 +267,7 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 	struct pib_packet_rc_request *rc_packet;
 	struct pib_ib_pd *pd;
 	u64 mr_offset;
-	u32 payload_size;
-	u32 packet_length;
+	u32 payload_size, packet_length, fix_packet_length;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	unsigned long flags;
 
@@ -285,10 +282,9 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 		
 		reth = (struct pib_packet_reth*)buffer;
 		
-		reth->VA_hi  = (send_wqe->wr.rdma.remote_addr >> 32);
-		reth->VA_lo  = send_wqe->wr.rdma.remote_addr;
-		reth->R_Key  = send_wqe->wr.rdma.rkey;
-		reth->DMALen = send_wqe->total_length;
+		reth->vaddr  = cpu_to_be64(send_wqe->wr.rdma.remote_addr);
+		reth->rkey   = cpu_to_be32(send_wqe->wr.rdma.rkey);
+		reth->dmalen = cpu_to_be32(send_wqe->total_length);
 
 		buffer += sizeof(struct pib_packet_reth);
 	}
@@ -326,10 +322,11 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 	buffer += payload_size;
 
 	/* calculate packet length & pad count */
-	packet_length = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.buffer;
+	fix_packet_length = (packet_length + 3) & ~3;
 
-	rc_packet->lrh.PktLen = (packet_length + 3) / 4;
-	rc_packet->bth.PadCnt = rc_packet->lrh.PktLen * 4 - packet_length;
+	pib_packet_lrh_set_pktlen(&rc_packet->lrh, fix_packet_length / 4); 
+	pib_packet_bth_set_padcnt(&rc_packet->bth, fix_packet_length - packet_length);
 
 	return IB_WC_SUCCESS;
 }
@@ -340,7 +337,7 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 {
 	struct pib_packet_rc_request *rc_packet;
 	struct pib_packet_reth *reth;
-	u32 packet_length;
+	u32 packet_length, fix_packet_length;
 	u64 remote_addr;
 	u32 dmalen, offset;
 
@@ -378,19 +375,19 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 	buffer   += sizeof(struct pib_packet_rc_request);
 
 	reth = (struct pib_packet_reth*)buffer;
-		
-	reth->VA_hi  = (remote_addr >> 32);
-	reth->VA_lo  = remote_addr;
-	reth->R_Key  = send_wqe->wr.rdma.rkey;
-	reth->DMALen = dmalen;
+
+	reth->vaddr  = cpu_to_be64(remote_addr);
+	reth->rkey   = cpu_to_be32(send_wqe->wr.rdma.rkey);
+	reth->dmalen = cpu_to_be32(dmalen);
 
 	buffer   += sizeof(struct pib_packet_reth);
 
 	/* calculate packet length & pad count */
-	packet_length = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.buffer;
+	fix_packet_length = (packet_length + 3) & ~3;
 
-	rc_packet->lrh.PktLen = ((packet_length + 3) & ~3) / 4;
-	rc_packet->bth.PadCnt = rc_packet->lrh.PktLen * 4 - packet_length;
+	pib_packet_lrh_set_pktlen(&rc_packet->lrh, fix_packet_length / 4); 
+	pib_packet_bth_set_padcnt(&rc_packet->bth, fix_packet_length - packet_length);
 
 	return IB_WC_SUCCESS;
 }
@@ -401,28 +398,26 @@ process_Atomic_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_
 {
 	struct pib_packet_rc_request *rc_packet;
 	struct pib_packet_atomiceth *atomiceth;
-	u32 packet_length;
+	u32 packet_length, fix_packet_length;
 
 	rc_packet = (struct pib_packet_rc_request*)buffer;
 	buffer   += sizeof(struct pib_packet_rc_request);
 
 	atomiceth = (struct pib_packet_atomiceth*)buffer;
 
-	atomiceth->VA_hi     = (send_wqe->wr.atomic.remote_addr >> 32);
-	atomiceth->VA_lo     = (send_wqe->wr.atomic.remote_addr >>  0);
-	atomiceth->R_Key     = send_wqe->wr.atomic.rkey;
-	atomiceth->SwapDt_hi = (send_wqe->wr.atomic.swap        >> 32);
-	atomiceth->SwapDt_lo = (send_wqe->wr.atomic.swap        >>  0);
-	atomiceth->CmpDt_hi  = (send_wqe->wr.atomic.compare_add >> 32);
-	atomiceth->CmpDt_lo  = (send_wqe->wr.atomic.compare_add >>  0);
-	
+	atomiceth->vaddr   = cpu_to_be64(send_wqe->wr.atomic.remote_addr);
+	atomiceth->rkey    = cpu_to_be32(send_wqe->wr.atomic.rkey);
+	atomiceth->swap_dt = cpu_to_be64(send_wqe->wr.atomic.swap);
+	atomiceth->cmp_dt  = cpu_to_be64(send_wqe->wr.atomic.compare_add);
+
 	buffer   += sizeof(struct pib_packet_atomiceth);
 
 	/* calculate packet length & pad count */
-	packet_length = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.buffer;
+	fix_packet_length = (packet_length + 3) & ~3;
 
-	rc_packet->lrh.PktLen = ((packet_length + 3) & ~3) / 4;
-	rc_packet->bth.PadCnt = rc_packet->lrh.PktLen * 4 - packet_length;
+	pib_packet_lrh_set_pktlen(&rc_packet->lrh, fix_packet_length / 4); 
+	pib_packet_bth_set_padcnt(&rc_packet->bth, fix_packet_length - packet_length);
 
 	return IB_WC_SUCCESS;
 }
@@ -466,7 +461,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 	u32 psn;
 
 	OpCode = bth->OpCode;
-	psn    = bth->PSN;
+	psn    = be32_to_cpu(bth->psn) & PIB_IB_PSN_MASK;
 
 	issue_comm_est(qp);
 
@@ -693,7 +688,7 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 			.qp          = &qp->ib_qp,
 			.ex.imm_data = imm_data,
 			.src_qp      = 0,
-			.slid        = lrh->SLID,
+			.slid        = be16_to_cpu(lrh->slid),
 			.wc_flags    = with_imm ? IB_WC_WITH_IMM : 0,
 		};
 
@@ -813,9 +808,9 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 		size   -= sizeof(struct pib_packet_reth);
 
 		qp->responder.offset            = 0;
-		qp->responder.rdma_write.vaddr  = ((u64)reth->VA_hi << 32) | reth->VA_lo;
-		qp->responder.rdma_write.rkey   = reth->R_Key;
-		qp->responder.rdma_write.dmalen = reth->DMALen;
+		qp->responder.rdma_write.vaddr  = be64_to_cpu(reth->vaddr);
+		qp->responder.rdma_write.rkey   = be32_to_cpu(reth->rkey);
+		qp->responder.rdma_write.dmalen = be32_to_cpu(reth->dmalen);
 	}
 
 	if (with_imm) {
@@ -899,7 +894,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 			.qp          = &qp->ib_qp,
 			.ex.imm_data = imm_data,
 			.src_qp      = 0,
-			.slid        = lrh->SLID,
+			.slid        = be16_to_cpu(lrh->slid),
 			.wc_flags    = IB_WC_WITH_IMM,
 		};
 
@@ -984,7 +979,7 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 
 	atomiceth  = (struct pib_packet_atomiceth *)buffer;
 
-	vaddr = ((u64)atomiceth->VA_hi << 32) | atomiceth->VA_lo;
+	vaddr = be64_to_cpu(atomiceth->vaddr);
 
 	if ((vaddr % 8) != 0) {
 		/* Local Access Violation Work Queue Error */
@@ -1002,9 +997,9 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 	pd = to_ppd(qp->ib_qp.pd);
 
 	spin_lock_irqsave(&pd->lock, flags);
-	status = pib_util_mr_atomic(pd, atomiceth->R_Key, vaddr,
-				    ((u64)atomiceth->SwapDt_hi << 32) | atomiceth->SwapDt_lo,
-				    ((u64)atomiceth->CmpDt_hi  << 32) | atomiceth->CmpDt_lo,
+	status = pib_util_mr_atomic(pd, be32_to_cpu(atomiceth->rkey), vaddr,
+				    be64_to_cpu(atomiceth->swap_dt),
+				    be64_to_cpu(atomiceth->cmp_dt),
 				    &result,
 				    (OpCode == IB_WR_ATOMIC_CMP_AND_SWP) ? PIB_MR_CAS : PIB_MR_FETCHADD);
 	spin_unlock_irqrestore(&pd->lock, flags);
@@ -1048,9 +1043,9 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 
 	reth    = (struct pib_packet_reth*)buffer;
 
-	remote_addr = ((u64)reth->VA_hi << 32) | reth->VA_lo;
-	rkey        = reth->R_Key;
-	dmalen      = reth->DMALen;
+	remote_addr = be64_to_cpu(reth->vaddr);
+	rkey        = be32_to_cpu(reth->rkey);
+	dmalen      = be32_to_cpu(reth->dmalen);
 
 	/* Check */
 	if (PIB_IB_MAX_PAYLOAD_LEN < dmalen)
@@ -1313,8 +1308,11 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 	int OpCode;
 	struct pib_ib_pd *pd;
 	u32 data_size, payload_size;
+	struct pib_packet_lrh *lrh;
 	enum ib_wc_status status;
 	unsigned long flags;
+
+	lrh = (struct pib_packet_lrh*)dev->thread.buffer;
 
 	pmtu = (128U << qp->ib_qp_attr.path_mtu);
 
@@ -1340,7 +1338,7 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 	
 	payload_size = (data_size + 3) & ~3;
 
-	((struct pib_packet_lrh*)dev->thread.buffer)->PktLen += payload_size / 4;
+	pib_packet_lrh_set_pktlen(lrh, pib_packet_lrh_get_pktlen(lrh) + payload_size / 4);
 
 	pd = to_ppd(qp->ib_qp.pd);
 
@@ -1381,42 +1379,35 @@ pack_acknowledge_packet(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 
 	message = (struct pib_packet_rc_acknowledge*)dev->thread.buffer;
 
-	message->lrh.VL       = 0;
-	message->lrh.LVer     = 0;
-	message->lrh.SL       = qp->ib_qp_attr.ah_attr.sl;
-	message->lrh.LNH      = 1; /* Transport: IBA & Next Header: BTH */
-	message->lrh.DLID     = qp->ib_qp_attr.ah_attr.dlid;
-	message->lrh.SLID     = dev->ports[port_num - 1].ib_port_attr.lid;
+	memset(message, 0, sizeof(*message));
 
-	message->bth.OpCode   = OpCode;
-	message->bth.SE       = 0;
-	message->bth.M        = 0;
-	message->bth.TVer     = 0;
-	message->bth.P_Key    = qp->ib_qp_attr.pkey_index;
-	message->bth.DestQP   = qp->ib_qp_attr.dest_qp_num;
-	message->bth.A        = 0;
-	message->bth.PadCnt   = 0; 
-	message->bth.PSN      = psn;
+	message->lrh.sl_rsv_lnh = (qp->ib_qp_attr.ah_attr.sl << 4) | 1; /* Transport: IBA & Next Header: BTH */
+	message->lrh.dlid   = cpu_to_be16(qp->ib_qp_attr.ah_attr.dlid);
+	message->lrh.slid   = cpu_to_be16(dev->ports[port_num - 1].ib_port_attr.lid);
+
+	message->bth.OpCode = OpCode;
+	message->bth.pkey   = cpu_to_be16(qp->ib_qp_attr.pkey_index);
+	message->bth.destQP = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
+	message->bth.psn    = cpu_to_be32(psn & PIB_IB_PSN_MASK); /* A-bit is 0 */ 
 
 	size = sizeof(struct pib_packet_lrh) + sizeof(struct pib_packet_bth); 
 
 	if (with_aeth) {
-		message->aeth.MSN      = 0; /* @todo */
-		message->aeth.Syndrome = syndrome;
-		
+		message->aeth.syndrome_msn = cpu_to_be32(syndrome << 24);
+
 		size += sizeof(struct pib_packet_aeth);
 	} 
 
 	if (with_atomiceth) {
 		struct pib_packet_atomicacketh *atomicacketh;
 		atomicacketh = (struct pib_packet_atomicacketh*)(dev->thread.buffer + sizeof(struct pib_packet_rc_acknowledge));
-		atomicacketh->OrigRemDt_hi = res >> 32;
-		atomicacketh->OrigRemDt_lo = res;
+		atomicacketh->orig_rem_dt = cpu_to_be64(res);
 
 		size += sizeof(struct pib_packet_atomicacketh);
 	}
 
-	message->lrh.PktLen = size / 4;
+	pib_packet_lrh_set_pktlen(&message->lrh, size / 4);
+	pib_packet_bth_set_padcnt(&message->bth, 0);
 
 	return size;
 }
@@ -1430,13 +1421,13 @@ static int
 receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth)
 {
 	int ret;
-	u32 psn;
+	u32 psn, syndrome;
 	unsigned long rnr_nak_timeout = 0;
 	struct pib_packet_aeth *aeth;
 	struct pib_ib_send_wqe *send_wqe, *next_send_wqe;
 
 	/* response's PSN */
-	psn = bth->PSN;
+	psn = be32_to_cpu(bth->psn) & PIB_IB_PSN_MASK;
 
 	if (bth->OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE)
 		/* RDMA READ response Middle packets have no AETH. */
@@ -1450,19 +1441,21 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 	buffer    += sizeof(struct pib_packet_aeth);
 	size      -= sizeof(struct pib_packet_aeth);
 
-	switch (aeth->Syndrome >> 5) {
+	syndrome =  be32_to_cpu(aeth->syndrome_msn) >> 24;
+
+	switch (syndrome >> 5) {
 	case 0:
 		/* ACK */
 		break;
 
 	case 1:
 		/* RNR NAK */
-		rnr_nak_timeout = pib_get_rnr_nak_time(aeth->Syndrome & 0x1F);
+		rnr_nak_timeout = pib_get_rnr_nak_time(syndrome & 0x1F);
 		goto retry_send;
 
 	case 3:
 		/* NAK */
-		switch (aeth->Syndrome) {
+		switch (syndrome) {
 
 		case PIB_IB_NAK_CODE_PSN_SEQ_ERR:
 			/* PSN Sequence Error */
@@ -1841,7 +1834,7 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 	buffer       += sizeof(struct pib_packet_atomicacketh);
 	size         -= sizeof(struct pib_packet_atomicacketh);
 
-	res = ((u64)atomicacketh->OrigRemDt_hi << 32) | atomicacketh->OrigRemDt_lo;
+	res = be64_to_cpu(atomicacketh->orig_rem_dt);
 
 	send_wqe = match_send_wqe(qp, psn, &first_send_wqe, &nr_swqe_p);
 

@@ -537,6 +537,7 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	void *buffer;
 	struct pib_packet_lrh *lrh;
 	struct pib_packet_bth *bth;
+	u32 dest_qpn;
 	struct pib_ib_qp *qp;
 	const u8 port_num = port_index + 1;
 
@@ -562,14 +563,14 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	lrh = (struct pib_packet_lrh*)buffer;
 
 	/* check packet length */
-	if (lrh->PktLen * 4 != ret)
+	if (pib_packet_lrh_get_pktlen(lrh) * 4 != ret)
 		goto silently_drop;
 
 	buffer += sizeof(*lrh);
 	ret    -= sizeof(*lrh);
 
 	/* 0x2: Transport: IBA, Next Header: BTH */
-	if (lrh->LNH  != 1)
+	if ((lrh->sl_rsv_lnh & 0x3) != 1)
 		goto silently_drop;
 
 	/* Analyze Base Transport Header */
@@ -582,19 +583,21 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	ret    -= sizeof(*bth);
 
 	/* Payload */
-	ret -= bth->PadCnt;
+	ret -= pib_packet_bth_get_padcnt(bth); /* Pad Count */
 	if (ret < 0)
 		goto silently_drop; /* @todo ERROR */
 
-	if (lrh->LVer != 0)
+	if ((lrh->vl_lver & 0xF) != 0) /* Link Version */
 		goto silently_drop;
+
+	dest_qpn = be32_to_cpu(bth->destQP) & PIB_IB_QPN_MASK;
 
 	down_read(&dev->rwsem);
 
-	if ((bth->DestQP == PIB_IB_QP0) || (bth->DestQP == PIB_IB_QP1))
-		qp = dev->ports[port_index].qp_info[bth->DestQP];
+	if ((dest_qpn == PIB_IB_QP0) || (dest_qpn == PIB_IB_QP1))
+		qp = dev->ports[port_index].qp_info[dest_qpn];
 	else
-		qp = pib_util_find_qp(dev, bth->DestQP);
+		qp = pib_util_find_qp(dev, dest_qpn);
 
 	if (qp == NULL) {
 		up_read(&dev->rwsem);
@@ -602,9 +605,9 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	}
 
 	/* LRH: check port LID and DLID of incoming packet */
-	if (((bth->DestQP == PIB_IB_QP0) && (lrh->DLID == 0xFFFF))) /* @todo Permissive LID */
+	if (((dest_qpn == PIB_IB_QP0) && (lrh->dlid == IB_LID_PERMISSIVE)))
 		;
-	else if (lrh->DLID != dev->ports[port_index].ib_port_attr.lid) {
+	else if (be16_to_cpu(lrh->dlid) != dev->ports[port_index].ib_port_attr.lid) {
 		up_read(&dev->rwsem);
 		goto silently_drop;
 	}
