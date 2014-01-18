@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -31,15 +31,15 @@
  *
  *  Lock: qp
  */
-int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
+int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 {
 	int ret;
 	int push_wc;
-	struct pib_ib_pd *pd;
+	struct pib_pd *pd;
 	void *buffer;
 	u8 port_num;
-	struct pib_ib_ah *ah;
-	struct sockaddr *sockaddr;
+	struct pib_ah *ah;
+	u16 dlid;
 	struct pib_packet_ud_request *ud_packet;
 	enum ib_wr_opcode opcode;
 	enum ib_wc_status status = IB_WC_SUCCESS;
@@ -89,12 +89,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 			goto completion_error;
 		}
 
-	sockaddr = pib_get_sockaddr_from_lid(dev, port_num, qp, ah->ib_ah_attr.dlid);
-
-	if (!sockaddr) {
-		pr_err("pib: Not found the destination address in ld_table (ah.dlid=%u)", ah->ib_ah_attr.dlid);
-		return 0;
-	}
+	dlid = ah->ib_ah_attr.dlid;
 
 	push_wc  = (qp->ib_qp_init_attr.sq_sig_type == IB_SIGNAL_ALL_WR)
 		|| (send_wqe->send_flags & IB_SEND_SIGNALED);
@@ -116,7 +111,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 
 	ud_packet->bth.pkey   = cpu_to_be16(send_wqe->wr.ud.pkey_index); /* @todo from QP for UD/RC QP */
 	ud_packet->bth.destQP = cpu_to_be32(send_wqe->wr.ud.remote_qpn);
-	ud_packet->bth.psn    = cpu_to_be32(qp->ib_qp_attr.sq_psn & PIB_IB_PSN_MASK); /* A-bit is 0 */
+	ud_packet->bth.psn    = cpu_to_be32(qp->ib_qp_attr.sq_psn & PIB_PSN_MASK); /* A-bit is 0 */
 
 	/*
 	 *  An attempt to send a Q_Key with the most siginificant bit set results
@@ -167,7 +162,7 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	pib_packet_lrh_set_pktlen(&ud_packet->lrh, fix_packet_length / 4); 
 	pib_packet_bth_set_padcnt(&ud_packet->bth, fix_packet_length - packet_length);
 
-	if (send_wqe->wr.ud.remote_qpn == PIB_IB_QP0) {
+	if (send_wqe->wr.ud.remote_qpn == PIB_QP0) {
 		struct pib_packet_smp *packet;
 		
 		packet = (struct pib_packet_smp *)buffer;
@@ -180,9 +175,10 @@ int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 		}
 	}
 
-	dev->thread.sockaddr	= sockaddr;
-	dev->thread.msg_size    = fix_packet_length;
-	dev->thread.port_num    = port_num;
+	dev->thread.port_num	= port_num;
+	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.dlid	= dlid;
+	dev->thread.msg_size	= fix_packet_length;
 	dev->thread.ready_to_send = 1;
 
 	qp->ib_qp_attr.sq_psn++;
@@ -224,10 +220,10 @@ completion_error:
 }
 
 
-void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth)
+void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
 {
-	struct pib_ib_pd *pd;
-	struct pib_ib_recv_wqe *recv_wqe = NULL;
+	struct pib_pd *pd;
+	struct pib_recv_wqe *recv_wqe = NULL;
 	struct pib_packet_deth *deth;
 	u32 qkey;
 	enum ib_wc_status status = IB_WC_SUCCESS;
@@ -237,7 +233,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 	if (!pib_is_recv_ok(qp->state))
 		goto silently_drop;
 
-	switch (bth->OpCode) {
+	switch (base_hdr->bth.OpCode) {
 
 	case IB_OPCODE_UD_SEND_ONLY:
 	case IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE:
@@ -248,7 +244,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 	}
 
 	/* UD don't set acknowledge request bit */
-	if (be32_to_cpu(bth->psn) & 0x80000000U) /* A-bit */
+	if (be32_to_cpu(base_hdr->bth.psn) & 0x80000000U) /* A-bit */
 		goto silently_drop;
 
 	/* Analyze Datagram Extended Transport Header */
@@ -283,7 +279,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 	}
 
 	/* Analyze Immediate Extended Transport Header */
-	if (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) {
+	if (base_hdr->bth.OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) {
 		if (size < 4)
 			goto silently_drop;
 
@@ -292,9 +288,6 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 		buffer += 4;
 		size   -= 4;
 	}
-
-	if (!pib_is_recv_ok(qp->state))
-		goto silently_drop;
 
 	if (qp->ib_qp_init_attr.srq) {
 		recv_wqe = pib_util_get_srq(to_psrq(qp->ib_qp_init_attr.srq));
@@ -306,7 +299,7 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 		if (list_empty(&qp->responder.recv_wqe_head))
 			goto silently_drop;
 
-		recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_ib_recv_wqe, list);
+		recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_recv_wqe, list);
 		list_del_init(&recv_wqe->list);
 		qp->responder.nr_recv_wqe--;
 	}
@@ -334,9 +327,9 @@ void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct 
 			.byte_len    = size + 40,
 			.qp          = &qp->ib_qp,
 			.ex.imm_data = imm_data,
-			.src_qp      = be32_to_cpu(deth->srcQP) & PIB_IB_QPN_MASK,
-			.slid        = be16_to_cpu(lrh->slid),
-			.wc_flags    = (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) ? IB_WC_WITH_IMM : 0,
+			.src_qp      = be32_to_cpu(deth->srcQP) & PIB_QPN_MASK,
+			.slid        = be16_to_cpu(base_hdr->lrh.slid),
+			.wc_flags    = (base_hdr->bth.OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) ? IB_WC_WITH_IMM : 0,
 		};
 
 		int ret;

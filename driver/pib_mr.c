@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -11,18 +11,18 @@
 #include "pib.h"
 
 
-static enum ib_wc_status copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only);
-static int mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction);
+static enum ib_wc_status copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only);
+static int mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction);
 
 
-static int reg_mr(struct pib_ib_pd *pd, struct pib_ib_mr *mr)
+static int reg_mr(struct pib_pd *pd, struct pib_mr *mr)
 {
 	int i;
 	unsigned long flags;
 
 	/* find an empty slot in mr_table[] */
 	spin_lock_irqsave(&pd->lock, flags);
-	for (i=0 ; i<PIB_IB_MAX_MR_PER_PD ; i++)
+	for (i=0 ; i<PIB_MAX_MR_PER_PD ; i++)
 		if (pd->mr_table[i] == NULL)
 			goto found;
 	spin_unlock_irqrestore(&pd->lock, flags);
@@ -32,14 +32,14 @@ static int reg_mr(struct pib_ib_pd *pd, struct pib_ib_mr *mr)
 found:
 	pd->mr_table[i] = mr;
 
-	mr->lkey_prefix = pib_random() * PIB_IB_MAX_MR_PER_PD;
-	mr->rkey_prefix = pib_random() * PIB_IB_MAX_MR_PER_PD;
+	mr->lkey_prefix = pib_random() * PIB_MAX_MR_PER_PD;
+	mr->rkey_prefix = pib_random() * PIB_MAX_MR_PER_PD;
 
 	mr->ib_mr.lkey = (u32)i | mr->lkey_prefix;
 	mr->ib_mr.rkey = (u32)i | mr->rkey_prefix;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY 
-	if (mr->ib_mr.lkey == PIB_IB_IMM_DATA_LKEY)
+	if (mr->ib_mr.lkey == PIB_IMM_DATA_LKEY)
 		goto found;
 #endif
 
@@ -52,23 +52,23 @@ found:
 
 
 struct ib_mr *
-pib_ib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
+pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 {
-	struct pib_ib_pd *pd;
-	struct pib_ib_mr *mr;
+	struct pib_pd *pd;
+	struct pib_mr *mr;
 
 	if (!ibpd)
 		return ERR_PTR(-EINVAL);
 
 	pd = to_ppd(ibpd);
 
-	mr = kmem_cache_zalloc(pib_ib_mr_cachep, GFP_KERNEL);
+	mr = kmem_cache_zalloc(pib_mr_cachep, GFP_KERNEL);
 	if (!mr) {
 		return ERR_PTR(-ENOMEM);
 	}
 
 	if (reg_mr(pd, mr)) {
-		kmem_cache_free(pib_ib_mr_cachep, mr);
+		kmem_cache_free(pib_mr_cachep, mr);
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -83,12 +83,12 @@ pib_ib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 
 
 struct ib_mr *
-pib_ib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
-		   u64 virt_addr, int access_flags,
-		   struct ib_udata *udata)
+pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
+		u64 virt_addr, int access_flags,
+		struct ib_udata *udata)
 {
-	struct pib_ib_pd *pd;
-	struct pib_ib_mr *mr;
+	struct pib_pd *pd;
+	struct pib_mr *mr;
 	struct ib_umem *umem;
 	int ret;
 
@@ -102,7 +102,7 @@ pib_ib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	if (IS_ERR(umem))
 		return (struct ib_mr *)umem;
 
-	mr = kmem_cache_zalloc(pib_ib_mr_cachep, GFP_KERNEL);
+	mr = kmem_cache_zalloc(pib_mr_cachep, GFP_KERNEL);
 	if (!mr) {
 		ret = -ENOMEM;
 		goto err_alloc_mr;
@@ -122,7 +122,7 @@ pib_ib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	return &mr->ib_mr;
 
 err_alloc_mr:
-	kmem_cache_free(pib_ib_mr_cachep, mr);
+	kmem_cache_free(pib_mr_cachep, mr);
 
 	ib_umem_release(umem);
 
@@ -130,10 +130,10 @@ err_alloc_mr:
 }
 
 
-int pib_ib_dereg_mr(struct ib_mr *ibmr)
+int pib_dereg_mr(struct ib_mr *ibmr)
 {
-	struct pib_ib_mr *mr;
-	struct pib_ib_pd *pd;
+	struct pib_mr *mr;
+	struct pib_pd *pd;
 	unsigned long flags;
 
 	if (!ibmr)
@@ -143,21 +143,21 @@ int pib_ib_dereg_mr(struct ib_mr *ibmr)
 	pd  = to_ppd(ibmr->pd);
 
 	spin_lock_irqsave(&pd->lock, flags);
-	pd->mr_table[mr->lkey_prefix & PIB_IB_MR_INDEX_MASK] = NULL;
+	pd->mr_table[mr->lkey_prefix & PIB_MR_INDEX_MASK] = NULL;
 	pd->nr_mr--;
 	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
 
-	kmem_cache_free(pib_ib_mr_cachep, mr);
+	kmem_cache_free(pib_mr_cachep, mr);
 
 	return 0;
 }
 
 
 struct ib_mr *
-pib_ib_alloc_fast_reg_mr(struct ib_pd *ibpd,
+pib_alloc_fast_reg_mr(struct ib_pd *ibpd,
 			 int max_page_list_len)
 {
 	pr_err("pib: Not supported for alloc_fast_reg_mr callback\n");
@@ -166,7 +166,7 @@ pib_ib_alloc_fast_reg_mr(struct ib_pd *ibpd,
 
 
 struct ib_fast_reg_page_list *
-pib_ib_alloc_fast_reg_page_list(struct ib_device *ibdev,
+pib_alloc_fast_reg_page_list(struct ib_device *ibdev,
 				int page_list_len)
 {
 	pr_err("pib: Not supported for alloc_fast_reg_page_list\n");
@@ -174,30 +174,30 @@ pib_ib_alloc_fast_reg_page_list(struct ib_device *ibdev,
 }
 
 
-void pib_ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list)
+void pib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list)
 {
 }
 
 
 enum ib_wc_status
-pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction)
+pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction)
 {
 	int i;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < size)
+	if (PIB_MAX_PAYLOAD_LEN < size)
 		return IB_WC_LOC_LEN_ERR;
 
 	for (i=0 ; i<num_sge ; i++) {
 		struct ib_sge sge = sge_array[i];
-		struct pib_ib_mr *mr;
+		struct pib_mr *mr;
 		u64 range, mr_base, offset_tmp;
 
-		mr = pd->mr_table[sge.lkey & PIB_IB_MR_INDEX_MASK];
+		mr = pd->mr_table[sge.lkey & PIB_MR_INDEX_MASK];
 
 		if (!mr)
 			return IB_WC_LOC_PROT_ERR;
 
-		if ((sge.lkey & ~PIB_IB_MR_INDEX_MASK) != mr->lkey_prefix)
+		if ((sge.lkey & ~PIB_MR_INDEX_MASK) != mr->lkey_prefix)
 			return IB_WC_LOC_PROT_ERR;
 
 		if ((mr->access_flags & access_flags) != access_flags)
@@ -232,33 +232,33 @@ pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sg
 
 
 enum ib_wc_status
-pib_util_mr_validate_rkey(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 size, int access_flags)
+pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flags)
 {
 	return copy_data_with_rkey(pd, rkey, NULL, address, size, access_flags, PIB_MR_CHECK, 1);
 }
 
 
 enum ib_wc_status
-pib_util_mr_copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction)
+pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction)
 {
 	return copy_data_with_rkey(pd, rkey, buffer, address, size, access_flags, direction, 0);
 }
 
 
 static enum ib_wc_status
-copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only)
+copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only)
 {
-	struct pib_ib_mr *mr;
+	struct pib_mr *mr;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < size)
+	if (PIB_MAX_PAYLOAD_LEN < size)
 		return IB_WC_LOC_LEN_ERR;
 
-	mr = pd->mr_table[rkey & PIB_IB_MR_INDEX_MASK];
+	mr = pd->mr_table[rkey & PIB_MR_INDEX_MASK];
 
 	if (!mr)
 		return IB_WC_LOC_PROT_ERR;
 
-	if ((rkey & ~PIB_IB_MR_INDEX_MASK) != mr->rkey_prefix)
+	if ((rkey & ~PIB_MR_INDEX_MASK) != mr->rkey_prefix)
 		return IB_WC_LOC_PROT_ERR;
 
 	if ((mr->access_flags & access_flags) != access_flags)
@@ -283,16 +283,16 @@ copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u
 
 
 enum ib_wc_status
-pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction)
+pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction)
 {
-	struct pib_ib_mr *mr;
+	struct pib_mr *mr;
 
-	mr = pd->mr_table[rkey & PIB_IB_MR_INDEX_MASK];
+	mr = pd->mr_table[rkey & PIB_MR_INDEX_MASK];
 
 	if (!mr)
 		return IB_WC_LOC_PROT_ERR;
 
-	if ((rkey & ~PIB_IB_MR_INDEX_MASK) != mr->rkey_prefix)
+	if ((rkey & ~PIB_MR_INDEX_MASK) != mr->rkey_prefix)
 		return IB_WC_LOC_PROT_ERR;
 
 	if ((mr->access_flags & IB_ACCESS_REMOTE_ATOMIC) != IB_ACCESS_REMOTE_ATOMIC)
@@ -316,7 +316,7 @@ pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 co
 
 
 static int
-mr_copy_data(struct pib_ib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction)
+mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction)
 {
 	u64 addr, res;
 	struct ib_umem *umem;

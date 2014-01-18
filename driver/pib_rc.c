@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -29,46 +29,46 @@
 /*
  *  Requester: Generating Request Packets
  */
-static enum ib_wc_status process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, void *buffer, int with_reth, int with_imm);
-static enum ib_wc_status process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, void *buffer);
-static enum ib_wc_status process_Atomic_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, void *buffer);
+static enum ib_wc_status process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, void *buffer, int with_reth, int with_imm);
+static enum ib_wc_status process_RDMA_READ_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, void *buffer);
+static enum ib_wc_status process_Atomic_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, void *buffer);
 
 /*
  *  Responder: Receiving Inbound Request Packets
  */
-static void receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth);
-static int receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh);
-static int receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh);
-static int receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct pib_ib_qp *qp, void *buffer, int siz, int new_request, int slot_index);
-static int receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_ib_qp *qp,  void *buffer, int size);
-static void push_acknowledge(struct pib_ib_qp *qp, u32 psn, enum pib_ib_syndrome syndrome);
-static void push_rdma_read_acknowledge(struct pib_ib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size, int retried);
-static void push_atomic_acknowledge(struct pib_ib_qp *qp, u32 psn, u64 res);
+static void receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+static int receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh);
+static int receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh);
+static int receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_qp *qp, void *buffer, int siz, int new_request, int slot_index);
+static int receive_Atomic_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp,  void *buffer, int size);
+static void push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome);
+static void push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size, int retried);
+static void push_atomic_acknowledge(struct pib_qp *qp, u32 psn, u64 res);
 
 /*
  * Responder: Generating Acknowledge Packets
  */
-static void generate_Normal_or_Atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr);
-static int generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr);
-static int pack_acknowledge_packet(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_ib_syndrome syndrome, int with_atomiceth, u64 res);
+static void generate_Normal_or_Atomic_acknowledge(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u16 dlid, struct pib_ack *ack);
+static int generate_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u16 dlid, struct pib_ack *ack);
+static int pack_acknowledge_packet(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_syndrome syndrome, int with_atomiceth, u64 res);
 
 /*
  *  Requester: Receiving Responses
  */
-static int receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth);
-static int receive_ACK_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn);
-static int process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, u32 psn, int *nr_swqe_p);
-static void set_send_wqe_to_error(struct pib_ib_qp *qp, u32 psn, enum ib_wc_status status);
-static int receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn, void *buffer, int size);
-static int receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn, void *buffer, int size);
+static int receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+static int receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn);
+static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn, int *nr_swqe_p);
+static void set_send_wqe_to_error(struct pib_qp *qp, u32 psn, enum ib_wc_status status);
+static int receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
+static int receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
 
 /*
  *  Helper functions
  */
-static void insert_async_qp_error(struct pib_ib_dev *dev, struct pib_ib_qp *qp, enum ib_event_type event);
-static void abort_active_rwqe(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
-static struct pib_ib_send_wqe *match_send_wqe(struct pib_ib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_swqe_pp);
-static void issue_comm_est(struct pib_ib_qp *qp);
+static void insert_async_qp_error(struct pib_dev *dev, struct pib_qp *qp, enum ib_event_type event);
+static void abort_active_rwqe(struct pib_dev *dev, struct pib_qp *qp);
+static struct pib_send_wqe *match_send_wqe(struct pib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_swqe_pp);
+static void issue_comm_est(struct pib_qp *qp);
 
 
 /******************************************************************************/
@@ -79,9 +79,9 @@ static s32 get_psn_diff(u32 psn, u32 based_psn)
 }
 
 
-static enum pib_ib_syndrome get_resources_not_ready(struct pib_ib_qp *qp)
+static enum pib_syndrome get_resources_not_ready(struct pib_qp *qp)
 {
-	return PIB_IB_RNR_NAK_CODE | (qp->ib_qp_attr.min_rnr_timer & 0x1F);
+	return PIB_SYND_RNR_NAK_CODE | (qp->ib_qp_attr.min_rnr_timer & 0x1F);
 }
 
 
@@ -89,15 +89,14 @@ static enum pib_ib_syndrome get_resources_not_ready(struct pib_ib_qp *qp)
 /* Requester: Generating Request Packets                                      */
 /******************************************************************************/
 
-int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
+int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 {
 	int with_reth = 0;
 	int with_imm = 0;
-	struct pib_ib_pd *pd;
+	struct pib_pd *pd;
 	void *buffer;
 	u8 port_num;
 	struct ib_ah_attr ah_attr;
-	struct sockaddr *sockaddr;
 	struct pib_packet_rc_request *rc_packet;
 	u32 psn;
 	enum ib_wc_status status;
@@ -124,13 +123,6 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	port_num = qp->ib_qp_attr.port_num;
 	ah_attr  = qp->ib_qp_attr.ah_attr;
 
-	sockaddr = pib_get_sockaddr_from_lid(dev, port_num, qp, ah_attr.dlid);
-
-	if (!sockaddr) {
-		pr_err("pib: Not found the destination address in ld_table (ah.dlid=%u)", ah_attr.dlid);
-		return 0;
-	}
-
 	pd = to_ppd(qp->ib_qp.pd);
 
 	buffer = dev->thread.buffer;
@@ -148,7 +140,7 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 
 	rc_packet->bth.pkey   = cpu_to_be16(qp->ib_qp_attr.pkey_index);
 	rc_packet->bth.destQP = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
-	rc_packet->bth.psn    = cpu_to_be32(psn & PIB_IB_PSN_MASK); /* A-bit is 0 */
+	rc_packet->bth.psn    = cpu_to_be32(psn & PIB_PSN_MASK); /* A-bit is 0 */
 
 	switch (send_wqe->opcode) {
 
@@ -233,9 +225,10 @@ int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, stru
 	if (status != IB_WC_SUCCESS)
 		goto completion_error;
 
-	dev->thread.sockaddr	= sockaddr;
+	dev->thread.port_num	= port_num;
+	dev->thread.dlid	= ah_attr.dlid;
+	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
 	dev->thread.msg_size    = pib_packet_lrh_get_pktlen(&rc_packet->lrh) * 4;
-	dev->thread.port_num    = port_num;
 	dev->thread.ready_to_send = 1;
 
 	if (send_wqe->opcode != IB_WR_RDMA_READ) {
@@ -262,16 +255,16 @@ completion_error:
 
 
 static enum ib_wc_status
-process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, void *buffer, int with_reth, int with_imm)
+process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, void *buffer, int with_reth, int with_imm)
 {
 	struct pib_packet_rc_request *rc_packet;
-	struct pib_ib_pd *pd;
+	struct pib_pd *pd;
 	u64 mr_offset;
 	u32 payload_size, packet_length, fix_packet_length;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	unsigned long flags;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < send_wqe->total_length)
+	if (PIB_MAX_PAYLOAD_LEN < send_wqe->total_length)
 		return IB_WC_LOC_LEN_ERR;
 
 	rc_packet = (struct pib_packet_rc_request*)buffer;
@@ -333,7 +326,7 @@ process_SEND_or_RDMA_WRITE_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp,
 
 
 static enum ib_wc_status
-process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, void *buffer)
+process_RDMA_READ_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, void *buffer)
 {
 	struct pib_packet_rc_request *rc_packet;
 	struct pib_packet_reth *reth;
@@ -341,7 +334,7 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 	u64 remote_addr;
 	u32 dmalen, offset;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < send_wqe->total_length)
+	if (PIB_MAX_PAYLOAD_LEN < send_wqe->total_length)
 		return IB_WC_LOC_LEN_ERR;
 
 	remote_addr = send_wqe->wr.rdma.remote_addr;
@@ -394,7 +387,7 @@ process_RDMA_READ_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct p
 
 
 static enum ib_wc_status
-process_Atomic_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, void *buffer)
+process_Atomic_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, void *buffer)
 {
 	struct pib_packet_rc_request *rc_packet;
 	struct pib_packet_atomiceth *atomiceth;
@@ -427,7 +420,7 @@ process_Atomic_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_
 /* Receiving Any Packets As Responder or Requester                            */
 /******************************************************************************/
 
-void pib_receive_rc_qp_incoming_message(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth)
+void pib_receive_rc_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
 {
 	if (!pib_is_recv_ok(qp->state))
 		/* silently drop */
@@ -438,13 +431,12 @@ void pib_receive_rc_qp_incoming_message(struct pib_ib_dev *dev, u8 port_num, str
 		/* silently drop */
 		return;
 
-	if (pib_opcode_is_acknowledge(bth->OpCode)) {
+	if (pib_opcode_is_acknowledge(base_hdr->bth.OpCode))
 		/* Acknowledge to requester */
-		receive_response(dev, port_num, qp, buffer, size, lrh, bth);
-	} else {
+		receive_response(dev, port_num, qp, base_hdr, buffer, size);
+	else
 		/* Request to responder */
-		receive_request(dev, port_num, qp, buffer, size, lrh, bth);
-	}
+		receive_request(dev, port_num, qp, base_hdr, buffer, size);
 }
 
 
@@ -453,15 +445,15 @@ void pib_receive_rc_qp_incoming_message(struct pib_ib_dev *dev, u8 port_num, str
 /******************************************************************************/
 
 static void
-receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth)
+receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
 {
 	int ret;
 	s32 psn_diff;
 	int OpCode;
 	u32 psn;
 
-	OpCode = bth->OpCode;
-	psn    = be32_to_cpu(bth->psn) & PIB_IB_PSN_MASK;
+	OpCode = base_hdr->bth.OpCode;
+	psn    = be32_to_cpu(base_hdr->bth.psn) & PIB_PSN_MASK;
 
 	issue_comm_est(qp);
 
@@ -469,21 +461,21 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 
 	if (0 < psn_diff) {
 		/* Out of Sequence Request Packet */
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_PSN_SEQ_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_PSN_SEQ_ERR);
 		/* @todo NAK の時の PSN はこれでいいのか？ */
 		return;
 	}
 
 	if (psn_diff < 0) {
 		int i;
-		struct pib_ib_rd_atom_slot slot;
+		struct pib_rd_atom_slot slot;
 
 		switch (OpCode) {
 		case IB_OPCODE_RC_RDMA_READ_REQUEST:
 		case IB_OPCODE_RC_COMPARE_SWAP:
 		case IB_OPCODE_RC_FETCH_ADD:
 			for (i=1 ; i <= qp->ib_qp_attr.max_dest_rd_atomic ; i++) {
-				int slot_index = ((unsigned int)(qp->responder.slot_index - i)) % PIB_IB_MAX_RD_ATOM;
+				int slot_index = ((unsigned int)(qp->responder.slot_index - i)) % PIB_MAX_RD_ATOM;
 
 				slot = qp->responder.slots[slot_index];
 
@@ -502,7 +494,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 			}
 			
 			/* Too many RDMA READ or ATOMIC Requests */
-			push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+			push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 			insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 			return;
 
@@ -511,7 +503,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 		}
 
 		/* Resend response for duplicated packet */
-		push_acknowledge(qp, psn, PIB_IB_ACK_CODE);
+		push_acknowledge(qp, psn, PIB_SYND_ACK_CODE);
 		return;
 	}
 
@@ -519,7 +511,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 		/* Out of sequence OpCode */
 
 		/* Invalid Request Local Work Queue Error */
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 		insert_async_qp_error(dev, qp, IB_EVENT_QP_REQ_ERR);
 		return;
 	}
@@ -532,7 +524,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 	case IB_OPCODE_RC_SEND_ONLY:
 	case IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE:
 	case IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE:
-		ret = receive_SEND_request(dev, port_num, psn, OpCode, qp, buffer, size, lrh);
+		ret = receive_SEND_request(dev, port_num, psn, OpCode, qp, buffer, size, &base_hdr->lrh);
 		break;
 
 	case IB_OPCODE_RC_RDMA_WRITE_FIRST:
@@ -541,7 +533,7 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 	case IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE:
 	case IB_OPCODE_RC_RDMA_WRITE_ONLY:
 	case IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE:
-		ret = receive_RDMA_WRITE_request(dev, port_num, psn, OpCode, qp, buffer, size, lrh);
+		ret = receive_RDMA_WRITE_request(dev, port_num, psn, OpCode, qp, buffer, size, &base_hdr->lrh);
 		break;
 
 	case IB_OPCODE_RC_RDMA_READ_REQUEST:
@@ -568,17 +560,17 @@ receive_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void 
 
 
 static int
-receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh)
+receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh)
 {
 	int init = 0;
 	int finit = 0;
 	int with_imm = 0;
 	int pmtu, min, max;
 	__be32 imm_data = 0;
-	struct pib_ib_recv_wqe *recv_wqe = NULL;
-	struct pib_ib_pd *pd;
+	struct pib_recv_wqe *recv_wqe = NULL;
+	struct pib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
-	enum pib_ib_syndrome syndrome;
+	enum pib_syndrome syndrome;
 	unsigned long flags;
 
 	pmtu = (128U << qp->ib_qp_attr.path_mtu);
@@ -651,7 +643,7 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 	if ((size < min) || (max < size))
 		goto nak_invalid_request;
 
-	recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_ib_recv_wqe, list);
+	recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_recv_wqe, list);
 
 	/* @todo offset 超過もチェックを */
 
@@ -669,11 +661,11 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 		break;
 
 	case IB_WC_LOC_LEN_ERR:
-		syndrome = PIB_IB_NAK_CODE_INV_REQ_ERR;
+		syndrome = PIB_SYND_NAK_CODE_INV_REQ_ERR;
 		goto completion_error;
 
 	default:
-		syndrome = PIB_IB_NAK_CODE_REM_OP_ERR;
+		syndrome = PIB_SYND_NAK_CODE_REM_OP_ERR;
 		goto completion_error;
 	}
 
@@ -704,7 +696,7 @@ receive_SEND_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, s
 		pib_util_free_recv_wqe(qp, recv_wqe);
 	}
 
-	push_acknowledge(qp, psn, PIB_IB_ACK_CODE);
+	push_acknowledge(qp, psn, PIB_SYND_ACK_CODE);
 
 	return 1; /* 1 packet */
 
@@ -714,7 +706,7 @@ resources_not_ready:
 	return -1;
 
 nak_invalid_request:
-	push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+	push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 
 	/* Invalid Request Local Work Queue Error */
 	insert_async_qp_error(dev, qp, IB_EVENT_QP_REQ_ERR);
@@ -741,7 +733,7 @@ completion_error:
 
 
 static int
-receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh)
+receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh)
 {
 	int init = 0;
 	int finit = 0;
@@ -749,8 +741,8 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 	int with_imm = 0;
 	int pmtu, min, max;
 	__be32 imm_data = 0;
-	struct pib_ib_recv_wqe *recv_wqe = NULL;
-	struct pib_ib_pd *pd;
+	struct pib_recv_wqe *recv_wqe = NULL;
+	struct pib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	unsigned long flags;
 
@@ -827,7 +819,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 		if (list_empty(&qp->responder.recv_wqe_head))
 			goto resources_not_ready;
 
-		recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_ib_recv_wqe, list);
+		recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_recv_wqe, list);
 
 		if (size < 4)
 			goto nak_invalid_request;
@@ -847,7 +839,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 	if (finit && (qp->responder.rdma_write.dmalen != qp->responder.offset + size))
 		goto nak_invalid_request;
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < qp->responder.rdma_write.dmalen) {
+	if (PIB_MAX_PAYLOAD_LEN < qp->responder.rdma_write.dmalen) {
 		status = IB_WC_LOC_LEN_ERR;
 		goto skip;
 	}
@@ -876,7 +868,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 	 */
 	if (status != IB_WC_SUCCESS) {
 	skip:		
-		if (with_imm && !pib_ib_get_behavior(dev, PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR))
+		if (with_imm && !pib_get_behavior(dev, PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR))
 			goto completion_error;
 		else
 			goto asynchronous_error;
@@ -908,7 +900,7 @@ receive_RDMA_WRITE_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpC
 		pib_util_free_recv_wqe(qp, recv_wqe);
 	}
 
-	push_acknowledge(qp, psn, PIB_IB_ACK_CODE);
+	push_acknowledge(qp, psn, PIB_SYND_ACK_CODE);
 
 	return 1; /* 1 packet */
 
@@ -919,7 +911,7 @@ resources_not_ready:
 
 nak_invalid_request:
 	/* Invalid Request Local Work Queue Error */
-	push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+	push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 	insert_async_qp_error(dev, qp, IB_EVENT_QP_REQ_ERR);
 
 	return -1;
@@ -944,11 +936,11 @@ completion_error:
 common_error:
 	switch (status) {
 	case IB_WC_LOC_LEN_ERR:
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 		break;
 
 	default:
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_REM_ACCESS_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_REM_ACCESS_ERR);
 		break;
 	}
 
@@ -960,19 +952,19 @@ common_error:
 
 
 static int
-receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_ib_qp *qp, void *buffer, int size)
+receive_Atomic_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size)
 {
 	struct pib_packet_atomiceth *atomiceth;
-	struct pib_ib_pd *pd;
+	struct pib_pd *pd;
 	enum ib_wc_status status;
-	struct pib_ib_rd_atom_slot slot;
+	struct pib_rd_atom_slot slot;
 	u64 vaddr;
 	u64 result;
 	unsigned long flags;
 
 	if (size != sizeof(struct pib_packet_atomiceth)) {
 		/* Invalid Request Local Work Queue Error */
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 		insert_async_qp_error(dev, qp, IB_EVENT_QP_REQ_ERR);
 		return -1;
 	}
@@ -983,13 +975,13 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 
 	if ((vaddr % 8) != 0) {
 		/* Local Access Violation Work Queue Error */
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 		insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 		return -1;
 	}
 
 	if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic) {
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 		insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 		return -1;
 	}
@@ -1006,7 +998,7 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 
 	if (status != IB_WC_SUCCESS) {
 		/* Local Access Violation Work Queue Error */
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_REM_ACCESS_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_REM_ACCESS_ERR);
 		insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 		return -1;
 	}
@@ -1016,7 +1008,7 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 	slot.expected_psn    = qp->responder.psn + 1;
 	slot.data.atomic.res = result;
 
-	qp->responder.slots[(qp->responder.slot_index++) % PIB_IB_MAX_RD_ATOM] = slot;
+	qp->responder.slots[(qp->responder.slot_index++) % PIB_MAX_RD_ATOM] = slot;
 
 	push_atomic_acknowledge(qp, psn, result);
 
@@ -1025,7 +1017,7 @@ receive_Atomic_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, int OpCode,
 
 
 static int
-receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct pib_ib_qp *qp, void *buffer, int size, int new_request, int slot_index)
+receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_qp *qp, void *buffer, int size, int new_request, int slot_index)
 {
 	int ret;
 	struct pib_packet_reth *reth;
@@ -1033,8 +1025,8 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 	u32 rkey;
 	u32 dmalen;
 	u32 num_packets;
-	struct pib_ib_rd_atom_slot slot;
-	struct pib_ib_pd *pd;
+	struct pib_rd_atom_slot slot;
+	struct pib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	unsigned long flags;
 
@@ -1048,7 +1040,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 	dmalen      = be32_to_cpu(reth->dmalen);
 
 	/* Check */
-	if (PIB_IB_MAX_PAYLOAD_LEN < dmalen)
+	if (PIB_MAX_PAYLOAD_LEN < dmalen)
 		goto legth_error_or_too_many_rdma_read;
 
 	if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)
@@ -1062,7 +1054,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 
 	if (status != IB_WC_SUCCESS) {
 		/* Local Access Violation Work Queue Error */
-		push_acknowledge(qp, psn, PIB_IB_NAK_CODE_REM_ACCESS_ERR);
+		push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_REM_ACCESS_ERR);
 		insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 		return -1;
 	}
@@ -1071,12 +1063,12 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 
 	if (new_request) {
 		/* new RMDA READ Request */
-		struct pib_ib_rd_atom_slot overwrite_slot;
+		struct pib_rd_atom_slot overwrite_slot;
 
 		if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)
 			goto legth_error_or_too_many_rdma_read;
 
-		overwrite_slot = qp->responder.slots[((unsigned int)(qp->responder.slot_index - qp->ib_qp_attr.max_dest_rd_atomic)) % PIB_IB_MAX_RD_ATOM];
+		overwrite_slot = qp->responder.slots[((unsigned int)(qp->responder.slot_index - qp->ib_qp_attr.max_dest_rd_atomic)) % PIB_MAX_RD_ATOM];
 
 		slot.OpCode                  = IB_OPCODE_RC_RDMA_READ_REQUEST;
 		slot.psn                     = qp->responder.psn;
@@ -1085,7 +1077,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 		slot.data.rdma_read.rkey     = rkey;
 		slot.data.rdma_read.dmalen   = dmalen;
 
-		qp->responder.slots[(qp->responder.slot_index++) % PIB_IB_MAX_RD_ATOM] = slot;
+		qp->responder.slots[(qp->responder.slot_index++) % PIB_MAX_RD_ATOM] = slot;
 
 		push_rdma_read_acknowledge(qp, psn, slot.expected_psn, remote_addr, rkey, dmalen, 0);
 
@@ -1113,7 +1105,7 @@ receive_RDMA_READ_request(struct pib_ib_dev *dev, u8 port_num, u32 psn, struct p
 	return ret;
 
 nak_invalid_request:
-	push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+	push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 
 	/* Invalid Request Local Work Queue Error */
 	insert_async_qp_error(dev, qp, IB_EVENT_QP_REQ_ERR);
@@ -1121,7 +1113,7 @@ nak_invalid_request:
 	return -1;
 
 legth_error_or_too_many_rdma_read:
-	push_acknowledge(qp, psn, PIB_IB_NAK_CODE_INV_REQ_ERR);
+	push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 	insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 
 	return -1;
@@ -1129,15 +1121,15 @@ legth_error_or_too_many_rdma_read:
 
 
 static void
-push_acknowledge(struct pib_ib_qp *qp, u32 psn, enum pib_ib_syndrome syndrome)
+push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome)
 {
-	struct pib_ib_ack *ack;
+	struct pib_ack *ack;
 
-	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_ATOMIC);
+	ack = kmem_cache_zalloc(pib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
 		return;
 
-	ack->type		= PIB_IB_ACK_NORMAL;
+	ack->type		= PIB_ACK_NORMAL;
 	ack->psn		= psn;
 	ack->expected_psn	= psn + 1;
 
@@ -1146,24 +1138,24 @@ push_acknowledge(struct pib_ib_qp *qp, u32 psn, enum pib_ib_syndrome syndrome)
 
 
 static void
-push_rdma_read_acknowledge(struct pib_ib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size, int retried)
+push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size, int retried)
 {
-	struct pib_ib_ack *ack, *ack_next;
+	struct pib_ack *ack, *ack_next;
 
 	if (retried) {
 		/* @todo 現在の acknowledge を全部破棄する */
 		list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
 			list_del_init(&ack->list);
-			kmem_cache_free(pib_ib_ack_cachep, ack);
+			kmem_cache_free(pib_ack_cachep, ack);
 		}
 		qp->responder.nr_rd_atomic = 0;
 	}
 
-	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_ATOMIC);
+	ack = kmem_cache_zalloc(pib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
 		return;
 
-	ack->type		= PIB_IB_ACK_RMDA_READ;
+	ack->type		= PIB_ACK_RMDA_READ;
 	ack->psn		= psn;
 	ack->expected_psn	= expected_psn;
 
@@ -1178,15 +1170,15 @@ push_rdma_read_acknowledge(struct pib_ib_qp *qp, u32 psn, u32 expected_psn, u64 
 
 
 static void
-push_atomic_acknowledge(struct pib_ib_qp *qp, u32 psn, u64 res)
+push_atomic_acknowledge(struct pib_qp *qp, u32 psn, u64 res)
 {
-	struct pib_ib_ack *ack;
+	struct pib_ack *ack;
 
-	ack = kmem_cache_zalloc(pib_ib_ack_cachep, GFP_ATOMIC);
+	ack = kmem_cache_zalloc(pib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
 		return;
 
-	ack->type		= PIB_IB_ACK_ATOMIC;
+	ack->type		= PIB_ACK_ATOMIC;
 	ack->psn		= psn;
 	ack->expected_psn	= psn + 1;
 
@@ -1202,12 +1194,11 @@ push_atomic_acknowledge(struct pib_ib_qp *qp, u32 psn, u64 res)
 /* Responder: Generating Acknowledge Packets                                  */
 /******************************************************************************/
 
-int pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
+int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp)
 {
 	u8 port_num;
 	u16 dlid;
-	struct sockaddr *sockaddr;
-	struct pib_ib_ack *ack, *ack_next;
+	struct pib_ack *ack, *ack_next;
 
 	if (!pib_is_recv_ok(qp->state))
 		return 0;
@@ -1215,31 +1206,24 @@ int pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 	port_num = qp->ib_qp_attr.port_num;
 	dlid     = qp->ib_qp_attr.ah_attr.dlid;
 
-	sockaddr = pib_get_sockaddr_from_lid(dev, port_num, qp, dlid);
-
-	if (!sockaddr) {
-		pr_err("pib: Not found the destination address in ld_table (ah.dlid=%u)", dlid);
-		return -1; /* @todo */
-	}
-
 	if (list_empty(&qp->responder.ack_head))
 		return 0;
 
 	/* IBA Spec. Vol.1 9.7.5.1.2. Coalesced Acknowledge Messages */
-	ack = list_first_entry(&qp->responder.ack_head, struct pib_ib_ack, list);
+	ack = list_first_entry(&qp->responder.ack_head, struct pib_ack, list);
 
-	if (ack->type == PIB_IB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
-		struct pib_ib_ack ack_tmp = *ack;
+	if (ack->type == PIB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
+		struct pib_ack ack_tmp = *ack;
 
 		list_for_each_entry_safe(ack, ack_next, &qp->responder.ack_head, list) {
-			if (ack->type == PIB_IB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
+			if (ack->type == PIB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
 				list_del_init(&ack->list);
-				kmem_cache_free(pib_ib_ack_cachep, ack);
+				kmem_cache_free(pib_ack_cachep, ack);
 			} else
 				break;
 		}
 
-		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, &ack_tmp, sockaddr);
+		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, dlid, &ack_tmp);
 
 		return 1;
 	}
@@ -1248,17 +1232,17 @@ int pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 
 	switch (ack->type) {
 
-	case PIB_IB_ACK_ATOMIC:
-		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, ack, sockaddr);
+	case PIB_ACK_ATOMIC:
+		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, dlid, ack);
 		qp->responder.nr_rd_atomic--;
 		break;
 
-	case PIB_IB_ACK_NORMAL:
-		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, ack, sockaddr);
+	case PIB_ACK_NORMAL:
+		generate_Normal_or_Atomic_acknowledge(dev, port_num, qp, dlid, ack);
 		break;
 
-	case PIB_IB_ACK_RMDA_READ:
-		generate_RDMA_READ_response(dev, port_num, qp, ack, sockaddr);
+	case PIB_ACK_RMDA_READ:
+		generate_RDMA_READ_response(dev, port_num, qp, dlid, ack);
 
 		if (ack->data.rdma_read.offset < ack->data.rdma_read.size)
 			return 1;
@@ -1271,42 +1255,42 @@ int pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 	}
 
 	list_del_init(&ack->list);
-	kmem_cache_free(pib_ib_ack_cachep, ack);
+	kmem_cache_free(pib_ack_cachep, ack);
 
 	return 1;
 }
 
 
 static void
-generate_Normal_or_Atomic_acknowledge(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr)
+generate_Normal_or_Atomic_acknowledge(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u16 dlid, struct pib_ack *ack)
 {
 	int size;
 
-	if (ack->type == PIB_IB_ACK_NORMAL)
+	if (ack->type == PIB_ACK_NORMAL)
 		size = pack_acknowledge_packet(dev, port_num, qp,
 					       IB_OPCODE_RC_ACKNOWLEDGE, ack->psn,
 					       1, ack->syndrome, 0, 0);
 	else
 		size = pack_acknowledge_packet(dev, port_num, qp,
 					       IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE, ack->psn,
-					       1, PIB_IB_ACK_CODE, 1, ack->data.atomic.res);
+					       1, PIB_SYND_ACK_CODE, 1, ack->data.atomic.res);
 
-	dev->thread.sockaddr	= sockaddr;
-	dev->thread.msg_size    = size;
 	dev->thread.port_num    = port_num;
-
+	dev->thread.dlid	= dlid;
+	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.msg_size    = size;
 	dev->thread.ready_to_send = 1;
 }
 
 
 static int
-generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, struct pib_ib_ack *ack, struct sockaddr *sockaddr)
+generate_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u16 dlid, struct pib_ack *ack)
 {
 	int pmtu, size;
 	int with_aeth = 1;
 	u32 psn_offset;
 	int OpCode;
-	struct pib_ib_pd *pd;
+	struct pib_pd *pd;
 	u32 data_size, payload_size;
 	struct pib_packet_lrh *lrh;
 	enum ib_wc_status status;
@@ -1331,7 +1315,7 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 	/* ここからパケット送信 */
 
 	size = pack_acknowledge_packet(dev, port_num, qp, OpCode, ack->psn + psn_offset,
-				       with_aeth, PIB_IB_ACK_CODE, 0, 0);
+				       with_aeth, PIB_SYND_ACK_CODE, 0, 0);
 
 	data_size = (ack->data.rdma_read.size - ack->data.rdma_read.offset < pmtu) ?
 		(ack->data.rdma_read.size - ack->data.rdma_read.offset) : pmtu;
@@ -1358,9 +1342,10 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 		/* receive_RDMA_READ_request でチェックしているから本当はないはず */
 		return status;
 
-	dev->thread.sockaddr	= sockaddr;
-	dev->thread.msg_size    = size + payload_size;
 	dev->thread.port_num    = port_num;
+	dev->thread.dlid	= dlid;
+	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.msg_size    = size + payload_size;
 	dev->thread.ready_to_send = 1;
 
 	ack->data.rdma_read.offset += data_size;
@@ -1370,7 +1355,7 @@ generate_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_q
 
 
 static int
-pack_acknowledge_packet(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_ib_syndrome syndrome, int with_atomiceth, u64 res)
+pack_acknowledge_packet(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_syndrome syndrome, int with_atomiceth, u64 res)
 {
 	int size;
 	struct pib_packet_rc_acknowledge *message;
@@ -1388,7 +1373,7 @@ pack_acknowledge_packet(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 	message->bth.OpCode = OpCode;
 	message->bth.pkey   = cpu_to_be16(qp->ib_qp_attr.pkey_index);
 	message->bth.destQP = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
-	message->bth.psn    = cpu_to_be32(psn & PIB_IB_PSN_MASK); /* A-bit is 0 */ 
+	message->bth.psn    = cpu_to_be32(psn & PIB_PSN_MASK); /* A-bit is 0 */ 
 
 	size = sizeof(struct pib_packet_lrh) + sizeof(struct pib_packet_bth); 
 
@@ -1418,18 +1403,18 @@ pack_acknowledge_packet(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 /******************************************************************************/
 
 static int
-receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth)
+receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
 {
 	int ret;
 	u32 psn, syndrome;
 	unsigned long rnr_nak_timeout = 0;
 	struct pib_packet_aeth *aeth;
-	struct pib_ib_send_wqe *send_wqe, *next_send_wqe;
+	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
 	/* response's PSN */
-	psn = be32_to_cpu(bth->psn) & PIB_IB_PSN_MASK;
+	psn = be32_to_cpu(base_hdr->bth.psn) & PIB_PSN_MASK;
 
-	if (bth->OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE)
+	if (base_hdr->bth.OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE)
 		/* RDMA READ response Middle packets have no AETH. */
 		goto switch_OpCode;
 
@@ -1457,28 +1442,28 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 		/* NAK */
 		switch (syndrome) {
 
-		case PIB_IB_NAK_CODE_PSN_SEQ_ERR:
+		case PIB_SYND_NAK_CODE_PSN_SEQ_ERR:
 			/* PSN Sequence Error */
 			/* @todo PSN Sequence Error を RNR NAK と同様に扱ってリトライをかけるが
 			   これは正しい仕様か？ */
 			goto retry_send;
 
-		case PIB_IB_NAK_CODE_INV_REQ_ERR:
+		case PIB_SYND_NAK_CODE_INV_REQ_ERR:
 			/* Remote Invalid Request Error */
 			set_send_wqe_to_error(qp, psn, IB_WC_REM_INV_REQ_ERR);
 			break;
 
-		case PIB_IB_NAK_CODE_REM_ACCESS_ERR:
+		case PIB_SYND_NAK_CODE_REM_ACCESS_ERR:
 			/* Remote Access Error */
 			set_send_wqe_to_error(qp, psn, IB_WC_REM_ACCESS_ERR);
 			break;
 
-		case PIB_IB_NAK_CODE_REM_OP_ERR:
+		case PIB_SYND_NAK_CODE_REM_OP_ERR:
 			/* Remote Operational Error */
 			set_send_wqe_to_error(qp, psn, IB_WC_REM_OP_ERR);
 			break;
 
-		case PIB_IB_NAK_CODE_INV_RD_REQ_ERR:
+		case PIB_SYND_NAK_CODE_INV_RD_REQ_ERR:
 			/* Invalid RD Request */
 			set_send_wqe_to_error(qp, psn, IB_WC_REM_INV_RD_REQ_ERR); /* @todo ? */
 			break;
@@ -1491,7 +1476,7 @@ receive_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void
 	}
 
 switch_OpCode:
-	switch (bth->OpCode) {
+	switch (base_hdr->bth.OpCode) {
 
 	case IB_OPCODE_RC_ACKNOWLEDGE:
 		ret = receive_ACK_response(dev, port_num, qp, psn);
@@ -1541,7 +1526,7 @@ retry_send:
 
 	/* 最初の Send WQE が SEND また RDMA WRITE w/Immediate なら rnr_retry を減算する */
 	if (rnr_nak_timeout && !list_empty(&qp->requester.sending_swqe_head)) {
-		send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
+		send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_send_wqe, list);
 
 		switch (send_wqe->opcode) {
 		case IB_WR_SEND:
@@ -1566,9 +1551,9 @@ retry_send:
  *  QP 内の送信中の SEND WR から psn にあたるものを status の completion error とする。
  */
 static void
-set_send_wqe_to_error(struct pib_ib_qp *qp, u32 psn, enum ib_wc_status status)
+set_send_wqe_to_error(struct pib_qp *qp, u32 psn, enum ib_wc_status status)
 {
-	struct pib_ib_send_wqe *send_wqe;
+	struct pib_send_wqe *send_wqe;
 
 	list_for_each_entry(send_wqe, &qp->requester.waiting_swqe_head, list) {
 		if ((get_psn_diff(psn, send_wqe->processing.based_psn)       >= 0) &&
@@ -1598,9 +1583,9 @@ enum {
 
 
 static int
-receive_ACK_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn)
+receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn)
 {
-	struct pib_ib_send_wqe *send_wqe, *next_send_wqe;
+	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
 	/* process_acknowledge */
 
@@ -1670,7 +1655,7 @@ completion_error:
  *
  */
 static int
-process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, u32 psn, int *nr_swqe_p)
+process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn, int *nr_swqe_p)
 {
 	u32 no_packets;
 	s32 psn_diff;
@@ -1723,12 +1708,12 @@ process_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_
 
 
 static int
-receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn, void *buffer, int size)
+receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size)
 {
-	struct pib_ib_send_wqe *send_wqe;
+	struct pib_send_wqe *send_wqe;
 	int first_send_wqe = 1;
 	int *nr_swqe_p;
-	struct pib_ib_pd *pd;
+	struct pib_pd *pd;
 	enum ib_wc_status status;
 	unsigned long flags;
 	u32 dmalen, offset;
@@ -1815,13 +1800,13 @@ receive_RDMA_READ_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp
 
 
 static int
-receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u32 psn, void *buffer, int size)
+receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size)
 {
 	struct pib_packet_atomicacketh *atomicacketh;
-	struct pib_ib_send_wqe *send_wqe;
+	struct pib_send_wqe *send_wqe;
 	int first_send_wqe = 1;
 	int *nr_swqe_p;
-	struct pib_ib_pd *pd;
+	struct pib_pd *pd;
 	enum ib_wc_status status;
 	u64 res;
 	unsigned long flags;
@@ -1903,7 +1888,7 @@ receive_Atomic_response(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *q
 /******************************************************************************/
 
 static void
-insert_async_qp_error(struct pib_ib_dev *dev, struct pib_ib_qp *qp, enum ib_event_type event)
+insert_async_qp_error(struct pib_dev *dev, struct pib_qp *qp, enum ib_event_type event)
 {
 	pib_util_insert_async_qp_error(qp, event);
 
@@ -1918,14 +1903,14 @@ insert_async_qp_error(struct pib_ib_dev *dev, struct pib_ib_qp *qp, enum ib_even
  *  Abort active receive WQE is completed in error
  */
 static void
-abort_active_rwqe(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
+abort_active_rwqe(struct pib_dev *dev, struct pib_qp *qp)
 {
-	struct pib_ib_recv_wqe *recv_wqe;
+	struct pib_recv_wqe *recv_wqe;
 
 	if (list_empty(&qp->responder.recv_wqe_head) || qp->responder.offset == 0)
 		return;
 
-	recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_ib_recv_wqe, list);
+	recv_wqe = list_first_entry(&qp->responder.recv_wqe_head, struct pib_recv_wqe, list);
 
 	pib_util_insert_wc_error(qp->recv_cq, qp, recv_wqe->wr_id, IB_WC_GENERAL_ERR, IB_WC_RECV);
 
@@ -1938,11 +1923,11 @@ abort_active_rwqe(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 }
 
 
-static struct pib_ib_send_wqe *
-match_send_wqe(struct pib_ib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_swqe_pp)
+static struct pib_send_wqe *
+match_send_wqe(struct pib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_swqe_pp)
 {
 	int first_send_wqe = 1;
-	struct pib_ib_send_wqe *send_wqe;
+	struct pib_send_wqe *send_wqe;
 
 	list_for_each_entry(send_wqe, &qp->requester.waiting_swqe_head, list) {
 		if ((get_psn_diff(psn, send_wqe->processing.based_psn)    >= 0) &&
@@ -1969,7 +1954,7 @@ match_send_wqe(struct pib_ib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_sw
 
 
 static void
-issue_comm_est(struct pib_ib_qp *qp)
+issue_comm_est(struct pib_qp *qp)
 {
 	if ((qp->state != IB_QPS_RTR) || (qp->issue_comm_est != 0))
 		return;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -14,14 +14,14 @@
 
 
 /* NAK Codes */
-enum pib_ib_syndrome {
-	PIB_IB_ACK_CODE                = 0x00, /* ACK                      */
-	PIB_IB_RNR_NAK_CODE            = 0x20, /* RNR NAK                  */
-	PIB_IB_NAK_CODE_PSN_SEQ_ERR    = 0x60, /* PSN Sequence Error       */
-	PIB_IB_NAK_CODE_INV_REQ_ERR    = 0x61, /* Invalid Request          */
-	PIB_IB_NAK_CODE_REM_ACCESS_ERR = 0x62, /* Remote Access Error      */
-	PIB_IB_NAK_CODE_REM_OP_ERR     = 0x63, /* Remote Operational Error */
-	PIB_IB_NAK_CODE_INV_RD_REQ_ERR = 0x64  /* Invalid RD Request       */
+enum pib_syndrome {
+	PIB_SYND_ACK_CODE                = 0x00, /* ACK                      */
+	PIB_SYND_RNR_NAK_CODE            = 0x20, /* RNR NAK                  */
+	PIB_SYND_NAK_CODE_PSN_SEQ_ERR    = 0x60, /* PSN Sequence Error       */
+	PIB_SYND_NAK_CODE_INV_REQ_ERR    = 0x61, /* Invalid Request          */
+	PIB_SYND_NAK_CODE_REM_ACCESS_ERR = 0x62, /* Remote Access Error      */
+	PIB_SYND_NAK_CODE_REM_OP_ERR     = 0x63, /* Remote Operational Error */
+	PIB_SYND_NAK_CODE_INV_RD_REQ_ERR = 0x64  /* Invalid RD Request       */
 };
 
 
@@ -136,7 +136,7 @@ struct pib_packet_atomicacketh {
 } __attribute__ ((packed));
 
 
-struct pib_packet_min_request {
+struct pib_packet_base_hdr {
 	struct pib_packet_lrh   lrh;
 	struct pib_packet_bth   bth;
 } __attribute__ ((packed));

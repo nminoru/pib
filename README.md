@@ -1,8 +1,7 @@
 pib - Pseudo InfiniBand HCA driver
 ==================================
 
-pib is a software-based InfiniBand HCA driver. It provides uVerbs functions
-without real IB HCA & fabric.
+pib is a software-based InfiniBand HCA driver. It provides uVerbs functions without real IB HCA & fabric.
 
 pib has the two components.
 
@@ -13,19 +12,14 @@ pib has the two components.
 Features
 ========
 
+* Almost uVerbs functions
+* Subnet Manager support (opensm)
+* IPoIB
 
 Limitation
 ==========
 
-* The current version is EXPERIMETNAL.
-* Work only single host
-* Doesn't support yet
-**  UC
-**  XRC
-* Never support
-** RD
-** VL
-
+The current version is EXPERIMETNAL.
 
 Supported OS
 ============
@@ -55,6 +49,11 @@ Recommended packages:
 * libibverbs-devel
 * libibverbs-utils
 
+* librdmacm
+* librdmacm-utils
+* librdmacm-devel
+
+* perftest
 
 Building
 ========
@@ -73,8 +72,8 @@ Source and binary packages for RHEL6 or CentOS6 are avaiable on this link http:/
 To build source packages from source code
 
     $ cd pib
-    $ cp -r libpib libpib-0.1.0
-    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.1.0.tar.gz libpib-0.1.0/
+    $ cp -r libpib libpib-0.2.0
+    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.2.0.tar.gz libpib-0.2.0/
     $ cp libpib/libpib.spec $(HOME)/rpmbuild/SPECS/
     $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/libpib.spec
 
@@ -94,19 +93,19 @@ Next load pib.ko.
 
     # insmod ./pib.ko
 
-Next run opensm
+run opensm
 
     # /etc/rc.d/init.d/opensm start
 
 On success, you can use uVerbs.
-For instance, ibv_devinfo (includes libibverbs-utils packet) show such an result.
+For instance, ibv_devinfo (includes libibverbs-utils package) show such an result.
 
     $ ibv_devinfo
     hca_id: pib_0
             transport:                      InfiniBand (0)
-            fw_ver:                         1.1.001
-            node_guid:                      000c:2925:551e:0020
-            sys_image_guid:                 000c:2925:551e:0010
+            fw_ver:                         0.2.000
+            node_guid:                      000c:2925:551e:0400
+            sys_image_guid:                 000c:2925:551e:0200
             vendor_id:                      0x0001
             vendor_part_id:                 1
             hw_ver:                         0x0
@@ -118,17 +117,12 @@ Future work
 
 My goal is to work the following software components.
 
-* Subnet manager (opensm)
-* IPoIB
 * RDMA Communictor Manager
 * MPI
 * iSER
 
 Therefore I will implement the following IB functions.
 
-* SMI (QP0)
-* GSI (GP1)
-* Multicast
 * Unreliable Connection(UC)
 * Extended Reliable Connected (XRC)
 * Memory Window
@@ -136,10 +130,9 @@ Therefore I will implement the following IB functions.
 
 Other
 
-* GRH
-* Easy LID assigment without subnet manger.
-* 可視化
-* Error injection
+* GRH support
+* Debugfs support (object inspection for QP, SRQ, CQ, et al)
+* Error injection (QP/CQ/SRQ Error)
 * Other Linux distributions support
 * Kernel update package
 * IPv6 support

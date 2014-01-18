@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -10,14 +10,14 @@
 
 
 struct ib_ah *
-pib_ib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
+pib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 {
-	struct pib_ib_ah *ah;
+	struct pib_ah *ah;
 
 	if (!ah_attr)
 		return ERR_PTR(-EINVAL);
 
-	ah = kmem_cache_zalloc(pib_ib_ah_cachep, GFP_KERNEL);
+	ah = kmem_cache_zalloc(pib_ah_cachep, GFP_KERNEL);
 	if (!ah)
 		return ERR_PTR(-ENOMEM);
 	
@@ -27,12 +27,42 @@ pib_ib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 }
 
 
-int pib_ib_destroy_ah(struct ib_ah *ibah)
+int pib_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
+{
+	struct pib_ah *ah;
+
+	if (!ibah || !ah_attr)
+		return -EINVAL;
+
+	ah = to_pah(ibah);
+
+	ah->ib_ah_attr = *ah_attr;
+
+	return 0;
+}
+
+
+int pib_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
+{
+	struct pib_ah *ah;
+
+	if (!ibah || !ah_attr)
+		return -EINVAL;
+
+	ah = to_pah(ibah);
+	
+	*ah_attr = ah->ib_ah_attr;
+
+	return 0;
+}
+
+
+int pib_destroy_ah(struct ib_ah *ibah)
 {
 	if (!ibah)
 		return 0;
 
-	kmem_cache_free(pib_ib_ah_cachep, to_pah(ibah));
+	kmem_cache_free(pib_ah_cachep, to_pah(ibah));
 
 	return 0;
 }

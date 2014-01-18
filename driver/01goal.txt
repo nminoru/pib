@@ -3,7 +3,12 @@
 - Receiver の平行動作
 - Delayed WC
 - CQ オーバーフローの動作を選択可能に(IBV_EVENT_CQ_ERR か mellanox 準拠か)
-- RESET 時の送受信
+- QP が RESET、INIT 時の送信
+- QP が RESET 時の受信
+- ユーザープログラムはで UD 通信で指定する Q_Key の最上位ビットに1を立てないこと。
+
+○ Behavior
+
 - QP 番号のランダム性の制御
 - タイマー精度の制御
 - RC 通信で意図しない相手からの QPN をチェック？
@@ -15,7 +20,7 @@
 
 ○ Violation check
 
-- RC 通信で dest_qp 以外の QP からパケットが到着した。
-- RC 通信で dest_qp 以外の QP からパケットを受信した。
 - RESET 時に ibv_post_send または ibv_post_recv を実行した。
-- RESET への遷移で WQE/CQE が失われた。
+- RC 通信で dest_qp 以外の QP からパケットを受信した。
+- ibv_modify_qp で RESET へ遷移する際に WQE/CQE が失われた。
+- UD 通信で WR の q_key の最上位ビットが指定された。

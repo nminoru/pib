@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -12,7 +12,7 @@
 static volatile int post_srq_recv_counter; /* これは厳密でなくてもよい */
 
 
-static int pib_ib_srq_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_srq_attr *attr)
+static int pib_srq_attr_is_ok(const struct pib_dev *dev, const struct ib_srq_attr *attr)
 {
 	if ((attr->max_wr < 1)  || (dev->ib_dev_attr.max_srq_wr  < attr->max_wr))
 		return 0;
@@ -24,20 +24,20 @@ static int pib_ib_srq_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_s
 }
 
 
-struct ib_srq *pib_ib_create_srq(struct ib_pd *ibpd,
-				 struct ib_srq_init_attr *init_attr,
-				 struct ib_udata *udata)
+struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
+			      struct ib_srq_init_attr *init_attr,
+			      struct ib_udata *udata)
 {
 	int i;
-	struct pib_ib_srq *srq;
+	struct pib_srq *srq;
 
 	if (!ibpd || !init_attr)
 		return ERR_PTR(-EINVAL);
 
-	if (!pib_ib_srq_attr_is_ok(to_pdev(ibpd->device), &init_attr->attr))
+	if (!pib_srq_attr_is_ok(to_pdev(ibpd->device), &init_attr->attr))
 		return ERR_PTR(-EINVAL);
 
-	srq = kmem_cache_zalloc(pib_ib_srq_cachep, GFP_KERNEL);
+	srq = kmem_cache_zalloc(pib_srq_cachep, GFP_KERNEL);
 	if (!srq)
 		return ERR_PTR(-ENOMEM);
 
@@ -49,9 +49,9 @@ struct ib_srq *pib_ib_create_srq(struct ib_pd *ibpd,
 	INIT_LIST_HEAD(&srq->free_recv_wqe_head);
 
 	for (i=0 ; i<srq->ib_srq_attr.max_wr ; i++) {
-		struct pib_ib_recv_wqe *recv_wqe;
+		struct pib_recv_wqe *recv_wqe;
 
-		recv_wqe = kmem_cache_zalloc(pib_ib_recv_wqe_cachep, GFP_KERNEL);
+		recv_wqe = kmem_cache_zalloc(pib_recv_wqe_cachep, GFP_KERNEL);
 		if (!recv_wqe)
 			goto err_alloc_wqe;
 
@@ -63,23 +63,23 @@ struct ib_srq *pib_ib_create_srq(struct ib_pd *ibpd,
 
 err_alloc_wqe:
 	while (!list_empty(&srq->free_recv_wqe_head)) {
-		struct pib_ib_recv_wqe *recv_wqe;
-		recv_wqe = list_first_entry(&srq->free_recv_wqe_head, struct pib_ib_recv_wqe, list);
+		struct pib_recv_wqe *recv_wqe;
+		recv_wqe = list_first_entry(&srq->free_recv_wqe_head, struct pib_recv_wqe, list);
 		list_del_init(&recv_wqe->list);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 
-	kmem_cache_free(pib_ib_srq_cachep, srq);
+	kmem_cache_free(pib_srq_cachep, srq);
 	
 	return ERR_PTR(-ENOMEM);
 }
 
 
-int pib_ib_destroy_srq(struct ib_srq *ibsrq)
+int pib_destroy_srq(struct ib_srq *ibsrq)
 {
 	unsigned long flags;
-	struct pib_ib_srq *srq;
-	struct pib_ib_recv_wqe *recv_wqe, *next;
+	struct pib_srq *srq;
+	struct pib_recv_wqe *recv_wqe, *next;
 
 	if (!ibsrq)
 		return 0;
@@ -89,25 +89,25 @@ int pib_ib_destroy_srq(struct ib_srq *ibsrq)
 	spin_lock_irqsave(&srq->lock, flags);
 	list_for_each_entry_safe(recv_wqe, next, &srq->recv_wqe_head, list) {
 		list_del_init(&recv_wqe->list);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 	list_for_each_entry_safe(recv_wqe, next, &srq->free_recv_wqe_head, list) {
 		list_del_init(&recv_wqe->list);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 	srq->nr_recv_wqe = 0;
 	spin_unlock_irqrestore(&srq->lock, flags);
 
-	kmem_cache_free(pib_ib_srq_cachep, to_psrq(ibsrq));
+	kmem_cache_free(pib_srq_cachep, to_psrq(ibsrq));
 
 	return 0;
 }
 
 
-int pib_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
-		      enum ib_srq_attr_mask attr_mask, struct ib_udata *udata)
+int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
+		   enum ib_srq_attr_mask attr_mask, struct ib_udata *udata)
 {
-	struct pib_ib_srq *srq;
+	struct pib_srq *srq;
 
 	if (!ibsrq || !attr)
 		return -EINVAL;
@@ -116,7 +116,7 @@ int pib_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 
 	if (attr_mask & IB_SRQ_MAX_WR) {
 		/* @todo not yet implemented. */
-		pr_err("pib: pib_ib_modify_srq doesn't support for IB_SRQ_MAX_WR yet\n");
+		pr_err("pib: pib_modify_srq doesn't support for IB_SRQ_MAX_WR yet\n");
 		return -EINVAL;
 	}
 
@@ -129,9 +129,9 @@ int pib_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 }
 
 
-int pib_ib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
+int pib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 {
-	struct pib_ib_srq *srq;
+	struct pib_srq *srq;
 
 	if (!ibsrq || !attr)
 		return -EINVAL;
@@ -144,13 +144,13 @@ int pib_ib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 }
 
 
-int pib_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
-			 struct ib_recv_wr **bad_wr)
+int pib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
+		      struct ib_recv_wr **bad_wr)
 {
 	int i, ret = 0;
-	struct pib_ib_dev *dev;
-	struct pib_ib_recv_wqe *recv_wqe;
-	struct pib_ib_srq *srq;
+	struct pib_dev *dev;
+	struct pib_recv_wqe *recv_wqe;
+	struct pib_srq *srq;
 	u64 total_length = 0;
 	unsigned long flags;
 
@@ -174,7 +174,7 @@ next_wr:
 		goto err;
 	}
 
-	recv_wqe = list_first_entry(&srq->free_recv_wqe_head, struct pib_ib_recv_wqe, list);
+	recv_wqe = list_first_entry(&srq->free_recv_wqe_head, struct pib_recv_wqe, list);
 	list_del_init(&recv_wqe->list); /* list_del でいい？ */
 
 	recv_wqe->wr_id   = ibwr->wr_id;
@@ -183,21 +183,21 @@ next_wr:
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		recv_wqe->sge_array[i] = ibwr->sg_list[i];
 
-		if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+		if (pib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
 			if (ibwr->sg_list[i].length == 0)
-				ibwr->sg_list[i].length = PIB_IB_MAX_PAYLOAD_LEN;
+				ibwr->sg_list[i].length = PIB_MAX_PAYLOAD_LEN;
 
 		total_length += ibwr->sg_list[i].length;
 	}
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) {
+	if (PIB_MAX_PAYLOAD_LEN < total_length) {
 		ret = -EINVAL;
 		goto err;
 	} 
 
 	recv_wqe->total_length = (u32)total_length;
 
-	if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_SRQ_SHUFFLE)) {
+	if (pib_get_behavior(dev, PIB_BEHAVIOR_SRQ_SHUFFLE)) {
 		/* shuffle WRs */
 		if ((post_srq_recv_counter++ % 2) == 0)
 			list_add_tail(&recv_wqe->list, &srq->recv_wqe_head);
@@ -224,18 +224,18 @@ err:
 }
 
 
-struct pib_ib_recv_wqe *
-pib_util_get_srq(struct pib_ib_srq *srq)
+struct pib_recv_wqe *
+pib_util_get_srq(struct pib_srq *srq)
 {
 	unsigned long flags;
-	struct pib_ib_recv_wqe *recv_wqe = NULL;
+	struct pib_recv_wqe *recv_wqe = NULL;
 
 	spin_lock_irqsave(&srq->lock, flags);
 
 	if (list_empty(&srq->recv_wqe_head))
 		goto skip;
 
-	recv_wqe = list_first_entry(&srq->recv_wqe_head, struct pib_ib_recv_wqe, list);
+	recv_wqe = list_first_entry(&srq->recv_wqe_head, struct pib_recv_wqe, list);
 	list_del_init(&recv_wqe->list);
 	srq->nr_recv_wqe--;
 

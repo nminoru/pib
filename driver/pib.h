@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -22,8 +22,6 @@
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_umem.h>
-#include <rdma/ib_mad.h>
-#include <rdma/ib_sa.h>
 #include <rdma/ib_mad.h> /* for ib_mad_hdr */
 #include <rdma/ib_smi.h> /* for ib_smp */
 
@@ -32,9 +30,9 @@
 
 
 #define PIB_VERSION_MAJOR	0
-#define PIB_VERSION_MINOR	1
+#define PIB_VERSION_MINOR	2
 #define PIB_VERSION_REVISION	0
-#define PIB_DRIVER_VERSION 	"0.1.0"
+#define PIB_DRIVER_VERSION 	"0.2.0"
 
 #define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
 #define PIB_DRIVER_FW_VERSION \
@@ -44,7 +42,7 @@
 #define PIB_DRIVER_REVISION	(1)
 
 /* IB_USER_VERBS_ABI_VERSION */
-#define PIB_IB_UVERBS_ABI_VERSION  (6)
+#define PIB_UVERBS_ABI_VERSION  (6)
 
 
 #define PIB_USE_EASY_SWITCH
@@ -60,38 +58,45 @@
 #endif
 
 
-#define PIB_IB_MAX_HCA			(4)
-#define PIB_IB_MAX_PORTS		(32) /* In IBA Spec. Vol.1 17.2.1.3 C17-7.a1, a channel adaptor may support up to 254 ports(1-253).  */
+#define PIB_MAX_HCA			(4)
+#define PIB_MAX_PORTS			(32) /* In IBA Spec. Vol.1 17.2.1.3 C17-7.a1, a channel adaptor may support up to 254 ports(1-253).  */
 #define PIB_MAX_LID			(0x10000)
 #define PIB_MCAST_LID_BASE		(0x0C000)
 
-#define PIB_IB_QP0			(0)
-#define PIB_IB_QP1			(1)
-#define PIB_IB_MAD_QPS_CORE		(2)
+#define PIB_QP0				(0)
+#define PIB_QP1				(1)
+#define PIB_MAD_QPS_CORE		(2)
 
-#define PIB_IB_MAX_SGE			(32)
-#define PIB_IB_MAX_RD_ATOM		(16)
+#define PIB_MAX_SGE			(32)
+#define PIB_MAX_RD_ATOM			(16)
 
-#define PIB_IB_MAX_INLINE		(2048)
+#define PIB_MAX_INLINE			(2048)
 
-#define PIB_IB_QPN_MASK			(0xFFFFFF)
-#define PIB_IB_PSN_MASK			(0xFFFFFF)
-#define PIB_IB_LOCAL_ACK_TIMEOUT_MASK	(0x1F)
-#define PIB_IB_MIN_RNR_NAK_TIMER_MASK	(0x1F)
-#define PIB_IB_MAX_MR_PER_PD		(4096)
-#define PIB_IB_MR_INDEX_MASK		(PIB_IB_MAX_MR_PER_PD - 1)
-#define PIB_IB_PACKET_BUFFER		(8192)
-#define PIB_IB_GID_PER_PORT		(16)
-#define PIB_IB_MAX_PAYLOAD_LEN	        (0x40000000)
+#define PIB_QPN_MASK			(0xFFFFFF)
+#define PIB_PSN_MASK			(0xFFFFFF)
+#define PIB_LOCAL_ACK_TIMEOUT_MASK	(0x1F)
+#define PIB_MIN_RNR_NAK_TIMER_MASK	(0x1F)
+#define PIB_MAX_MR_PER_PD		(4096)
+#define PIB_MR_INDEX_MASK		(PIB_MAX_MR_PER_PD - 1)
+#define PIB_PACKET_BUFFER		(8192)
+#define PIB_GID_PER_PORT		(16)
+#define PIB_MAX_PAYLOAD_LEN	        (0x40000000)
 
-#define PIB_IB_IMM_DATA_LKEY		(0xA0B0C0D0)
+#define PIB_IMM_DATA_LKEY		(0xA0B0C0D0)
 
 #define PIB_SCHED_TIMEOUT		(0x3FFFFFFF) /* 1/4 of max value of unsigned long */
 
 #define PIB_PKEY_PER_BLOCK              (32)
 #define PIB_PKEY_TABLE_LEN              (PIB_PKEY_PER_BLOCK * 1)
 
+#define PIB_MCAST_QP_ATTACH             (128) 
+
 #define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_SYS_IMAGE_GUID|IB_DEVICE_RC_RNR_NAK_GEN)
+#define PIB_PORT_CAP_FLAGS		(IB_PORT_SYS_IMAGE_GUID_SUP|IB_PORT_CM_SUP)
+
+#define PIB_LINK_WIDTH_SUPPORTED	(IB_WIDTH_1X | IB_WIDTH_4X | IB_WIDTH_8X | IB_WIDTH_12X)
+#define PIB_LINK_SPEED_SUPPORTED	(7) /* 2.5 or 5.0 or 10.0 Gbps */
+	
 
 #define pib_debug(fmt, args...)					\
 	do {							\
@@ -122,14 +127,14 @@ enum pib_behavior {
 };
 
 
-enum pib_ib_phys_port_state_{
-	PIB_IB_PHYS_PORT_SLEEP    = 1,
-	PIB_IB_PHYS_PORT_POLLING  = 2,
-	PIB_IB_PHYS_PORT_DISABLED = 3,
-	PIB_IB_PHYS_PORT_PORT_CONFIGURATION_TRAINNING = 4,
-	PIB_IB_PHYS_PORT_LINK_UP  = 5,
-	PIB_IB_PHYS_PORT_LINK_ERROR_RECOVERY = 6,
-	PIB_IB_PHYS_PORT_PHY_TEST = 7
+enum pib_hys_port_state_{
+	PIB_PHYS_PORT_SLEEP    = 1,
+	PIB_PHYS_PORT_POLLING  = 2,
+	PIB_PHYS_PORT_DISABLED = 3,
+	PIB_PHYS_PORT_PORT_CONFIGURATION_TRAINNING = 4,
+	PIB_PHYS_PORT_LINK_UP  = 5,
+	PIB_PHYS_PORT_LINK_ERROR_RECOVERY = 6,
+	PIB_PHYS_PORT_PHY_TEST = 7
 };
 
 
@@ -171,12 +176,15 @@ enum pib_mr_direction {
 };
 
 
-struct pib_dev {
-	struct device           dev;
+struct pib_mcast_link {
+	u16			lid;
+	u32			qp_num;
+	struct list_head        qp_list;
+	struct list_head        lid_list;
 };
 
 
-struct pib_ib_port {
+struct pib_port {
 	u8                      port_num;
 
 	struct ib_port_attr     ib_port_attr;
@@ -196,13 +204,13 @@ struct pib_ib_port {
 	struct sockaddr       **lid_table;
 	struct socket          *socket;
 	struct sockaddr        *sockaddr;
-	union ib_gid		gid[PIB_IB_GID_PER_PORT];
-	struct pib_ib_qp       *qp_info[PIB_IB_MAD_QPS_CORE];
+	union ib_gid		gid[PIB_GID_PER_PORT];
+	struct pib_qp	       *qp_info[PIB_MAD_QPS_CORE];
 	u16			pkey_table[PIB_PKEY_TABLE_LEN];
 };
 
 
-struct pib_ib_dev {
+struct pib_dev {
 	struct ib_device	ib_dev;
 	struct ib_device_attr   ib_dev_attr;
 
@@ -238,18 +246,22 @@ struct pib_ib_dev {
 	struct {
 		struct task_struct     *task;
 		struct completion       completion;
-		struct timer_list       timer;  /* Local ACK Tmeout & RNR NAK Timer for RC */
-		unsigned long           flags;
-		void                   *buffer; /* buffer for sendmsg/recvmsg */
+		struct timer_list	timer;  /* Local ACK Tmeout & RNR NAK Timer for RC */
 
-		struct sockaddr	       *sockaddr;	/* for sendmsg */
-		size_t			msg_size;	/* for sendmsg */
-		u8			port_num;	/* for sendmsg */
-		int			ready_to_send;	/* for sendmsg */
+		unsigned long	flags;
+
+		void	       *buffer; /* buffer for sendmsg/recvmsg */
+
+		u8		port_num;
+		u16		dlid;
+		u32		src_qp_num;
+		size_t		msg_size;
+		int		ready_to_send;
 	} thread;
 
-	struct pib_ib_port     *ports;
-	struct rw_semaphore     rwsem;
+	struct list_head       *mcast_table;
+	struct pib_port	       *ports;
+	struct rw_semaphore	rwsem;
 };
 
 
@@ -258,7 +270,7 @@ struct pib_port_bits {
 };
 
 
-struct pib_ib_easy_sw {
+struct pib_easy_sw {
 	struct task_struct     *task;
 	spinlock_t		lock;
 	struct completion       completion;
@@ -269,7 +281,7 @@ struct pib_ib_easy_sw {
 	struct sockaddr        *sockaddr;
 
 	u8                      port_cnt; /* include port 0 */
-	struct pib_ib_port     *ports;
+	struct pib_port	       *ports;
 
 	u16			linear_fdb_top;
 	u8			default_port;
@@ -283,28 +295,28 @@ struct pib_ib_easy_sw {
 };
 
 
-struct pib_ib_ucontext {
+struct pib_ucontext {
 	struct ib_ucontext      ib_ucontext;
 };
 
 
-struct pib_ib_pd {
+struct pib_pd {
 	struct ib_pd            ib_pd;
 
 	spinlock_t		lock;
 
 	int                     nr_mr;
-	struct pib_ib_mr      **mr_table;
+	struct pib_mr	      **mr_table;
 };
 
 
-struct pib_ib_ah {
+struct pib_ah {
 	struct ib_ah            ib_ah;
 	struct ib_ah_attr       ib_ah_attr;
 };
 
 
-struct pib_ib_mr {
+struct pib_mr {
 	struct ib_mr            ib_mr;
 	struct ib_umem         *ib_umem;
 
@@ -319,7 +331,7 @@ struct pib_ib_mr {
 };
 
 
-struct pib_ib_cq {
+struct pib_cq {
 	struct ib_cq            ib_cq;
 	
 	spinlock_t		lock;
@@ -330,7 +342,7 @@ struct pib_ib_cq {
 };
 
 
-struct pib_ib_srq {
+struct pib_srq {
 	struct ib_srq           ib_srq;
 	struct ib_srq_attr      ib_srq_attr;
 	
@@ -350,7 +362,7 @@ struct pib_ib_srq {
 /*
  * To record the result of a previous RMDA READ or Atomic operation.
  */
-struct pib_ib_rd_atom_slot {
+struct pib_rd_atom_slot {
 	u32                     psn;
 	u32                     expected_psn;
 	int                     OpCode;
@@ -369,23 +381,23 @@ struct pib_ib_rd_atom_slot {
 };
 
 
-enum pib_ib_ack_type {
-	PIB_IB_ACK_NORMAL	= 1,
-	PIB_IB_ACK_RMDA_READ,
-	PIB_IB_ACK_ATOMIC
+enum pib_ack_type {
+	PIB_ACK_NORMAL	= 1,
+	PIB_ACK_RMDA_READ,
+	PIB_ACK_ATOMIC
 };
 
 
-struct pib_ib_ack {
+struct pib_ack {
 	struct list_head        list;
 
-	enum pib_ib_ack_type	type;
+	enum pib_ack_type	type;
 
 	u32			psn;
 	u32                     expected_psn;
 
 	u32			msn;
-	enum pib_ib_syndrome	syndrome;
+	enum pib_syndrome	syndrome;
 
 	union {
 		struct {
@@ -402,14 +414,14 @@ struct pib_ib_ack {
 };
 
 
-struct pib_ib_qp {
+struct pib_qp {
 	struct ib_qp            ib_qp;
 
 	enum ib_qp_type         qp_type;
 	enum ib_qp_state        state;
 
-	struct pib_ib_cq       *send_cq;
-	struct pib_ib_cq       *recv_cq;
+	struct pib_cq	       *send_cq;
+	struct pib_cq	       *recv_cq;
 
 	struct ib_qp_attr       ib_qp_attr; /* don't use qp_state and cur_qp_state. */ 
 	struct ib_qp_init_attr  ib_qp_init_attr;
@@ -474,8 +486,10 @@ struct pib_ib_qp {
 		} rdma_write;
 
 		int			slot_index;
-		struct pib_ib_rd_atom_slot slots[PIB_IB_MAX_RD_ATOM];
+		struct pib_rd_atom_slot slots[PIB_MAX_RD_ATOM];
 	} responder;
+
+	struct list_head	mcast_head;
 
 	int                     push_rcqe;
 	int                     issue_comm_est; /* set 1 when the async event of COMM_EST is issue */
@@ -484,7 +498,7 @@ struct pib_ib_qp {
 };
 
 
-struct pib_ib_swqe_processing {
+struct pib_swqe_processing {
 	/* Requester Side */
 	enum pib_swqe_list      list_type;
 	enum ib_wc_status       status;
@@ -508,18 +522,18 @@ struct pib_ib_swqe_processing {
 };
 
 
-struct pib_ib_send_wqe {
+struct pib_send_wqe {
 	u64			wr_id;
 	enum ib_wr_opcode	opcode;
 	int			send_flags;
 
 	int			num_sge;
 	u32                     total_length;
-	struct ib_sge           sge_array[PIB_IB_MAX_SGE];
+	struct ib_sge           sge_array[PIB_MAX_SGE];
 
 	struct list_head        list; /* link from QP */
 
-	struct pib_ib_swqe_processing processing;
+	struct pib_swqe_processing processing;
 
 	__be32		        imm_data;
 	void		       *inline_data_buffer;
@@ -548,17 +562,17 @@ struct pib_ib_send_wqe {
 };
 
 
-struct pib_ib_recv_wqe {
+struct pib_recv_wqe {
 	u64			wr_id;
 	int			num_sge;
 	u32                     total_length;
-	struct ib_sge           sge_array[PIB_IB_MAX_SGE];
+	struct ib_sge           sge_array[PIB_MAX_SGE];
 
 	struct list_head        list; /* link from QP or SRQ */
 };
 
 
-struct pib_ib_cqe {
+struct pib_cqe {
 	struct ib_wc            ib_wc; /* @todo 内部の qp は余分 */
 	struct list_head        list;
 };
@@ -566,63 +580,63 @@ struct pib_ib_cqe {
 
 extern int pib_debug_level;
 extern u64 hca_guid_base;
-extern struct pib_ib_dev *pib_ib_devs[];
-extern struct pib_ib_easy_sw pib_ib_easy_sw;
+extern struct pib_dev *pib_devs[];
+extern struct pib_easy_sw pib_easy_sw;
 extern unsigned int pib_num_hca;
 extern unsigned int pib_phys_port_cnt;
-extern struct kmem_cache *pib_ib_ah_cachep;
-extern struct kmem_cache *pib_ib_mr_cachep;
-extern struct kmem_cache *pib_ib_qp_cachep;
-extern struct kmem_cache *pib_ib_cq_cachep;
-extern struct kmem_cache *pib_ib_srq_cachep;
-extern struct kmem_cache *pib_ib_send_wqe_cachep;
-extern struct kmem_cache *pib_ib_recv_wqe_cachep;
-extern struct kmem_cache *pib_ib_ack_cachep;
-extern struct kmem_cache *pib_ib_cqe_cachep;
+extern struct kmem_cache *pib_ah_cachep;
+extern struct kmem_cache *pib_mr_cachep;
+extern struct kmem_cache *pib_qp_cachep;
+extern struct kmem_cache *pib_cq_cachep;
+extern struct kmem_cache *pib_srq_cachep;
+extern struct kmem_cache *pib_send_wqe_cachep;
+extern struct kmem_cache *pib_recv_wqe_cachep;
+extern struct kmem_cache *pib_ack_cachep;
+extern struct kmem_cache *pib_cqe_cachep;
+extern struct kmem_cache *pib_mcast_link_cachep;
 
 
-
-static inline struct pib_ib_dev *to_pdev(struct ib_device *ibdev)
+static inline struct pib_dev *to_pdev(struct ib_device *ibdev)
 {
-	return container_of(ibdev, struct pib_ib_dev, ib_dev);
+	return container_of(ibdev, struct pib_dev, ib_dev);
 }
 
-static inline struct pib_ib_ucontext *to_pucontext(struct ib_ucontext *ibucontext)
+static inline struct pib_ucontext *to_pucontext(struct ib_ucontext *ibucontext)
 {
-	return container_of(ibucontext, struct pib_ib_ucontext, ib_ucontext);
+	return container_of(ibucontext, struct pib_ucontext, ib_ucontext);
 }
 
-static inline struct pib_ib_pd *to_ppd(struct ib_pd *ibpd)
+static inline struct pib_pd *to_ppd(struct ib_pd *ibpd)
 {
-	return container_of(ibpd, struct pib_ib_pd, ib_pd);
+	return container_of(ibpd, struct pib_pd, ib_pd);
 }
 
-static inline struct pib_ib_ah *to_pah(struct ib_ah *ibah)
+static inline struct pib_ah *to_pah(struct ib_ah *ibah)
 {
-	return container_of(ibah, struct pib_ib_ah, ib_ah);
+	return container_of(ibah, struct pib_ah, ib_ah);
 }
 
-static inline struct pib_ib_mr *to_pmr(struct ib_mr *ibmr)
+static inline struct pib_mr *to_pmr(struct ib_mr *ibmr)
 {
-	return container_of(ibmr, struct pib_ib_mr, ib_mr);
+	return container_of(ibmr, struct pib_mr, ib_mr);
 }
 
-static inline struct pib_ib_srq *to_psrq(struct ib_srq *ibsrq)
+static inline struct pib_srq *to_psrq(struct ib_srq *ibsrq)
 {
-	return container_of(ibsrq, struct pib_ib_srq, ib_srq);
+	return container_of(ibsrq, struct pib_srq, ib_srq);
 }
 
-static inline struct pib_ib_qp *to_pqp(struct ib_qp *ibqp)
+static inline struct pib_qp *to_pqp(struct ib_qp *ibqp)
 {
-	return container_of(ibqp, struct pib_ib_qp, ib_qp);
+	return container_of(ibqp, struct pib_qp, ib_qp);
 }
 
-static inline struct pib_ib_cq *to_pcq(struct ib_cq *ibcq)
+static inline struct pib_cq *to_pcq(struct ib_cq *ibcq)
 {
-	return container_of(ibcq, struct pib_ib_cq, ib_cq);
+	return container_of(ibcq, struct pib_cq, ib_cq);
 }
 
-static inline int pib_ib_get_behavior(const struct pib_ib_dev *dev, enum pib_behavior behavior)
+static inline int pib_get_behavior(const struct pib_dev *dev, enum pib_behavior behavior)
 {
 	return (dev->behavior & (1UL << behavior)) != 0;
 }
@@ -630,91 +644,98 @@ static inline int pib_ib_get_behavior(const struct pib_ib_dev *dev, enum pib_beh
 
 extern u32 pib_random(void);
 
-extern struct ib_ucontext *pib_ib_alloc_ucontext(struct ib_device *ibdev, struct ib_udata *udata);
-extern int pib_ib_dealloc_ucontext(struct ib_ucontext *ibcontext);
+extern struct ib_ucontext *pib_alloc_ucontext(struct ib_device *ibdev, struct ib_udata *udata);
+extern int pib_dealloc_ucontext(struct ib_ucontext *ibcontext);
 
-extern struct ib_pd * pib_ib_alloc_pd(struct ib_device *ibdev, struct ib_ucontext *ibucontext, struct ib_udata *udata);
-extern int pib_ib_dealloc_pd(struct ib_pd *ibpd);
+extern struct ib_pd * pib_alloc_pd(struct ib_device *ibdev, struct ib_ucontext *ibucontext, struct ib_udata *udata);
+extern int pib_dealloc_pd(struct ib_pd *ibpd);
 
-extern struct ib_ah *pib_ib_create_ah(struct ib_pd *pd, struct ib_ah_attr *ah_attr);
-extern int pib_ib_destroy_ah(struct ib_ah *ah);
+extern struct ib_ah *pib_create_ah(struct ib_pd *pd, struct ib_ah_attr *ah_attr);
+extern int pib_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr);
+extern int pib_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr);
+extern int pib_destroy_ah(struct ib_ah *ibah);
 
-extern struct ib_mr *pib_ib_get_dma_mr(struct ib_pd *pd, int access_flags);
-extern struct ib_mr *pib_ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
-					u64 virt_addr, int access_flags,
-					struct ib_udata *udata);
-extern int pib_ib_dereg_mr(struct ib_mr *mr);
-extern struct ib_mr *pib_ib_alloc_fast_reg_mr(struct ib_pd *pd,
-					       int max_page_list_len);
-extern struct ib_fast_reg_page_list *pib_ib_alloc_fast_reg_page_list(struct ib_device *ibdev,
-								     int page_list_len);
-extern void pib_ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
+extern struct ib_mr *pib_get_dma_mr(struct ib_pd *pd, int access_flags);
+extern struct ib_mr *pib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
+				     u64 virt_addr, int access_flags,
+				     struct ib_udata *udata);
+extern int pib_dereg_mr(struct ib_mr *mr);
+extern struct ib_mr *pib_alloc_fast_reg_mr(struct ib_pd *pd,
+					   int max_page_list_len);
+extern struct ib_fast_reg_page_list *pib_alloc_fast_reg_page_list(struct ib_device *ibdev,
+								  int page_list_len);
+extern void pib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
 
-enum ib_wc_status pib_util_mr_copy_data(struct pib_ib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction);
-enum ib_wc_status pib_util_mr_validate_rkey(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
-enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_ib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
-enum ib_wc_status pib_util_mr_atomic(struct pib_ib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
+enum ib_wc_status pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction);
+enum ib_wc_status pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
+enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
+enum ib_wc_status pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
 
 
-extern void pib_util_reschedule_qp(struct pib_ib_qp *qp);
-extern struct pib_ib_qp *pib_util_get_first_scheduling_qp(struct pib_ib_dev *dev);
+extern void pib_util_reschedule_qp(struct pib_qp *qp);
+extern struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev);
 
-extern int pib_create_kthread(struct pib_ib_dev *dev);
-extern void pib_release_kthread(struct pib_ib_dev *dev);
+extern int pib_create_kthread(struct pib_dev *dev);
+extern void pib_release_kthread(struct pib_dev *dev);
 
 /*
  *  in pib_cq.c
  */
-extern struct ib_cq *pib_ib_create_cq(struct ib_device *ibdev, int entries, int vector,
-				      struct ib_ucontext *context,
-				      struct ib_udata *udata);
-extern int pib_ib_destroy_cq(struct ib_cq *ibcq);
-extern int pib_ib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
-extern int pib_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
-extern int pib_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
-extern int pib_ib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
-extern void pib_util_remove_cq(struct pib_ib_cq *cq, struct pib_ib_qp *qp);
-extern int pib_util_insert_wc_success(struct pib_ib_cq *cq, const struct ib_wc *wc);
-extern int pib_util_insert_wc_error(struct pib_ib_cq *cq, struct pib_ib_qp *qp, u64 wr_id, enum ib_wc_status status, enum ib_wc_opcode opcode);
+extern struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
+				   struct ib_ucontext *context,
+				   struct ib_udata *udata);
+extern int pib_destroy_cq(struct ib_cq *ibcq);
+extern int pib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
+extern int pib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
+extern int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
+extern int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
+extern void pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp);
+extern int pib_util_insert_wc_success(struct pib_cq *cq, const struct ib_wc *wc);
+extern int pib_util_insert_wc_error(struct pib_cq *cq, struct pib_qp *qp, u64 wr_id, enum ib_wc_status status, enum ib_wc_opcode opcode);
 
 /*
  *  in pib_srq.c
  */
-extern struct ib_srq *pib_ib_create_srq(struct ib_pd *pd,
-					 struct ib_srq_init_attr *init_attr,
-					 struct ib_udata *udata);
-extern int pib_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
-			      enum ib_srq_attr_mask attr_mask, struct ib_udata *udata);
-extern int pib_ib_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr);
-extern int pib_ib_destroy_srq(struct ib_srq *srq);
-extern int pib_ib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
+extern struct ib_srq *pib_create_srq(struct ib_pd *pd,
+				     struct ib_srq_init_attr *init_attr,
+				     struct ib_udata *udata);
+extern int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
+			  enum ib_srq_attr_mask attr_mask, struct ib_udata *udata);
+extern int pib_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr);
+extern int pib_destroy_srq(struct ib_srq *srq);
+extern int pib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
 				 struct ib_recv_wr **bad_wr);
 
-extern struct pib_ib_recv_wqe *pib_util_get_srq(struct pib_ib_srq *srq);
+extern struct pib_recv_wqe *pib_util_get_srq(struct pib_srq *srq);
 
 /*
  *  in pib_qp.c
  */
-extern struct ib_qp *pib_ib_create_qp(struct ib_pd *pd,
-				       struct ib_qp_init_attr *init_attr,
-				       struct ib_udata *udata);
-extern int pib_ib_destroy_qp(struct ib_qp *ibqp);
-extern int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
-			     int attr_mask, struct ib_udata *udata);
-extern int pib_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mask,
-			    struct ib_qp_init_attr *qp_init_attr);
-extern int pib_ib_attach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
-extern int pib_ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
-extern int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
-			     struct ib_send_wr **bad_wr);
-extern int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
-			     struct ib_recv_wr **bad_wr);
-extern void pib_util_free_send_wqe(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
-extern void pib_util_free_recv_wqe(struct pib_ib_qp *qp, struct pib_ib_recv_wqe *recv_wqe);
-extern struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num);
-extern void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only);
-extern void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type event);
-extern void pib_util_insert_async_qp_event(struct pib_ib_qp *qp, enum ib_event_type event);
+extern struct ib_qp *pib_create_qp(struct ib_pd *pd,
+				   struct ib_qp_init_attr *init_attr,
+				   struct ib_udata *udata);
+extern int pib_destroy_qp(struct ib_qp *ibqp);
+extern int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+			 int attr_mask, struct ib_udata *udata);
+extern int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mask,
+			struct ib_qp_init_attr *qp_init_attr);
+extern int pib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+			 struct ib_send_wr **bad_wr);
+extern int pib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
+			 struct ib_recv_wr **bad_wr);
+extern void pib_util_free_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe);
+extern void pib_util_free_recv_wqe(struct pib_qp *qp, struct pib_recv_wqe *recv_wqe);
+extern struct pib_qp *pib_util_find_qp(struct pib_dev *dev, int qp_num);
+extern void pib_util_flush_qp(struct pib_qp *qp, int send_only);
+extern void pib_util_insert_async_qp_error(struct pib_qp *qp, enum ib_event_type event);
+extern void pib_util_insert_async_qp_event(struct pib_qp *qp, enum ib_event_type event);
+
+/*
+ *  in pib_multicast.c
+ */
+extern int pib_attach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
+extern int pib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
+extern void pib_detach_all_mcast(struct pib_dev *dev, struct pib_qp *qp);
 
 /*
  *  in pib_dma.c 
@@ -724,30 +745,30 @@ extern struct ib_dma_mapping_ops pib_dma_mapping_ops;
 /*
  *  in pib_ud.c
  */
-extern int pib_process_ud_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
-extern void pib_receive_ud_qp_SEND_request(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth);
+extern int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
+extern void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
 
 /*
  *  in pib_rc.c
  */
-extern int pib_process_rc_qp_request(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
-extern void pib_receive_rc_qp_incoming_message(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth);
-extern int pib_generate_rc_qp_acknowledge(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
+extern int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
+extern void pib_receive_rc_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+extern int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp);
 
 /*
  *  in pib_mad.c
  */
-extern int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
-			       struct ib_wc *in_wc, struct ib_grh *in_grh,
-			       struct ib_mad *in_mad, struct ib_mad *out_mad);
-extern void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port_num, enum pib_port_type type);
-extern void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port_num, enum pib_port_type type);
+extern int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+			   struct ib_wc *in_wc, struct ib_grh *in_grh,
+			   struct ib_mad *in_mad, struct ib_mad *out_mad);
+extern void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type);
+extern void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type);
 
 /*
  *  in pib_easy_sw.c
  */
-extern int pib_create_switch(struct pib_ib_easy_sw *sw);
-extern void pib_release_switch(struct pib_ib_easy_sw *sw);
+extern int pib_create_switch(struct pib_easy_sw *sw);
+extern void pib_release_switch(struct pib_easy_sw *sw);
 
 /*
  *  in pib_lib.c
@@ -761,17 +782,15 @@ extern int pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode);
 extern int pib_opcode_is_acknowledge(int OpCode);
 extern int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode);
 enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode);
-extern u32 pib_get_num_of_packets(struct pib_ib_qp *qp, u32 length);
+extern u32 pib_get_num_of_packets(struct pib_qp *qp, u32 length);
 extern u32 pib_get_rnr_nak_time(int timeout);
 extern unsigned long pib_get_local_ack_time(int timeout);
 extern u8 pib_get_local_ca_ack_delay(void);
-extern struct sockaddr *pib_get_sockaddr_from_lid(struct pib_ib_dev *dev, u8 port_num, struct pib_ib_qp *qp, u16 lid);
 extern const char *pib_get_mgmt_method(u8 method);
 extern const char *pib_get_smp_attr(__be16 attr_id);
 extern const char *pib_get_sa_attr(__be16 attr_id);
+extern void pib_print_base_hdr(const char *direct, const struct pib_packet_base_hdr *base_hdr);
 extern void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr);
 extern void pib_print_smp(const char *direct, const struct ib_smp *smp);
-extern void pib_print_sa_mad(const char *direct, const struct ib_sa_mad* sa_mad);
-
 
 #endif /* PIB_H */

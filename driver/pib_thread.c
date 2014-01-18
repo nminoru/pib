@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -27,18 +27,20 @@
 
 
 static int kthread_routine(void *data);
-static int create_socket(struct pib_ib_dev *dev, int port_index);
-static void release_socket(struct pib_ib_dev *dev, int port_index);
-static void process_on_scheduler(struct pib_ib_dev *dev);
-static int  process_new_send_wr(struct pib_ib_qp *qp);
-static int process_send_wr(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe);
-static int process_incoming_message(struct pib_ib_dev *dev, int port_index);
-static void process_sendmsg(struct pib_ib_dev *dev);
+static int create_socket(struct pib_dev *dev, int port_index);
+static void release_socket(struct pib_dev *dev, int port_index);
+static void process_on_scheduler(struct pib_dev *dev);
+static int process_new_send_wr(struct pib_qp *qp);
+static int process_send_wr(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
+static int process_incoming_message(struct pib_dev *dev, int port_index);
+static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+static void process_sendmsg(struct pib_dev *dev);
+static struct sockaddr *get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dlid);
 static void sock_data_ready_callback(struct sock *sk, int bytes);
 static void timer_timeout_callback(unsigned long opaque);
 
 
-int pib_create_kthread(struct pib_ib_dev *dev)
+int pib_create_kthread(struct pib_dev *dev)
 {
 	int i, j, ret;
 	struct task_struct *task;
@@ -49,7 +51,7 @@ int pib_create_kthread(struct pib_ib_dev *dev)
 	dev->thread.timer.function = timer_timeout_callback;
 	dev->thread.timer.data     = (unsigned long)dev;
 
-	dev->thread.buffer         = vmalloc(PIB_IB_PACKET_BUFFER);
+	dev->thread.buffer	   = vmalloc(PIB_PACKET_BUFFER);
 	if (!dev->thread.buffer) {
 		ret = -ENOMEM;
 		goto err_vmalloc;
@@ -86,7 +88,7 @@ err_vmalloc:
 }
 
 
-void pib_release_kthread(struct pib_ib_dev *dev)
+void pib_release_kthread(struct pib_dev *dev)
 {
 	int i;
 
@@ -108,7 +110,7 @@ void pib_release_kthread(struct pib_ib_dev *dev)
 }
 
 
-static int create_socket(struct pib_ib_dev *dev, int port_index)
+static int create_socket(struct pib_dev *dev, int port_index)
 {
 	int ret, addrlen;
 	struct socket *socket;
@@ -183,7 +185,7 @@ err_sock:
 }
 
 
-static void release_socket(struct pib_ib_dev *dev, int port_index)
+static void release_socket(struct pib_dev *dev, int port_index)
 {
 #ifndef PIB_USE_EASY_SWITCH
 	int i;
@@ -195,7 +197,7 @@ static void release_socket(struct pib_ib_dev *dev, int port_index)
 	}
 
 #ifndef PIB_USE_EASY_SWITCH
-	for (i=0 ; i<PIB_IB_MAX_LID ; i++) {
+	for (i=0 ; i<PIB_MAX_LID ; i++) {
 		if (dev->ports[port_index].lid_table[i]) {
 			kfree(dev->ports[port_index].lid_table[i]);
 			dev->ports[port_index].lid_table[i] = NULL;
@@ -212,9 +214,9 @@ static void release_socket(struct pib_ib_dev *dev, int port_index)
 
 static int kthread_routine(void *data)
 {
-	struct pib_ib_dev *dev;
+	struct pib_dev *dev;
 	
-	dev = (struct pib_ib_dev *)data;
+	dev = (struct pib_dev *)data;
 
 	BUG_ON(!dev);
 
@@ -261,13 +263,13 @@ static int kthread_routine(void *data)
 }
 
 
-static void process_on_scheduler(struct pib_ib_dev *dev)
+static void process_on_scheduler(struct pib_dev *dev)
 {
 	int ret;
 	unsigned long now;
 	unsigned long flags;
-	struct pib_ib_qp *qp;
-	struct pib_ib_send_wqe *send_wqe, *next_send_wqe;
+	struct pib_qp *qp;
+	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
 restart:
 	now = jiffies;
@@ -300,7 +302,7 @@ restart:
 	if (list_empty(&qp->requester.waiting_swqe_head))
 		goto first_sending_wsqe;
 
-	send_wqe = list_first_entry(&qp->requester.waiting_swqe_head, struct pib_ib_send_wqe, list);
+	send_wqe = list_first_entry(&qp->requester.waiting_swqe_head, struct pib_send_wqe, list);
 
 	if (time_after(send_wqe->processing.local_ack_time, now))
 		goto first_sending_wsqe;
@@ -331,7 +333,7 @@ first_sending_wsqe:
 			goto done;
 	}
 
-	send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
+	send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_send_wqe, list);
 
 	/*
 	 *  Sending list の先頭の Send WQE がエラーだが、waiting list が
@@ -407,9 +409,9 @@ done:
 }
 
 
-static int process_new_send_wr(struct pib_ib_qp *qp)
+static int process_new_send_wr(struct pib_qp *qp)
 {
-	struct pib_ib_send_wqe *send_wqe;
+	struct pib_send_wqe *send_wqe;
 	u32 num_packets;
 	unsigned long now;
 
@@ -419,7 +421,7 @@ static int process_new_send_wr(struct pib_ib_qp *qp)
 	if (list_empty(&qp->requester.submitted_swqe_head))
 		return 0;
 
-	send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_ib_send_wqe, list);
+	send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_send_wqe, list);
 
 	if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode)) {
 		if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic)
@@ -466,7 +468,7 @@ static int process_new_send_wr(struct pib_ib_qp *qp)
  *
  *  Lock: qp
  */
-static int process_send_wr(struct pib_ib_dev *dev, struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
+static int process_send_wr(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 {
 	enum ib_wr_opcode opcode;
 	enum ib_wc_status status;
@@ -529,22 +531,20 @@ completion_error:
 }
 
 
-static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
+static int process_incoming_message(struct pib_dev *dev, int port_index)
 {
 	int ret;
 	struct msghdr msghdr = {.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
 	struct kvec iov;
 	void *buffer;
-	struct pib_packet_lrh *lrh;
-	struct pib_packet_bth *bth;
-	u32 dest_qpn;
-	struct pib_ib_qp *qp;
-	const u8 port_num = port_index + 1;
+	struct pib_packet_base_hdr *base_hdr;
+	u32 dest_qp_num;
+	u16 dlid;
 
 	buffer = dev->thread.buffer;
 
 	iov.iov_base = buffer;
-	iov.iov_len  = PIB_IB_PACKET_BUFFER;
+	iov.iov_len  = PIB_PACKET_BUFFER;
 
 	ret = kernel_recvmsg(dev->ports[port_index].socket, &msghdr,
 			     &iov, 1, iov.iov_len, msghdr.msg_flags);
@@ -556,59 +556,140 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	} else if (ret == 0)
 		return -EAGAIN;
 
-	/* Analyze Local Route Hedaer */
-	if (ret < sizeof(struct pib_packet_lrh))
+	/* Analyze Local Route Hedaer & Base Transport Header */
+	base_hdr = (struct pib_packet_base_hdr *)buffer;
+	if (ret < sizeof(*base_hdr)) {
+		pib_debug("pib: drop packet: too small packet (size=%u)\n", ret);
 		goto silently_drop;
-
-	lrh = (struct pib_packet_lrh*)buffer;
+	}
 
 	/* check packet length */
-	if (pib_packet_lrh_get_pktlen(lrh) * 4 != ret)
+	if (pib_packet_lrh_get_pktlen(&base_hdr->lrh) * 4 != ret) {
+		pib_debug("pib: drop packet: differ UDP packet's size from IB message\n");
 		goto silently_drop;
+	}
 
-	buffer += sizeof(*lrh);
-	ret    -= sizeof(*lrh);
+	buffer += sizeof(*base_hdr);
+	ret    -= sizeof(*base_hdr);
+
+	if ((base_hdr->lrh.vl_lver & 0xF) != 0)  {/* Link Version */
+		pib_debug("pib: drop packet: wrong link version (%u)\n", (base_hdr->lrh.vl_lver & 0xF));
+		goto silently_drop;
+	}
 
 	/* 0x2: Transport: IBA, Next Header: BTH */
-	if ((lrh->sl_rsv_lnh & 0x3) != 1)
+	if ((base_hdr->lrh.sl_rsv_lnh & 0x3) != 1) {
+		pib_debug("pib: drop packet: BTH\n");
 		goto silently_drop;
-
-	/* Analyze Base Transport Header */
-	if (ret < sizeof(struct pib_packet_bth))
-		goto silently_drop;
-
-	bth = (struct pib_packet_bth *)buffer;
-
-	buffer += sizeof(*bth);
-	ret    -= sizeof(*bth);
+	}
 
 	/* Payload */
-	ret -= pib_packet_bth_get_padcnt(bth); /* Pad Count */
-	if (ret < 0)
-		goto silently_drop; /* @todo ERROR */
-
-	if ((lrh->vl_lver & 0xF) != 0) /* Link Version */
+	ret -= pib_packet_bth_get_padcnt(&base_hdr->bth); /* Pad Count */
+	if (ret < 0) {
+		pib_debug("pib: drop packet: too small packet except LRH & BTH (size=%u)\n", ret);
 		goto silently_drop;
+	}
 
-	dest_qpn = be32_to_cpu(bth->destQP) & PIB_IB_QPN_MASK;
+	dlid        = be16_to_cpu(base_hdr->lrh.dlid);
+	dest_qp_num = be32_to_cpu(base_hdr->bth.destQP) & PIB_QPN_MASK;
+
+	if ((dest_qp_num == PIB_QP0) || (dlid < PIB_MCAST_LID_BASE)) {
+		/* Unicast */
+		process_incoming_message_per_qp(dev, port_index, dlid, dest_qp_num, base_hdr, buffer, ret);
+	} else {
+		/* Multicast */
+		int i, max;
+		struct pib_packet_deth *deth;
+		u16 port_lid, slid;
+		u32 src_qp_num;
+		struct pib_mcast_link *mcast_link;
+		u32 qp_nums[PIB_MCAST_QP_ATTACH];
+
+		if ((base_hdr->bth.OpCode != IB_OPCODE_UD_SEND_ONLY) && 
+		    (base_hdr->bth.OpCode != IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE)) {
+			pib_debug("pib: drop packet: \n");
+			goto silently_drop;
+		}
+
+		if (ret < sizeof(struct pib_packet_deth))
+			goto silently_drop;
+
+		deth = (struct pib_packet_deth*)buffer;
+
+		src_qp_num = be32_to_cpu(deth->srcQP) & PIB_QPN_MASK;
+
+		down_read(&dev->rwsem);
+		i=0;
+		list_for_each_entry(mcast_link, &dev->mcast_table[dlid - PIB_MCAST_LID_BASE], lid_list) {
+			qp_nums[i] = mcast_link->qp_num;
+			i++;
+		}
+		up_read(&dev->rwsem);
+
+		max = i;
+
+		port_lid = dev->ports[port_index].ib_port_attr.lid;
+		slid     = be16_to_cpu(base_hdr->lrh.slid);
+
+		/* 
+		 * マルチキャストパケットを届ける QP は複数かもしれない。
+		 * ただし送信した QP 自身は受け取らない。
+		 */
+		for (i=0 ; i<max ; i++) {
+			if ((port_lid == slid) && (src_qp_num == qp_nums[i]))
+				continue;
+
+			pib_debug("pib: MC packet qp_num=0x%06x\n", qp_nums[i]);
+			process_incoming_message_per_qp(dev, port_index, dlid, qp_nums[i], base_hdr, buffer, ret);
+
+			cond_resched();
+		}
+	}
+
+silently_drop:
+	return 0;
+}
+
+
+static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
+{
+	struct pib_qp *qp;
+	const u8 port_num = port_index + 1;
 
 	down_read(&dev->rwsem);
 
-	if ((dest_qpn == PIB_IB_QP0) || (dest_qpn == PIB_IB_QP1))
-		qp = dev->ports[port_index].qp_info[dest_qpn];
-	else
-		qp = pib_util_find_qp(dev, dest_qpn);
+	switch (dest_qp_num) {
+
+	case PIB_QP0:
+	case PIB_QP1:
+		qp = dev->ports[port_index].qp_info[dest_qp_num];
+		break;
+
+	case IB_MULTICAST_QPN:
+		BUG();
+		break;
+
+	default:
+		qp = pib_util_find_qp(dev, dest_qp_num);
+		break;
+	}
 
 	if (qp == NULL) {
 		up_read(&dev->rwsem);
+		pib_debug("pib: drop packet: not found qp (qpn=0x%06x)\n", dest_qp_num);
 		goto silently_drop;
 	}
 
 	/* LRH: check port LID and DLID of incoming packet */
-	if (((dest_qpn == PIB_IB_QP0) && (lrh->dlid == IB_LID_PERMISSIVE)))
+	if (((dest_qp_num == PIB_QP0) && (base_hdr->lrh.dlid == IB_LID_PERMISSIVE)))
 		;
-	else if (be16_to_cpu(lrh->dlid) != dev->ports[port_index].ib_port_attr.lid) {
+	else if (PIB_MCAST_LID_BASE <= dlid)
+		;
+	else if (dlid != dev->ports[port_index].ib_port_attr.lid) {
 		up_read(&dev->rwsem);
+
+		pib_debug("pib: drop packet: differ packet's dlid from port lid (0x%04x, 0x%04x)\n",
+			  dlid, dev->ports[port_index].ib_port_attr.lid);
 		goto silently_drop;
 	}
 
@@ -618,13 +699,13 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 	switch (qp->qp_type) {
 
 	case IB_QPT_RC:
-		pib_receive_rc_qp_incoming_message(dev, port_num, qp, buffer, ret, lrh, bth);
+		pib_receive_rc_qp_incoming_message(dev, port_num, qp, base_hdr, buffer, size);
 		break;
 
 	case IB_QPT_UD:
 	case IB_QPT_GSI:
 	case IB_QPT_SMI:
-		pib_receive_ud_qp_SEND_request(dev, port_num, qp, buffer, ret, lrh, bth);
+		pib_receive_ud_qp_incoming_message(dev, port_num, qp, base_hdr, buffer, size);
 		break;
 
 	default:
@@ -641,20 +722,22 @@ static int process_incoming_message(struct pib_ib_dev *dev, int port_index)
 		process_sendmsg(dev);
 
 silently_drop:
-	return 0;
+
+	return;
 }
+
 
 
 /******************************************************************************/
 /*                                                                            */
 /******************************************************************************/
 
-void pib_util_reschedule_qp(struct pib_ib_qp *qp)
+void pib_util_reschedule_qp(struct pib_qp *qp)
 {
-	struct pib_ib_dev *dev;
+	struct pib_dev *dev;
 	unsigned long flags;
 	unsigned long now, schedule_time;
-	struct pib_ib_send_wqe *send_wqe;
+	struct pib_send_wqe *send_wqe;
 	struct rb_node **link;
 	struct rb_node *parent = NULL;
 	struct rb_node *rb_node;
@@ -688,14 +771,14 @@ void pib_util_reschedule_qp(struct pib_ib_qp *qp)
 		return;
 
 	if (!list_empty(&qp->requester.waiting_swqe_head)) {
-		send_wqe = list_first_entry(&qp->requester.waiting_swqe_head, struct pib_ib_send_wqe, list);
+		send_wqe = list_first_entry(&qp->requester.waiting_swqe_head, struct pib_send_wqe, list);
 
 		if (time_before(send_wqe->processing.local_ack_time, schedule_time))
 			schedule_time = send_wqe->processing.local_ack_time;
 	}
 
 	if (!list_empty(&qp->requester.sending_swqe_head)) {
-		send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_ib_send_wqe, list);
+		send_wqe = list_first_entry(&qp->requester.sending_swqe_head, struct pib_send_wqe, list);
 
 		if (send_wqe->processing.status != IB_WC_SUCCESS)
 			if (!list_empty(&qp->requester.waiting_swqe_head))
@@ -710,7 +793,7 @@ void pib_util_reschedule_qp(struct pib_ib_qp *qp)
 	}
 
 	if ((qp->state == IB_QPS_RTS) && !list_empty(&qp->requester.submitted_swqe_head)) {
-		send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_ib_send_wqe, list);
+		send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_send_wqe, list);
 
 		if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode))
 			if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic)
@@ -733,10 +816,10 @@ skip:
 	link = &dev->schedule.rb_root.rb_node;
 	while (*link) {
 		int cond;
-		struct pib_ib_qp *qp_tmp;
+		struct pib_qp *qp_tmp;
 
 		parent = *link;
-		qp_tmp = rb_entry(parent, struct pib_ib_qp, schedule.rb_node);
+		qp_tmp = rb_entry(parent, struct pib_qp, schedule.rb_node);
 
 		if (qp_tmp->schedule.time != schedule_time)
 			cond = time_after(qp_tmp->schedule.time, schedule_time);
@@ -755,7 +838,7 @@ skip:
 	/* calculate the most early time  */
 	rb_node = rb_first(&dev->schedule.rb_root);
 	BUG_ON(rb_node == NULL);
-	qp = rb_entry(rb_node, struct pib_ib_qp, schedule.rb_node);
+	qp = rb_entry(rb_node, struct pib_qp, schedule.rb_node);
 	dev->schedule.wakeup_time = qp->schedule.time;
 
 	spin_unlock_irqrestore(&dev->schedule.lock, flags);
@@ -765,11 +848,11 @@ skip:
 }
 
 
-struct pib_ib_qp *pib_util_get_first_scheduling_qp(struct pib_ib_dev *dev)
+struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev)
 {
 	unsigned long flags;
 	struct rb_node *rb_node;
-	struct pib_ib_qp *qp = NULL;
+	struct pib_qp *qp = NULL;
 
 	spin_lock_irqsave(&dev->schedule.lock, flags);
 
@@ -778,7 +861,7 @@ struct pib_ib_qp *pib_util_get_first_scheduling_qp(struct pib_ib_dev *dev)
 	if (rb_node == NULL)
 		goto done;
 
-	qp = rb_entry(rb_node, struct pib_ib_qp, schedule.rb_node);
+	qp = rb_entry(rb_node, struct pib_qp, schedule.rb_node);
 done:
 
 	spin_unlock_irqrestore(&dev->schedule.lock, flags);
@@ -790,30 +873,81 @@ done:
 /******************************************************************************/
 /*                                                                            */
 /******************************************************************************/
-static void process_sendmsg(struct pib_ib_dev *dev)
+static void process_sendmsg(struct pib_dev *dev)
 {
 	int ret;
+	u8 port_num;
+	u32 src_qp_num;
+	u16 dlid;
+	struct sockaddr *sockaddr;
 	struct msghdr	msghdr;
 	struct kvec	iov;
+	const struct pib_packet_base_hdr *base_hdr;
 
-	BUG_ON(dev->thread.sockaddr == NULL);
+	port_num   = dev->thread.port_num;
+	src_qp_num = dev->thread.src_qp_num;
+	dlid       = dev->thread.dlid;
+
+	sockaddr = get_sockaddr_from_dlid(dev, port_num, src_qp_num, dlid);
+	if (!sockaddr) {
+		pr_err("pib: Not found the destination address in ld_table (dlid=%u)", dlid);
+		goto done;
+	}
+
 	BUG_ON(dev->thread.msg_size == 0);
+
+	base_hdr = (const struct pib_packet_base_hdr *)dev->thread.buffer;
+
+	/* QP0 以外は SLID または DLID が 0 のパケットは投げない */
+	if (src_qp_num != PIB_QP0)
+		if ((be16_to_cpu(base_hdr->lrh.slid) == 0) || (dlid == 0))
+			goto done;
 
 	memset(&msghdr, 0, sizeof(msghdr));
 
-	msghdr.msg_name    = dev->thread.sockaddr;
-	msghdr.msg_namelen = (dev->thread.sockaddr->sa_family == AF_INET6) ?
-		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);	
+	msghdr.msg_name    = sockaddr;
+	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
+		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 
 	iov.iov_base = dev->thread.buffer;
 	iov.iov_len  = dev->thread.msg_size;
 
-	ret = kernel_sendmsg(dev->ports[dev->thread.port_num - 1].socket,
+	ret = kernel_sendmsg(dev->ports[port_num - 1].socket,
 			     &msghdr, &iov, 1, iov.iov_len);
 
-	dev->thread.sockaddr = NULL;
-	dev->thread.msg_size = 0;
+done:
 	dev->thread.ready_to_send = 0;
+}
+
+
+static struct sockaddr *
+get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dlid)
+{
+	unsigned long flags;
+	struct sockaddr *sockaddr;
+
+	if (src_qp_num == PIB_QP0) {
+		spin_lock_irqsave(&pib_easy_sw.lock, flags);
+		sockaddr = pib_easy_sw.sockaddr;
+		spin_unlock_irqrestore(&pib_easy_sw.lock, flags);
+	} else {
+		if (dlid == 0)
+			sockaddr = dev->ports[port_num - 1].sockaddr; /* @todo */
+		else if (dlid == dev->ports[port_num - 1].ib_port_attr.lid)
+			/* loopback */
+			sockaddr = dev->ports[port_num - 1].sockaddr;
+		else if (dlid < PIB_MCAST_LID_BASE)
+			/* unicast */
+			sockaddr = dev->ports[port_num - 1].lid_table[dlid];
+		else {
+			/* multicast */
+			spin_lock_irqsave(&pib_easy_sw.lock, flags);
+			sockaddr = pib_easy_sw.sockaddr;
+			spin_unlock_irqrestore(&pib_easy_sw.lock, flags);
+		}
+	}
+
+	return sockaddr;
 }
 
 
@@ -823,7 +957,7 @@ static void process_sendmsg(struct pib_ib_dev *dev)
 
 static void sock_data_ready_callback(struct sock *sk, int bytes)
 {
-	struct pib_ib_dev* dev  = (struct pib_ib_dev*)sk->sk_user_data;
+	struct pib_dev* dev  = (struct pib_dev*)sk->sk_user_data;
 
 	set_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags);
 	complete(&dev->thread.completion);
@@ -832,7 +966,7 @@ static void sock_data_ready_callback(struct sock *sk, int bytes)
 
 static void timer_timeout_callback(unsigned long opaque)
 {
-	struct pib_ib_dev* dev  = (struct pib_ib_dev*)opaque;
+	struct pib_dev* dev  = (struct pib_dev*)opaque;
 	
 	set_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags);
 	complete(&dev->thread.completion);

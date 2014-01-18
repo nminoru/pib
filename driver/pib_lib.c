@@ -1,14 +1,16 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
 #include <linux/module.h>
 #include <linux/init.h>
 #include <rdma/ib_pack.h>
-
+#include <rdma/ib_mad.h>
+#include <rdma/ib_sa.h>
 
 #include "pib.h"
+#include "pib_packet.h"
 
 
 static const char *str_qp_type[IB_QPT_MAX] = {
@@ -336,7 +338,7 @@ int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 }
 
 
-u32 pib_get_num_of_packets(struct pib_ib_qp *qp, u32 length)
+u32 pib_get_num_of_packets(struct pib_qp *qp, u32 length)
 {
 	u32 num_packets;
 	enum ib_mtu path_mtu;
@@ -402,6 +404,44 @@ u8 pib_get_local_ca_ack_delay(void)
 }
 
 
+const char *pib_get_mgmt_class(u8 mgmt_class)
+{
+	switch (mgmt_class) {
+	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
+		return "SUBN_LID_ROUTED";
+	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
+		return "SUBN_DIRECTED_ROUTE";
+	case IB_MGMT_CLASS_SUBN_ADM:
+		return "SUBN_ADM";
+	case IB_MGMT_CLASS_PERF_MGMT:
+		return "PERF_MGMT";
+	case IB_MGMT_CLASS_BM:
+		return "BM";
+	case IB_MGMT_CLASS_DEVICE_MGMT:
+		return "_DEVICE_MGMT";
+	case IB_MGMT_CLASS_CM:
+		return "CM";
+	case IB_MGMT_CLASS_SNMP:
+		return "SNMP";
+	case IB_MGMT_CLASS_DEVICE_ADM:
+		return "DEVICE_ADM";
+	case IB_MGMT_CLASS_BOOT_MGMT:
+		return "BOOT_MGMT";
+	case IB_MGMT_CLASS_BIS:
+		return "BIS";
+	case IB_MGMT_CLASS_CONG_MGMT:
+		return "CONG_MGMT";
+	case IB_MGMT_CLASS_VENDOR_RANGE2_START:
+		return "VENDOR_RANGE2_START";
+	case IB_MGMT_CLASS_VENDOR_RANGE2_END:
+		return "VENDOR_RANGE2_END";
+
+	default:
+		return "Unknown";
+	}
+}
+
+
 const char *pib_get_mgmt_method(u8 method)
 {
 	switch (method) {
@@ -423,6 +463,22 @@ const char *pib_get_mgmt_method(u8 method)
 		return "TRAP_REPRESS";
 	case IB_MGMT_METHOD_RESP:
 		return "RESP";
+
+	case IB_SA_METHOD_GET_TABLE:
+		return "GET_TABLE";
+	case IB_SA_METHOD_GET_TABLE_RESP:
+		return "GET_TABLE_RESP";
+	case IB_SA_METHOD_DELETE:
+		return "DELETE";
+	case IB_SA_METHOD_DELETE_RESP:
+		return "DELETE_RESP";
+	case IB_SA_METHOD_GET_MULTI:
+		return "GET_MULTI";
+	case IB_SA_METHOD_GET_MULTI_RESP:
+		return "GET_MULTI_RESP";
+	case IB_SA_METHOD_GET_TRACE_TBL:
+		return "GET_TRACE_TBL";
+
 	default:
 		return "Unknown";
 	}
@@ -523,10 +579,28 @@ const char *pib_get_sa_attr(__be16 attr_id)
 }
 
 
+void pib_print_base_hdr(const char *direct, const struct pib_packet_base_hdr *base_hdr)
+{
+	u8 OpCode = base_hdr->bth.OpCode;
+
+	pr_info("%s: opcode         0x%02x\n", direct, OpCode);
+	pr_info("%s: lid            0x%04x -> 0x%04x\n", direct,
+		be16_to_cpu(base_hdr->lrh.slid), be16_to_cpu(base_hdr->lrh.dlid));
+	pr_info("%s: pktlen         %u - %u\n",direct,
+		(be16_to_cpu(base_hdr->lrh.pktlen) & 0x7FF) * 4,
+		(base_hdr->bth.se_m_padcnt_tver >> 4) & 0x3);
+	pr_info("%s: destQP         0x%06x\n", direct,
+		be32_to_cpu(base_hdr->bth.destQP) & PIB_QPN_MASK);
+	pr_info("%s: psn            0x%06x\n", direct,
+		be32_to_cpu(base_hdr->bth.psn)    & PIB_PSN_MASK);
+}
+
+
 void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr)
 {
 	pr_info("%s: base_version   %u\n",     direct, hdr->base_version);
-	pr_info("%s: mgmt_class     0x%02x\n", direct, hdr->mgmt_class);
+	pr_info("%s: mgmt_class     %s(0x%02x)\n", direct,
+		pib_get_mgmt_class(hdr->mgmt_class), hdr->mgmt_class);
 	pr_info("%s: class_version  %u\n",     direct, hdr->class_version);
 	pr_info("%s: method         %s(0x%02x)\n", direct,
 		pib_get_mgmt_method(hdr->method), hdr->method);
@@ -561,7 +635,8 @@ void pib_print_smp(const char *direct, const struct ib_smp *smp)
 	char buffer[1024];
 
 	pr_info("%s: base_version   %u\n",     direct, smp->base_version);
-	pr_info("%s: mgmt_class     0x%02x\n", direct, smp->mgmt_class);
+	pr_info("%s: mgmt_class     %s(0x%02x)\n", direct,
+		pib_get_mgmt_class(smp->mgmt_class), smp->mgmt_class);
 	pr_info("%s: class_version  %u\n",     direct, smp->class_version);
 	pr_info("%s: method         %s(0x%02x)\n", direct,
 		pib_get_mgmt_method(smp->method), smp->method);
@@ -600,17 +675,4 @@ void pib_print_smp(const char *direct, const struct ib_smp *smp)
 		pr_info("%s: %s\n", direct, buffer);
 	}
 #endif
-}
-
-
-void pib_print_sa_mad(const char *direct, const struct ib_sa_mad* sa_mad)
-{
-	pib_print_mad(direct, &sa_mad->mad_hdr);
-
-	pr_info("%s: sm_key         0x%llx\n",
-		direct, (unsigned long long)be64_to_cpu(sa_mad->sa_hdr.sm_key));
-	pr_info("%s: attr_offset    0x%x\n",
-		direct, be16_to_cpu(sa_mad->sa_hdr.attr_offset));
-	pr_info("%s: comp_mask      0x%x\n",
-		direct, be16_to_cpu(sa_mad->sa_hdr.comp_mask));
 }

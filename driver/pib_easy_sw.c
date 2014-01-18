@@ -1,7 +1,7 @@
 /*
  * pib_easy_sw.c - Easy switch (Pseudo IBA switch to connect all ports of local host only)
  *
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -21,33 +21,33 @@
 
 static int kthread_routine(void *data);
 
-static int create_socket(struct pib_ib_easy_sw *sw);
-static void release_socket(struct pib_ib_easy_sw *sw);
+static int create_socket(struct pib_easy_sw *sw);
+static void release_socket(struct pib_easy_sw *sw);
 static void sock_data_ready_callback(struct sock *sk, int bytes);
-static int process_incoming_message(struct pib_ib_easy_sw *sw);
-static int process_smp(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int process_smp_get_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int process_smp_set_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_guidinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_linear_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_linear_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_random_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
-static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num);
+static int process_incoming_message(struct pib_easy_sw *sw);
+static int process_smp(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int process_smp_get_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int process_smp_set_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_nodedescription(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_switchinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_switchinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_guidinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_guidinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_portinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_portinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_linear_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_linear_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_random_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
+static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
 static u8  get_sw_port_num(const struct sockaddr *sockaddr);
 
 
@@ -73,7 +73,7 @@ static int reply_failure(struct ib_smp *smp)
 }
 
 
-int pib_create_switch(struct pib_ib_easy_sw *sw)
+int pib_create_switch(struct pib_easy_sw *sw)
 {
 	int ret = 0;
 	u8 port_num;
@@ -84,17 +84,18 @@ int pib_create_switch(struct pib_ib_easy_sw *sw)
 
 	sw->port_cnt = pib_num_hca * pib_phys_port_cnt + 1 /* port 0 */; /* @todo これ物理ポート数じゃない */
 
-	sw->ports = vzalloc(sizeof(struct pib_ib_port) * sw->port_cnt);
+	sw->ports = vzalloc(sizeof(struct pib_port) * sw->port_cnt);
 	if (!sw->ports)
 		goto err_vmalloc_ports;
 
 	for (port_num = 0 ; port_num < sw->port_cnt ; port_num++) {
+		int j;
 		struct ib_port_attr ib_port_attr = {
 			.state           = IB_PORT_INIT,
 			.max_mtu         = IB_MTU_4096,
 			.active_mtu      = IB_MTU_256,
-			.gid_tbl_len     = PIB_IB_GID_PER_PORT,
-			.port_cap_flags  = 0, /* 0x02514868, */
+			.gid_tbl_len     = PIB_GID_PER_PORT,
+			.port_cap_flags  = PIB_PORT_CAP_FLAGS,
 			.max_msg_sz      = 0x40000000,
 			.bad_pkey_cntr   = 0U,
 			.qkey_viol_cntr  = 128,
@@ -106,9 +107,9 @@ int pib_create_switch(struct pib_ib_easy_sw *sw)
 			.sm_sl           = 0U,
 			.subnet_timeout  = 0U,
 			.init_type_reply = 0U,
-			.active_width    = IB_WIDTH_4X,
+			.active_width    = IB_WIDTH_12X,
 			.active_speed    = IB_SPEED_QDR,
-			.phys_state      = PIB_IB_PHYS_PORT_POLLING,
+			.phys_state      = PIB_PHYS_PORT_POLLING,
 		};
 		
 		sw->ports[port_num].port_num	 = port_num;
@@ -120,11 +121,14 @@ int pib_create_switch(struct pib_ib_easy_sw *sw)
 		sw->ports[port_num].gid[0].global.interface_id  =
 			cpu_to_be64(hca_guid_base | 0x0100ULL);
 
-		sw->ports[port_num].link_width_enabled = (IB_WIDTH_1X | IB_WIDTH_4X | IB_WIDTH_8X | IB_WIDTH_12X);
-		sw->ports[port_num].link_speed_enabled = 0x7; /* 2.5 or 5.0 or 10.0 Gbps */
+		sw->ports[port_num].link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
+		sw->ports[port_num].link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
+
+		for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
+			sw->ports[port_num].pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
 	}
 
-	sw->buffer = vmalloc(PIB_IB_PACKET_BUFFER);
+	sw->buffer = vmalloc(PIB_PACKET_BUFFER);
 	if (!sw->buffer)
 		goto err_vmalloc_buffer;
 
@@ -132,7 +136,7 @@ int pib_create_switch(struct pib_ib_easy_sw *sw)
 	if (!sw->ucast_fwd_table)
 		goto err_vmalloc_ucast_fwd_table;
 
-	sw->mcast_fwd_table = vzalloc((PIB_MAX_LID - PIB_MCAST_LID_BASE) * sizeof(struct pib_port_bits));
+	sw->mcast_fwd_table = vzalloc(sizeof(struct pib_port_bits) * (PIB_MAX_LID - PIB_MCAST_LID_BASE));
 	if (!sw->mcast_fwd_table)
 		goto err_vmalloc_mcast_fwd_table;
 
@@ -175,7 +179,7 @@ err_vmalloc_ports:
 }
 
 
-void pib_release_switch(struct pib_ib_easy_sw *sw)
+void pib_release_switch(struct pib_easy_sw *sw)
 {
 	pr_info("pib: remove internal switch\n");
 
@@ -192,7 +196,7 @@ void pib_release_switch(struct pib_ib_easy_sw *sw)
 }
 
 
-static int create_socket(struct pib_ib_easy_sw *sw)
+static int create_socket(struct pib_easy_sw *sw)
 {
 	int ret, addrlen;
 	struct socket *socket;
@@ -256,7 +260,7 @@ err_sock:
 }
 
 
-static void release_socket(struct pib_ib_easy_sw *sw)
+static void release_socket(struct pib_easy_sw *sw)
 {
 	if (sw->sockaddr) {
 		kfree(sw->sockaddr);
@@ -272,9 +276,9 @@ static void release_socket(struct pib_ib_easy_sw *sw)
 
 static int kthread_routine(void *data)
 {
-	struct pib_ib_easy_sw *sw;
+	struct pib_easy_sw *sw;
 
-	sw = (struct pib_ib_easy_sw *)data;
+	sw = (struct pib_easy_sw *)data;
 
 	BUG_ON(!sw);
 
@@ -296,31 +300,32 @@ static int kthread_routine(void *data)
 
 static void sock_data_ready_callback(struct sock *sk, int bytes)
 {
-	struct pib_ib_easy_sw* sw = (struct pib_ib_easy_sw*)sk->sk_user_data;
+	struct pib_easy_sw* sw = (struct pib_easy_sw*)sk->sk_user_data;
 
 	set_bit(PIB_THREAD_READY_TO_RECV, &sw->flags);
 	complete(&sw->completion);
 }
 
 
-static int process_incoming_message(struct pib_ib_easy_sw *sw)
+static int process_incoming_message(struct pib_easy_sw *sw)
 {
-	int ret, recvmsg_size, self_reply;
+	int ret, recvmsg_size, self_consumed;
 	u8 in_sw_port_num, out_sw_port_num;
 	u8 dest_port_num;
-	u32 dest_qpn;
+	u32 dest_qp_num;
+	u16 dlid;
 	struct msghdr msghdr = {.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
 	struct sockaddr_in6 sockaddr_in6;
 	struct kvec iov;
-	struct pib_ib_dev *dev;
-	struct pib_packet_min_request *base_packet;
+	struct pib_dev *dev;
+	struct pib_packet_base_hdr *base_hdr;
 	struct pib_packet_mad *mad_packet;
 	struct pib_packet_smp *smp_packet;
 
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
 	iov.iov_base	   = sw->buffer;
-	iov.iov_len	   = PIB_IB_PACKET_BUFFER;
+	iov.iov_len	   = PIB_PACKET_BUFFER;
 
 	ret = kernel_recvmsg(sw->socket, &msghdr,
 			     &iov, 1, iov.iov_len, msghdr.msg_flags);
@@ -332,18 +337,44 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 	} else if (ret == 0)
 		return -EAGAIN;
 
-	recvmsg_size = ret;
-
-	base_packet = (struct pib_packet_min_request *)sw->buffer;
-	if (recvmsg_size < sizeof(*base_packet))
+	in_sw_port_num = get_sw_port_num((const struct sockaddr*)&sockaddr_in6);
+	if (in_sw_port_num == 0) {
+		pr_err("pib: easy switch: Can't match the sockaddr of incoming packet\n");
 		goto silently_drop;
-
-	dest_qpn = be32_to_cpu(base_packet->bth.destQP);
-	if ((dest_qpn != 0) || (dest_qpn & ~PIB_IB_QPN_MASK)) {
-		pr_crit("pib: pib_easy_sw: QPN=0x%06x\n", dest_qpn);
-		BUG();
 	}
 
+	recvmsg_size = ret;
+
+	base_hdr = (struct pib_packet_base_hdr *)sw->buffer;
+	if (recvmsg_size < sizeof(*base_hdr))
+		goto silently_drop;
+
+	dest_qp_num = be32_to_cpu(base_hdr->bth.destQP);
+	if (dest_qp_num & ~PIB_QPN_MASK) {
+		pib_debug("pib: easy switch: drop packet: dest_qp_num=0x%06x\n", dest_qp_num);
+		goto silently_drop;
+	}
+
+	dlid = be16_to_cpu(base_hdr->lrh.dlid);
+
+	if ((dest_qp_num == PIB_QP0) || (dest_qp_num == PIB_QP1))
+		goto proccess_mad;
+
+	if ((dlid != 0) &&
+	    (base_hdr->lrh.dlid != IB_LID_PERMISSIVE) &&
+	    (dlid != pib_easy_sw.ports[0].ib_port_attr.lid)) {
+		/* Easy switch 宛のパケットではない */
+		if ((dest_qp_num == IB_MULTICAST_QPN) || (PIB_MCAST_LID_BASE <= dlid))
+			goto relay_mcast;
+		else
+			goto relay_ucast;
+	}
+
+	/* MAD 以外の easy switch 宛のパケット */
+	pr_err("pib: easy switch: drop packet: dlid=0x%04x, dest_qp_num=0x%06x\n", dlid, dest_qp_num);
+	goto silently_drop;
+
+proccess_mad:
 	mad_packet = (struct pib_packet_mad *)sw->buffer;
 	if (recvmsg_size < sizeof(*mad_packet))
 	    goto silently_drop;
@@ -365,8 +396,6 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 		break;
 
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
-		/* @todo */
-
 	default:
 		pr_crit("pib: pib_easy_sw: mgmt_class = %u\n",
 			mad_packet->mad.mad_hdr.mgmt_class);
@@ -374,31 +403,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 		break;
 	}
 
-	in_sw_port_num = get_sw_port_num((const struct sockaddr*)&sockaddr_in6);
-	if (in_sw_port_num == 0) {
-		pr_err("pib: pib_easy_sw: Can't match the sockaddr of incoming packet\n");
-		goto silently_drop;
-	}
-
-#if 0
-	pib_debug("pib: recvmsg: inw_sw_port_num=%u, slid=0x%x, dlid=0x%x, dr_slid=0x%x, dr_dlid=0x%x, hop_cnt=%u, hop_ptr=%u\n",
-		  in_sw_port_num,		     
-		  smp_packet->lrh.SLID,
-		  smp_packet->lrh.DLID,
-		  smp_packet->smp.dr_slid,
-		  smp_packet->smp.dr_dlid,
-		  smp_packet->smp.hop_cnt,
-		  smp_packet->smp.hop_ptr);
-
-	pib_debug("pib: switch %s %s 0x%x 0x%x %u\n",
-		  pib_get_mgmt_method(smp_packet->smp.method),
-		  pib_get_smp_attr(smp_packet->smp.attr_id),
-		  smp_packet->smp.status,
-		  be32_to_cpu(smp_packet->smp.attr_mod),
-		  in_sw_port_num);
-#endif
-
-	self_reply = 0;
+	self_consumed = 0;
 
 	if ((smp_packet->smp.status & IB_SMP_DIRECTION) == 0) {
 		/* Outgoing SMP */
@@ -407,7 +412,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 				smp_packet->smp.hop_ptr--;
 				ret = process_smp(&smp_packet->smp, sw, in_sw_port_num);
 				out_sw_port_num = in_sw_port_num;
-				self_reply = 1;
+				self_consumed = 1;
 			} else {
 				pr_crit("pib: packet.smp.dr_dlid = 0x%04x\n",
 					be16_to_cpu(smp_packet->smp.dr_dlid));
@@ -417,7 +422,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 			smp_packet->smp.hop_ptr--;
 			ret = process_smp(&smp_packet->smp, sw, in_sw_port_num);
 			out_sw_port_num = in_sw_port_num;
-			self_reply = 1;
+			self_consumed = 1;
 		} else {
 			ret = IB_MAD_RESULT_SUCCESS;
 			out_sw_port_num = smp_packet->smp.initial_path[smp_packet->smp.hop_ptr + 1];
@@ -431,7 +436,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 		smp_packet->smp.return_path[smp_packet->smp.hop_ptr] = out_sw_port_num;
 	}
 
-	if (self_reply) {
+	if (self_consumed) {
 		smp_packet->lrh.dlid = smp_packet->lrh.slid;
 		if (smp_packet->smp.dr_slid == IB_LID_PERMISSIVE)
 			smp_packet->lrh.slid = IB_LID_PERMISSIVE;
@@ -444,7 +449,7 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 
 	BUG_ON((out_sw_port_num == 0) || (sw->port_cnt <= out_sw_port_num));
 
-	dev = pib_ib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
+	dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
 
 	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
 
@@ -455,7 +460,28 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 		memset(&sockaddr_in6, 0, sizeof(sockaddr_in6));
 	up_read(&dev->rwsem);
 
-	/* */
+	msghdr.msg_name    = &sockaddr_in6;
+	msghdr.msg_namelen = sizeof(sockaddr_in6);
+	iov.iov_base	   = sw->buffer;
+	iov.iov_len	   = recvmsg_size;
+
+	ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
+
+	return 0;
+
+relay_ucast:
+	out_sw_port_num = sw->ucast_fwd_table[dlid];
+
+	dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
+
+	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
+
+	down_read(&dev->rwsem);
+	if (dev->ports[dest_port_num - 1].sockaddr)
+		memcpy(&sockaddr_in6, dev->ports[dest_port_num - 1].sockaddr, sizeof(struct sockaddr_in)); /* @todo */
+	else
+		memset(&sockaddr_in6, 0, sizeof(sockaddr_in6));
+	up_read(&dev->rwsem);
 
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
@@ -464,12 +490,50 @@ static int process_incoming_message(struct pib_ib_easy_sw *sw)
 
 	ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
 
+	return 0;
+
+relay_mcast:
+	for (out_sw_port_num = 1 ; out_sw_port_num < sw->port_cnt ; out_sw_port_num++) {
+		u16 pm_block;
+
+		/*
+		 * HACK:
+		 * マルチキャストグループに属していても入力ポートへは送信しないが、
+		 * 同一ポートにある別 QP へ届けるためにここでは送り返す。
+		 */
+
+		/* マルチキャストグループの出力ポートではない */
+		pm_block = sw->mcast_fwd_table[dlid - PIB_MCAST_LID_BASE].pm_blocks[out_sw_port_num / 16];
+		if ((pm_block & (1U << (out_sw_port_num % 16))) == 0)
+			continue;
+
+		dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
+
+		dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
+
+		down_read(&dev->rwsem);
+		if (dev->ports[dest_port_num - 1].sockaddr)
+			memcpy(&sockaddr_in6, dev->ports[dest_port_num - 1].sockaddr, sizeof(struct sockaddr_in)); /* @todo */
+		else
+			memset(&sockaddr_in6, 0, sizeof(sockaddr_in6));
+		up_read(&dev->rwsem);
+
+		msghdr.msg_name    = &sockaddr_in6;
+		msghdr.msg_namelen = sizeof(sockaddr_in6);
+		iov.iov_base	   = sw->buffer;
+		iov.iov_len	   = recvmsg_size;
+
+		ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
+	}
+
+	return 0;
+
 silently_drop:
 	return 0;
 }
 
 
-static int process_smp(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int process_smp(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	int ret;
 
@@ -492,7 +556,7 @@ static int process_smp(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port
 }
 
 
-static int process_smp_get_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int process_smp_get_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	memset(smp->data, 0, sizeof(smp->data));
 
@@ -539,7 +603,7 @@ static int process_smp_get_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw,
 }
 
 
-static int process_smp_set_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int process_smp_set_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	switch (smp->attr_id) {
 
@@ -578,7 +642,7 @@ static int process_smp_set_method(struct ib_smp *smp, struct pib_ib_easy_sw *sw,
 }
 
 
-static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_nodedescription(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	if (smp->attr_mod)
 		smp->status |= IB_SMP_INVALID_FIELD;
@@ -589,7 +653,7 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_easy_sw *s
 }
 
 
-static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	struct pib_mad_node_info *node_info = (struct pib_mad_node_info *)&smp->data;
 
@@ -614,7 +678,7 @@ static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 i
 }
 
 
-static int subn_get_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_switchinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	struct pib_mad_switch_info *switch_info = (struct pib_mad_switch_info *)&smp->data;
 	u8 opimized_sl_to_vl_mapping_programming;
@@ -642,7 +706,7 @@ static int subn_get_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8
 }
 
 
-static int subn_set_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_switchinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	struct pib_mad_switch_info *switch_info = (struct pib_mad_switch_info *)&smp->data;
 
@@ -660,27 +724,27 @@ static int subn_set_switchinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8
 }
 
 
-static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_guidinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 	return reply_failure(smp);
 }
 
 
-static int subn_set_guidinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_guidinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 	return reply_failure(smp);
 }
 
 
-static int subn_get_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_portinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 	u32 port_num = be32_to_cpu(smp->attr_mod);
-	struct pib_ib_port *port;
+	struct pib_port *port;
 
-	port = &pib_ib_easy_sw.ports[port_num];
+	port = &pib_easy_sw.ports[port_num];
 
 	port_info->local_port_num = in_port_num;
 
@@ -691,12 +755,12 @@ static int subn_get_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 i
 }
 
 
-static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_portinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	u32 port_num = be32_to_cpu(smp->attr_mod);
-	struct pib_ib_port *port;
+	struct pib_port *port;
 
-	port = &pib_ib_easy_sw.ports[port_num];
+	port = &pib_easy_sw.ports[port_num];
 
 	pib_subn_set_portinfo(smp, port, port_num,
 			      (port_num != 0) ? PIB_PORT_SW_EXT : PIB_PORT_BASE_SP0);
@@ -704,22 +768,13 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 i
 	if (port->ib_port_attr.state < IB_PORT_INIT) {
 		sw->port_state_change    = 1;
 		port->ib_port_attr.state = IB_PORT_INIT;
-	}	
-
-#if 0
-	pib_debug("pib: ib_sw(set_portinfo) in_port_num=%u, port_num=%u, lid=%u, state=%u, phys_state=%u\n",
-		  in_port_num,
-		  port_num,
-		  port->ib_port_attr.lid,
-		  port->ib_port_attr.state,
-		  port->ib_port_attr.phys_state);
-#endif
+	}
 
 	return reply(smp);
 }
 
 
-static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	int i;
 	u32 attr_mod, block_index, sw_port_index;
@@ -748,7 +803,7 @@ bail:
 }
 
 
-static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	int i;
 	u32 attr_mod, block_index, sw_port_index;
@@ -777,35 +832,35 @@ bail:
 }
 
 
-static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 	return reply_failure(smp);
 }
 
 
-static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 	return reply_failure(smp);
 }
 
 
-static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 	return reply_failure(smp);
 }
 
 
-static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 	return reply_failure(smp);
 }
 
 
-static int subn_get_linear_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_linear_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	u32 i, attr_mod;
 	u8 *table = (u8 *)&smp->data[0];
@@ -826,7 +881,7 @@ bail:
 }
 
 
-static int subn_set_linear_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_linear_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	u32 i, attr_mod;
 	u8 *table = (u8 *)&smp->data[0];
@@ -846,14 +901,14 @@ bail:
 }
 
 
-static int subn_get_random_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_random_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 	return reply_failure(smp);
 }
 
 
-static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	u32 i, attr_mod;
 	__be32 *table = (__be32 *)&smp->data[0];
@@ -880,7 +935,7 @@ bail:
 }
 
 
-static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	u32 attr_mod;
 	u32 i, mcast_lid_offset, port_index;
@@ -898,7 +953,7 @@ static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_s
 }
 
 
-static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_ib_easy_sw *sw, u8 in_port_num)
+static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	u32 attr_mod;
 	u32 i, mcast_lid_offset, port_index;
@@ -924,7 +979,7 @@ static u8 get_sw_port_num(const struct sockaddr *sockaddr)
 	__be16 sin_port = ((const struct sockaddr_in*)sockaddr)->sin_port;
 
 	for (i=0 ; i<pib_num_hca ; i++) {
-		struct pib_ib_dev *dev = pib_ib_devs[i];
+		struct pib_dev *dev = pib_devs[i];
 
 		down_read(&dev->rwsem);
 		for (j=0 ; j<pib_phys_port_cnt ; j++) {

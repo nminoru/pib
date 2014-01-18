@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -8,7 +8,6 @@
 
 #include <rdma/ib_mad.h>
 #include <rdma/ib_smi.h>
-#include <rdma/ib_sa.h>
 #include <rdma/ib_cache.h>
 #include <rdma/ib_pma.h>
 
@@ -16,27 +15,23 @@
 #include "pib_mad.h"
 
 
-static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
+static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
 			struct ib_wc *in_wc, struct ib_grh *in_grh,
 			struct ib_mad *in_mad, struct ib_mad *out_mad);
-static int process_subn_get_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int process_subn_set_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_set_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_get_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num);
-
-static int process_subn_adm(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
-			    struct ib_wc *in_wc, struct ib_grh *in_grh,
-			    struct ib_mad *in_mad, struct ib_mad *out_mad);
+static int process_subn_get_method(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_get_nodedescription(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_get_guidinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_set_guidinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_get_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_get_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_set_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
+static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
 
 
 static int reply(struct ib_smp *smp)
@@ -61,50 +56,46 @@ static int reply_failure(struct ib_smp *smp)
 }
 
 
-int pib_ib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
-		       struct ib_wc *in_wc, struct ib_grh *in_grh,
-		       struct ib_mad *in_mad, struct ib_mad *out_mad)
+int pib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
+		    struct ib_wc *in_wc, struct ib_grh *in_grh,
+		    struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
-	int ret;
+	struct pib_dev *dev;
 
 	BUG_ON(!in_mad || !out_mad);
 
-	ret = IB_MAD_RESULT_SUCCESS;
-
-	*out_mad = *in_mad;
+	dev = to_pdev(ibdev);
 
 	if (in_mad->mad_hdr.method == IB_MGMT_METHOD_GET_RESP)
-		goto done;
+		return IB_MAD_RESULT_SUCCESS;
+
+	if (in_mad->mad_hdr.base_version != IB_MGMT_BASE_VERSION)
+		goto bad_version;
 
 	switch (in_mad->mad_hdr.mgmt_class) {
 
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
-		return process_subn(ibdev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
-
-	case IB_MGMT_CLASS_SUBN_ADM:
-		return process_subn_adm(ibdev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
+		return process_subn(dev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
 
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
 	case IB_MGMT_CLASS_PERF_MGMT:
-	case IB_MGMT_CLASS_BM:
-	case IB_MGMT_CLASS_DEVICE_MGMT:
-	case IB_MGMT_CLASS_CM:
-	case IB_MGMT_CLASS_SNMP:
-	case IB_MGMT_CLASS_DEVICE_ADM:
-	case IB_MGMT_CLASS_BOOT_MGMT:
-	case IB_MGMT_CLASS_BIS:
-	case IB_MGMT_CLASS_CONG_MGMT:
-	case IB_MGMT_CLASS_VENDOR_RANGE2_START:
-	case IB_MGMT_CLASS_VENDOR_RANGE2_END:
-	default:
 		pr_err("pib: Not Implementation class: %u\n", in_mad->mad_hdr.mgmt_class);
 		pib_print_mad("pib: IN", &in_mad->mad_hdr);
 		pib_print_mad("pib: OUT", &out_mad->mad_hdr);
+		return IB_MAD_RESULT_SUCCESS;
+		
+	default:
 		break;
 	}
 
-done:
-	return ret;
+	return IB_MAD_RESULT_SUCCESS;
+
+bad_version:
+	/* out_mad->mad_hdr.method = IB_MGMT_METHOD_GET_RESP; */
+	/* out_mad->mad_hdr.status = IB_MGMT_MAD_STATUS_REDIRECT_REQD; */
+	out_mad->mad_hdr.status = IB_MGMT_MAD_STATUS_BAD_VERSION;
+
+	return IB_MAD_RESULT_FAILURE | IB_MAD_RESULT_REPLY;
 }
 
 
@@ -112,19 +103,18 @@ done:
 /* Subnet Management class                                                    */
 /******************************************************************************/
 
-static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
+static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
 			struct ib_wc *in_wc, struct ib_grh *in_grh,
 			struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
 	int ret;
-	struct ib_smp *smp  = (struct ib_smp *)out_mad;
-	struct pib_ib_dev *dev;
+	struct ib_smp *smp;
 
 	/* pib_print_smp("in ", smp); */
 
 	*out_mad = *in_mad;
 
-	dev = to_pdev(ibdev);
+	smp  = (struct ib_smp *)out_mad;
 
 #if 0
 	pib_debug("pib: hca    %s %s dev-id=%u status=0x%x attr_mod=0x%x in_port_num=%u\n",
@@ -192,7 +182,7 @@ static int process_subn(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 }
 
 
-static int process_subn_get_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int process_subn_get_method(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	memset(smp->data, 0, sizeof(smp->data));
 
@@ -241,7 +231,7 @@ static int process_subn_get_method(struct ib_smp *smp, struct pib_ib_dev *dev, u
 }
 
 
-static int process_subn_set_method(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	switch (smp->attr_id) {
 
@@ -281,7 +271,7 @@ static int process_subn_set_method(struct ib_smp *smp, struct pib_ib_dev *dev, u
 }
 
 
-static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_get_nodedescription(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	if (smp->attr_mod)
 		smp->status |= IB_SMP_INVALID_FIELD;
@@ -292,7 +282,7 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_ib_dev *dev, 
 }
 
 
-static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	struct pib_mad_node_info *node_info = (struct pib_mad_node_info *)&smp->data;
 
@@ -317,7 +307,7 @@ static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 }
 
 
-static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_get_guidinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 
@@ -325,7 +315,7 @@ static int subn_get_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 }
 
 
-static int subn_set_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_set_guidinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 
@@ -333,11 +323,11 @@ static int subn_set_guidinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_p
 }
 
 
-static int subn_get_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_get_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 	u32 port_num = be32_to_cpu(smp->attr_mod);
-	struct pib_ib_port *port;
+	struct pib_port *port;
 
 	if (port_num == 0)
 		port_num = in_port_num;
@@ -358,7 +348,7 @@ bail:
 }
 
 
-void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port_num, enum pib_port_type type)
+void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type)
 {
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 
@@ -387,12 +377,11 @@ void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 
 	if (type != PIB_PORT_BASE_SP0) { 
 		port_info->link_width_enabled	= port->link_width_enabled;
-		port_info->link_width_supported	= (IB_WIDTH_1X | IB_WIDTH_4X | IB_WIDTH_8X | IB_WIDTH_12X);
+		port_info->link_width_supported	= PIB_LINK_WIDTH_SUPPORTED;
 		port_info->link_width_active	= port->ib_port_attr.active_width;
-	
+
 		/* 4 bits, 4 bits */
-		port_info->linkspeed_portstate	=
-			(port->ib_port_attr.active_speed << 4) | port->ib_port_attr.state;
+		port_info->linkspeed_portstate	= (PIB_LINK_SPEED_SUPPORTED << 4) | port->ib_port_attr.state;
 
 		/* 4 bits, 4 bits */
 		port_info->portphysstate_linkdown =
@@ -405,9 +394,10 @@ void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 			(port->mkeyprot << 6) | port->ib_port_attr.lmc;
 	}
 
-	if (type != PIB_PORT_BASE_SP0) { 
+	if (type != PIB_PORT_BASE_SP0) {
 		/* 4 bits, 4 bits */
-		port_info->linkspeedactive_enabled = port->link_speed_enabled;
+		port_info->linkspeedactive_enabled =
+			(port->ib_port_attr.active_speed << 4) | port->link_speed_enabled;
 
 		/* 4 bits, 4 bits */
 		port_info->neighbormtu_mastersmsl |=
@@ -476,12 +466,12 @@ void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 }
 
 
-static int subn_set_portinfo(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	int port_index;
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 	u32 port_num = be32_to_cpu(smp->attr_mod);
-	struct pib_ib_port *port;
+	struct pib_port *port;
 	struct ib_event event;
 	u16 old_lid, new_lid;
 	u16 old_sm_lid, new_sm_lid;
@@ -558,7 +548,7 @@ bail:
 }
 
 
-void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port_num, enum pib_port_type type)
+void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type)
 {
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
 
@@ -579,8 +569,16 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 	}
 
 	if (type != PIB_PORT_BASE_SP0) { 
-		if (port_info->link_width_enabled)
+		switch (port_info->link_width_enabled) {
+		case 0: /* No State Change */
+			break;
+		case 255: /* */
+			port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
+			break;
+		default:
 			port->link_width_enabled = port_info->link_width_enabled;
+			break;
+		}
 
 		if (port_info->linkspeed_portstate & 0xF)
 			port->ib_port_attr.state  = port_info->linkspeed_portstate & 0xF;
@@ -598,8 +596,16 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 	}
 
 	if (type != PIB_PORT_BASE_SP0) { 
-		if (port_info->linkspeedactive_enabled & 0xF)
+		switch (port_info->linkspeedactive_enabled & 0xF) {
+		case 0: /* No State Change */
+			break;
+		case 15: /* */
+			port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
+			break;
+		default:
 			port->link_speed_enabled = (port_info->linkspeedactive_enabled & 0xF);
+			break;
+		}
 
 		port->ib_port_attr.active_mtu	= (port_info->neighbormtu_mastersmsl >> 4);
 	}
@@ -637,6 +643,34 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 		port->overrun_errors       = port_info->localphyerrors_overrunerrors & 0xF;
 	}
 
+
+	/* set LinkWidthActive */
+	if ((port->link_width_enabled == 0) || (15 < port->link_width_enabled))
+	    ; /* No change */
+	else if (port->link_width_enabled == 1)
+		port->ib_port_attr.active_width = IB_WIDTH_1X;
+	else if (port->link_width_enabled <= 3)
+		port->ib_port_attr.active_width = IB_WIDTH_4X;
+	else if (port->link_width_enabled <= 7)
+		port->ib_port_attr.active_width = IB_WIDTH_8X;
+	else
+		port->ib_port_attr.active_width = IB_WIDTH_12X;
+
+	/* set LinkSpeedActive */
+	switch (port->link_speed_enabled) {
+	case 1:
+		port->ib_port_attr.active_speed = IB_SPEED_SDR; /*  2.5 Gbps (1) */
+		break;
+	case 3:
+		port->ib_port_attr.active_speed = IB_SPEED_DDR; /*  5.0 Gbps (2) */
+		break;
+	case 5: case 7:
+		port->ib_port_attr.active_speed = IB_SPEED_QDR; /* 10.0 Gbps (4) */
+		break;		
+	default: /* No change */
+		break;
+	}
+
 #if 0
 	pib_debug("pib: pib_subn_set_portinfo: type=%u, port_num=%u, tid=%llx, lid=%u, state=%u phy_state=%u\n",
 		  type, port_num, (unsigned long long)cpu_to_be16(smp->tid), port->ib_port_attr.lid,
@@ -645,7 +679,7 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_ib_port *port, u8 port
 }
 
 
-static int subn_get_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_get_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	int i;
 	u32 attr_mod, block_index, sw_port_index;
@@ -670,7 +704,7 @@ bail:
 }
 
 
-static int subn_set_pkey_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_set_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	int i;
 	int changed = 0;
@@ -717,7 +751,7 @@ bail:
 }
 
 
-static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 
@@ -725,7 +759,7 @@ static int subn_get_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u
 }
 
 
-static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 
@@ -733,7 +767,7 @@ static int subn_set_sl_to_vl_table(struct ib_smp *smp, struct pib_ib_dev *dev, u
 }
 
 
-static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 
@@ -741,61 +775,9 @@ static int subn_get_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 
 }
 
 
-static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_ib_dev *dev, u8 in_port_num)
+static int subn_set_vl_arb_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 
 	return reply_failure(smp);
-}
-
-
-/******************************************************************************/
-/* Subnet Administration class                                                */
-/******************************************************************************/
-
-static int process_subn_adm(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
-			    struct ib_wc *in_wc, struct ib_grh *in_grh,
-			    struct ib_mad *in_mad, struct ib_mad *out_mad)
-{
-	struct pib_ib_dev *dev;
-	struct ib_sa_mad *sa_mad;
-
-	*out_mad = *in_mad;
-	
-	sa_mad = (struct ib_sa_mad*)out_mad;
-
-	dev = to_pdev(ibdev);
-
-	pib_debug("pib: process SubnAdm dev-id=%u in_port_num=%u\n", dev->ib_dev_id, in_port_num);
-	pib_print_sa_mad("pib: IN", sa_mad);
-
-	switch (be16_to_cpu(sa_mad->mad_hdr.attr_id)) {
-
-	case IB_SA_ATTR_CLASS_PORTINFO:
-	case IB_SA_ATTR_NOTICE:
-	case IB_SA_ATTR_INFORM_INFO:
-	case IB_SA_ATTR_NODE_REC:
-	case IB_SA_ATTR_PORT_INFO_REC:
-	case IB_SA_ATTR_SL2VL_REC:
-	case IB_SA_ATTR_SWITCH_REC:
-	case IB_SA_ATTR_LINEAR_FDB_REC:
-	case IB_SA_ATTR_RANDOM_FDB_REC:
-	case IB_SA_ATTR_MCAST_FDB_REC:
-	case IB_SA_ATTR_SM_INFO_REC:
-	case IB_SA_ATTR_LINK_REC:
-	case IB_SA_ATTR_GUID_INFO_REC:
-	case IB_SA_ATTR_SERVICE_REC:
-	case IB_SA_ATTR_PARTITION_REC:
-	case IB_SA_ATTR_PATH_REC:
-	case IB_SA_ATTR_VL_ARB_REC:
-	case IB_SA_ATTR_MC_MEMBER_REC:
-	case IB_SA_ATTR_TRACE_REC:
-	case IB_SA_ATTR_MULTI_PATH_REC:
-	case IB_SA_ATTR_SERVICE_ASSOC_REC:
-	case IB_SA_ATTR_INFORM_INFO_REC:
-	default:
-		break;
-	}
-	
-	return 0;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -10,10 +10,10 @@
 
 
 struct ib_ucontext *
-pib_ib_alloc_ucontext(struct ib_device *ibdev,
+pib_alloc_ucontext(struct ib_device *ibdev,
 		      struct ib_udata *udata)
 {
-	struct pib_ib_ucontext *ucontext;
+	struct pib_ucontext *ucontext;
 
 	ucontext = kzalloc(sizeof *ucontext, GFP_KERNEL);
 	if (!ucontext)
@@ -23,9 +23,9 @@ pib_ib_alloc_ucontext(struct ib_device *ibdev,
 }
 
 
-int pib_ib_dealloc_ucontext(struct ib_ucontext *ibcontext)
+int pib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 {
-	struct pib_ib_ucontext *ucontext = to_pucontext(ibcontext);
+	struct pib_ucontext *ucontext = to_pucontext(ibcontext);
 
 	kfree(ucontext);
 

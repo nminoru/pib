@@ -1,9 +1,40 @@
-- inline 対応
-  IBV_SEND_INLINE をつけると L_Key をチェックしなくなる。
+- ポートが ACTIVE でない場合、MAD 以外のパケットは破棄する処理。
+
+- ロックの正常化
+
+- IBV_SEND_SOLICITED 対応
+
+- RNR タイマーを見直せ
+
+- recevie_acknowledge を見直す。
+  - 勝手に破棄するのはダメ
+
+- マルチキャスト対応
+  - ibv_attach_mcast、ibv_detach_mcast
+
+- 非同期エラー・イベント
+  - QP event 
+    - IBV_EVENT_PATH_MIG
+    - IBV_EVENT_PATH_MIG_ERR
+  - CQ events
+    - IBV_EVENT_CQ_ERR
+  - SRQ events
+    - IBV_EVENT_SRQ_ERR
+  - Port events
+    - IBV_EVENT_CLIENT_REREGISTER
+    - IBV_EVENT_GID_CHANGE
+  - CA event
+    - IBV_EVENT_DEVICE_FATAL
+
+- process_mad 
+  - IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE
+  - IB_MGMT_CLASS_SUBN_LID_ROUTED
+  - IB_MGMT_CLASS_PERF_MGMT
+
+- Context、CQ、SRQ にも 24 ビットの ID を振る。
+  - 表示・制御用
 
 - UD/UC/RD/RC/XRC
-
-- パケットヘッダーのエンディアン変換
 
 - ソケットのバッファサイズを変更可能に。
 
@@ -34,14 +65,6 @@
 - LMC 
 
 - req_notify_cq のコールバックは ib_req_notify_cq() の関数ヘッダーに合わせろ
-
-- 9.5 Transaction Ordering
-  - エラーになった場合、キューの前にいる WR が処理されるまで待機。特に reliable service で注意。
-  - requester の ACK 受信は coalescing が効く。
-    ただし RDMA READ と ATOMIC 操作のレスポンスは別。 
-  - Receiver 側は SEND と RDMA WRITE w/Imm は順番通りに処理するが、fence がついてない限り RDMA
-    READ の completion は暗黙的である。
-  - fence がついた処理は、前にある RDMA READ と Atomic 操作が全て終わるまでブロックされる。
 
 - Protection domain のチェック(QP、SRQ、MR、AH)
   - QP と SRQ のチェック

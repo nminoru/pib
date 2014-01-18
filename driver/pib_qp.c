@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -11,25 +11,25 @@
 #include "pib.h"
 
 
-static int qp_init_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_init_attr *init_attr);
-static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *cap, int use_srq);
-static void dealloc_free_wqe(struct pib_ib_qp *qp);
-static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp *qp, const struct ib_qp_attr *attr, int attr_mask);
-static void get_ready_to_send(struct pib_ib_dev *dev, struct pib_ib_qp *qp);
-static void reset_qp(struct pib_ib_qp *qp);
-static void reset_qp_attr(struct pib_ib_qp *qp);
-static int copy_inline_data(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, u64 total_length);
+static int qp_init_attr_is_ok(const struct pib_dev *dev, const struct ib_qp_init_attr *init_attr);
+static int qp_cap_is_ok(const struct pib_dev *dev, const struct ib_qp_cap *cap, int use_srq);
+static void dealloc_free_wqe(struct pib_qp *qp);
+static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, const struct ib_qp_attr *attr, int attr_mask);
+static void get_ready_to_send(struct pib_dev *dev, struct pib_qp *qp);
+static void reset_qp(struct pib_qp *qp);
+static void reset_qp_attr(struct pib_qp *qp);
+static int copy_inline_data(struct pib_qp *qp, struct pib_send_wqe *send_wqe, u64 total_length);
 
 
-struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num)
+struct pib_qp *pib_util_find_qp(struct pib_dev *dev, int qp_num)
 {
 	struct rb_node *node = dev->qp_table.rb_node;
 
 	while (node) {
 		int ret;
-		struct pib_ib_qp *qp;
+		struct pib_qp *qp;
 
-		qp  = rb_entry(node, struct pib_ib_qp, rb_node);
+		qp  = rb_entry(node, struct pib_qp, rb_node);
 
 		ret = (int)qp->ib_qp.qp_num - qp_num;
 
@@ -45,7 +45,7 @@ struct pib_ib_qp *pib_util_find_qp(struct pib_ib_dev *dev, int qp_num)
 }
 
 
-static void insert_qp(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
+static void insert_qp(struct pib_dev *dev, struct pib_qp *qp)
 {
 	int qp_num;
 	struct rb_node **link = &dev->qp_table.rb_node;
@@ -54,10 +54,10 @@ static void insert_qp(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 	qp_num = qp->ib_qp.qp_num;
 
 	while (*link) {
-		struct pib_ib_qp *qp_tmp;
+		struct pib_qp *qp_tmp;
 
 		parent = *link;
-		qp_tmp = rb_entry(parent, struct pib_ib_qp, rb_node);
+		qp_tmp = rb_entry(parent, struct pib_qp, rb_node);
 
 		if (qp_tmp->ib_qp.qp_num > qp_num)
 			link = &parent->rb_left;
@@ -70,7 +70,7 @@ static void insert_qp(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
 }
 
 
-static int get_send_wr_num(const struct pib_ib_qp *qp)
+static int get_send_wr_num(const struct pib_qp *qp)
 {
 	return qp->requester.nr_submitted_swqe +
 		qp->requester.nr_sending_swqe +
@@ -78,11 +78,11 @@ static int get_send_wr_num(const struct pib_ib_qp *qp)
 }
 
 
-void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
+void pib_util_flush_qp(struct pib_qp *qp, int send_only)
 {
-	struct pib_ib_send_wqe *send_wqe, *next_send_wqe;
-	struct pib_ib_recv_wqe *recv_wqe, *next_recv_wqe;
-	struct pib_ib_ack *ack, *ack_next;
+	struct pib_send_wqe *send_wqe, *next_send_wqe;
+	struct pib_recv_wqe *recv_wqe, *next_recv_wqe;
+	struct pib_ack *ack, *ack_next;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
@@ -123,7 +123,7 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 
 	list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
 		list_del_init(&ack->list);
-		kmem_cache_free(pib_ib_ack_cachep, ack);
+		kmem_cache_free(pib_ack_cachep, ack);
 	}
 	qp->responder.nr_rd_atomic = 0;
 	
@@ -137,11 +137,11 @@ void pib_util_flush_qp(struct pib_ib_qp *qp, int send_only)
 }
 
 
-static void reset_qp(struct pib_ib_qp *qp)
+static void reset_qp(struct pib_qp *qp)
 {
-	struct pib_ib_send_wqe *send_wqe, *next_send_wqe;
-	struct pib_ib_recv_wqe *recv_wqe, *next_recv_wqe;
-	struct pib_ib_ack *ack, *ack_next;
+	struct pib_send_wqe *send_wqe, *next_send_wqe;
+	struct pib_recv_wqe *recv_wqe, *next_recv_wqe;
+	struct pib_ack *ack, *ack_next;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		list_del_init(&send_wqe->list);
@@ -171,7 +171,7 @@ static void reset_qp(struct pib_ib_qp *qp)
 
 	list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
 		list_del_init(&ack->list);
-		kmem_cache_free(pib_ib_ack_cachep, ack);
+		kmem_cache_free(pib_ack_cachep, ack);
 	}
 	qp->responder.nr_rd_atomic = 0;
 
@@ -185,7 +185,7 @@ static void reset_qp(struct pib_ib_qp *qp)
 }
 
 
-static void reset_qp_attr(struct pib_ib_qp *qp)
+static void reset_qp_attr(struct pib_qp *qp)
 {
 	qp->local_ack_timeout      = pib_get_local_ack_time(qp->ib_qp_attr.timeout);
 
@@ -208,14 +208,14 @@ static void reset_qp_attr(struct pib_ib_qp *qp)
 }
 
 
-struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
-			       struct ib_qp_init_attr *init_attr,
-			       struct ib_udata *udata)
+struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
+			    struct ib_qp_init_attr *init_attr,
+			    struct ib_udata *udata)
 {
 	int i;
 	int is_register_qp_table = 0;
-	struct pib_ib_dev *dev;
-	struct pib_ib_qp *qp;
+	struct pib_dev *dev;
+	struct pib_qp *qp;
 	u32 qp_num;
 
 	if (!ibpd || !init_attr)
@@ -230,7 +230,7 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		if (ibpd != init_attr->srq->pd)
 			return ERR_PTR(-EINVAL);
 
-	qp = kmem_cache_zalloc(pib_ib_qp_cachep, GFP_KERNEL);
+	qp = kmem_cache_zalloc(pib_qp_cachep, GFP_KERNEL);
 	if (!qp)
 		return ERR_PTR(-ENOMEM);
 
@@ -255,16 +255,18 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 	INIT_LIST_HEAD(&qp->responder.ack_head);
 	INIT_LIST_HEAD(&qp->responder.free_rwqe_head);
 
+	INIT_LIST_HEAD(&qp->mcast_head);
+
 	reset_qp_attr(qp);
 
 	switch (qp->qp_type) {
 
 	case IB_QPT_SMI:
-		qp_num = PIB_IB_QP0;
+		qp_num = PIB_QP0;
 		goto special_qp;
 
 	case IB_QPT_GSI:
-		qp_num = PIB_IB_QP1;
+		qp_num = PIB_QP1;
 		goto special_qp;
 
 	special_qp:
@@ -283,10 +285,14 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		down_write(&dev->rwsem);
 		qp_num = dev->last_qp_num;
 		for (;;) {
-			qp_num = (qp_num + 1) & PIB_IB_QPN_MASK;
+			qp_num = (qp_num + 1) & PIB_QPN_MASK;
 
-			if ((qp_num == PIB_IB_QP0) || (qp_num == PIB_IB_QP1))
+			switch (qp_num) {
+			case PIB_QP0:
+			case PIB_QP1:
+			case IB_MULTICAST_QPN:
 				continue;
+			}
 
 			if (pib_util_find_qp(dev, qp_num) == NULL)
 				break;
@@ -299,7 +305,7 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 		break;
 
 	default:
-		pr_err("pib: pib_ib_create_qp: unknown QP type %s(%d)\n",
+		pr_err("pib: pib_create_qp: unknown QP type %s(%d)\n",
 		       pib_get_qp_type(init_attr->qp_type), init_attr->qp_type);
 		return ERR_PTR(-ENOSYS);
 	}
@@ -315,9 +321,9 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 	/* allocate Send WQEs and Recv WQEs */
 
 	for (i=0 ; i<init_attr->cap.max_send_wr ; i++) {
-		struct pib_ib_send_wqe *send_wqe;
+		struct pib_send_wqe *send_wqe;
 
-		send_wqe = kmem_cache_zalloc(pib_ib_send_wqe_cachep, GFP_KERNEL);
+		send_wqe = kmem_cache_zalloc(pib_send_wqe_cachep, GFP_KERNEL);
 		if (!send_wqe)
 			goto err_alloc_wqe;
 
@@ -330,9 +336,9 @@ struct ib_qp *pib_ib_create_qp(struct ib_pd *ibpd,
 	}
 
 	for (i=0 ; i<init_attr->cap.max_recv_wr ; i++) {
-		struct pib_ib_recv_wqe *recv_wqe;
+		struct pib_recv_wqe *recv_wqe;
 
-		recv_wqe = kmem_cache_zalloc(pib_ib_recv_wqe_cachep, GFP_KERNEL);
+		recv_wqe = kmem_cache_zalloc(pib_recv_wqe_cachep, GFP_KERNEL);
 		if (!recv_wqe)
 			goto err_alloc_wqe;
 
@@ -355,13 +361,13 @@ err_alloc_inlin_data_buffer:
 		up_write(&dev->rwsem);
 	}
 
-	kmem_cache_free(pib_ib_qp_cachep, qp);
+	kmem_cache_free(pib_qp_cachep, qp);
 
 	return ERR_PTR(-ENOMEM);
 }
 
 
-static int qp_init_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_init_attr *init_attr)
+static int qp_init_attr_is_ok(const struct pib_dev *dev, const struct ib_qp_init_attr *init_attr)
 {
 	switch (init_attr->qp_type) {
 
@@ -385,7 +391,7 @@ static int qp_init_attr_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_i
 }
 
 
-static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *cap, int use_srq)
+static int qp_cap_is_ok(const struct pib_dev *dev, const struct ib_qp_cap *cap, int use_srq)
 {
 	if ((cap->max_send_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_send_wr)) {
 		pib_debug("pib: wrong max_send_wr=%u in qp_cap_is_ok\n", cap->max_send_wr);
@@ -419,7 +425,7 @@ static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *ca
 		}
 	}
 
-	if (PIB_IB_MAX_INLINE < cap->max_inline_data) {
+	if (PIB_MAX_INLINE < cap->max_inline_data) {
 		pib_debug("pib: too large max_inline_data=%u in qp_cap_is_ok\n", cap->max_inline_data);
 		return 0;
 	}
@@ -428,11 +434,11 @@ static int qp_cap_is_ok(const struct pib_ib_dev *dev, const struct ib_qp_cap *ca
 }
 
 
-int pib_ib_destroy_qp(struct ib_qp *ibqp)
+int pib_destroy_qp(struct ib_qp *ibqp)
 {
 	int qp_num;
-	struct pib_ib_qp *qp;
-	struct pib_ib_dev *dev;
+	struct pib_qp *qp;
+	struct pib_dev *dev;
 
 	if (!ibqp)
 		return -EINVAL;
@@ -442,6 +448,8 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	qp_num = ibqp->qp_num;
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
+
+	pib_detach_all_mcast(dev, qp);
 
 	down_write(&dev->rwsem);
 
@@ -453,45 +461,45 @@ int pib_ib_destroy_qp(struct ib_qp *ibqp)
 	if (qp->requester.inline_data_buffer)
 		vfree(qp->requester.inline_data_buffer);
 
-	if ((qp_num == PIB_IB_QP0) || (qp_num == PIB_IB_QP1))
+	if ((qp_num == PIB_QP0) || (qp_num == PIB_QP1))
 		dev->ports[qp->ib_qp_init_attr.port_num - 1].qp_info[qp_num] = NULL;
 	else
 		rb_erase(&qp->rb_node, &dev->qp_table);
 
 	up_write(&dev->rwsem);
 
-	kmem_cache_free(pib_ib_qp_cachep, qp);
+	kmem_cache_free(pib_qp_cachep, qp);
 
 	return 0;
 }
 
 
-static void dealloc_free_wqe(struct pib_ib_qp *qp)
+static void dealloc_free_wqe(struct pib_qp *qp)
 {
 	while (!list_empty(&qp->requester.free_swqe_head)) {
-		struct pib_ib_send_wqe *send_wqe;
-		send_wqe = list_first_entry(&qp->requester.free_swqe_head, struct pib_ib_send_wqe, list);
+		struct pib_send_wqe *send_wqe;
+		send_wqe = list_first_entry(&qp->requester.free_swqe_head, struct pib_send_wqe, list);
 		list_del_init(&send_wqe->list);
-		kmem_cache_free(pib_ib_send_wqe_cachep, send_wqe);
+		kmem_cache_free(pib_send_wqe_cachep, send_wqe);
 	}
 
 	while (!list_empty(&qp->responder.free_rwqe_head)) {
-		struct pib_ib_recv_wqe *recv_wqe;
-		recv_wqe = list_first_entry(&qp->responder.free_rwqe_head, struct pib_ib_recv_wqe, list);
+		struct pib_recv_wqe *recv_wqe;
+		recv_wqe = list_first_entry(&qp->responder.free_rwqe_head, struct pib_recv_wqe, list);
 		list_del_init(&recv_wqe->list);
-		kmem_cache_free(pib_ib_recv_wqe_cachep, recv_wqe);
+		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 }
 
 
-int pib_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
-		     int attr_mask, struct ib_udata *udata)
+int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
+		  int attr_mask, struct ib_udata *udata)
 {
 	int ret;
 	int pending_send_wr = 0;
 	int issue_sq_drained = 0;
-	struct pib_ib_qp *qp;
-	struct pib_ib_dev *dev;
+	struct pib_qp *qp;
+	struct pib_dev *dev;
 	enum ib_qp_state cur_state, new_state;
 
 	if (!ibqp || !attr)
@@ -669,7 +677,7 @@ err_inval:
 }
 
 
-static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp *qp, const struct ib_qp_attr *attr, int attr_mask)
+static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, const struct ib_qp_attr *attr, int attr_mask)
 {
 	/* IB_QP_EN_SQD_ASYNC_NOTIFY */
 	/*    en_sqd_async_notify */
@@ -698,7 +706,7 @@ static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp 
 		}
 	
 	if (attr_mask & IB_QP_TIMEOUT)
-		if (attr->timeout & ~PIB_IB_LOCAL_ACK_TIMEOUT_MASK) {
+		if (attr->timeout & ~PIB_LOCAL_ACK_TIMEOUT_MASK) {
 			pib_debug("pib: wrong timeout=%u in modify_qp_is_ok\n", attr->timeout);
 			return 0;
 		}
@@ -710,7 +718,7 @@ static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp 
 		}
 
 	if (attr_mask & IB_QP_MIN_RNR_TIMER)
-		if (attr->min_rnr_timer & ~PIB_IB_MIN_RNR_NAK_TIMER_MASK) {
+		if (attr->min_rnr_timer & ~PIB_MIN_RNR_NAK_TIMER_MASK) {
 			pib_debug("pib: wrong min_rnr_timer=%u in modify_qp_is_ok\n", attr->min_rnr_timer);
 			return 0;
 		}
@@ -734,13 +742,13 @@ static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp 
 		}
 
 	if (attr_mask & IB_QP_RQ_PSN)
-		if (attr->rq_psn & ~PIB_IB_PSN_MASK) {
+		if (attr->rq_psn & ~PIB_PSN_MASK) {
 			pib_debug("pib: wrong rq_psn=0x%08x in modify_qp_is_ok\n", attr->rq_psn);
 			return 0;
 		}
 
 	if (attr_mask & IB_QP_SQ_PSN)
-		if (attr->sq_psn & ~PIB_IB_PSN_MASK) {
+		if (attr->sq_psn & ~PIB_PSN_MASK) {
 			pib_debug("pib: wrong sq_psn=0x%08x in modify_qp_is_ok\n", attr->sq_psn);
 			return 0;
 		}
@@ -757,10 +765,10 @@ static int modify_qp_is_ok(const struct pib_ib_dev *dev, const struct pib_ib_qp 
 }
 
 
-int pib_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mask,
-		    struct ib_qp_init_attr *qp_init_attr)
+int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mask,
+		 struct ib_qp_init_attr *qp_init_attr)
 {
-	struct pib_ib_qp *qp;
+	struct pib_qp *qp;
 
 	if (!ibqp || !qp_attr || !qp_init_attr)
 		return -EINVAL;
@@ -782,8 +790,8 @@ int pib_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_
 	qp_attr->qp_state     = qp->state;
 	qp_attr->cur_qp_state = qp->state;
 
-	qp_attr->sq_psn       = qp->requester.psn & PIB_IB_PSN_MASK;
-	qp_attr->rq_psn       = qp->responder.psn & PIB_IB_PSN_MASK;
+	qp_attr->sq_psn       = qp->requester.psn & PIB_PSN_MASK;
+	qp_attr->rq_psn       = qp->responder.psn & PIB_PSN_MASK;
 
 	up(&qp->sem);
 
@@ -791,32 +799,14 @@ int pib_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_
 }
 
 
-int pib_ib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
-{
-	pr_info("pib: pib_ib_attach_mcast(qp=0x%06x, lid=0x%04x)\n",
-		(int)ibqp->qp_num, lid);
-
-	return 0;
-}
-
-
-int pib_ib_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
-{
-	pr_info("pib: pib_ib_detach_mcast(qp=0x%06x, lid=0x%04x)\n",
-		(int)ibqp->qp_num, lid);
-
-	return 0;
-}
-
-
-int pib_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
-		     struct ib_send_wr **bad_wr)
+int pib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
+		  struct ib_send_wr **bad_wr)
 {
 	int i, ret = 0;
 	int pending_send_wr = 0;
-	struct pib_ib_dev *dev;
-	struct pib_ib_send_wqe *send_wqe;
-	struct pib_ib_qp *qp;
+	struct pib_dev *dev;
+	struct pib_send_wqe *send_wqe;
+	struct pib_qp *qp;
 	u64 total_length = 0;
 	u32 imm_data;
 
@@ -840,7 +830,7 @@ next_wr:
 
 	case IB_QPS_RESET:
 	case IB_QPS_INIT:
-		pr_err("pib: call pib_ib_post_send when QP is in RESET or INIT\n");
+		pr_err("pib: call pib_post_send when QP is in RESET or INIT\n");
 		ret = -EINVAL;
 		goto done;
 
@@ -863,7 +853,7 @@ next_wr:
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	for (i = ibwr->num_sge - 1 ; i >= 0 ; i--) {
-		if (ibwr->sg_list[i].lkey == PIB_IB_IMM_DATA_LKEY) {
+		if (ibwr->sg_list[i].lkey == PIB_IMM_DATA_LKEY) {
 			int j;
 			imm_data = ibwr->sg_list[i].length;
 			for (j = i ; j < ibwr->num_sge - 1 ; j++) {
@@ -886,7 +876,7 @@ next_wr:
 		goto done;
 	}
 
-	send_wqe = list_first_entry(&qp->requester.free_swqe_head, struct pib_ib_send_wqe, list);
+	send_wqe = list_first_entry(&qp->requester.free_swqe_head, struct pib_send_wqe, list);
 
 	send_wqe->wr_id      = ibwr->wr_id;
 	send_wqe->opcode     = ibwr->opcode;
@@ -899,9 +889,9 @@ next_wr:
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		send_wqe->sge_array[i] = ibwr->sg_list[i];
 
-		if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+		if (pib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
 			if (ibwr->sg_list[i].length == 0)
-				ibwr->sg_list[i].length = PIB_IB_MAX_PAYLOAD_LEN;
+				ibwr->sg_list[i].length = PIB_MAX_PAYLOAD_LEN;
 
 		total_length += ibwr->sg_list[i].length;
 	}
@@ -911,7 +901,7 @@ next_wr:
 		total_length = 8;
 	}
 
-	if (PIB_IB_MAX_PAYLOAD_LEN < total_length) { 
+	if (PIB_MAX_PAYLOAD_LEN < total_length) { 
 		ret = -EINVAL;
 		goto done;
 	}
@@ -957,7 +947,7 @@ next_wr:
 		switch (ibwr->opcode) {
 		case IB_WR_SEND:
 		case IB_WR_SEND_WITH_IMM:
-			if (!pib_ib_get_behavior(dev, PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR))
+			if (!pib_get_behavior(dev, PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR))
 				if (!ibwr->wr.ud.ah || qp->ib_qp.pd != ibwr->wr.ud.ah->pd) {
 					ret = -EINVAL;
 					goto done;
@@ -1003,7 +993,7 @@ done:
 }
 
 
-static int copy_inline_data(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe, u64 total_length)
+static int copy_inline_data(struct pib_qp *qp, struct pib_send_wqe *send_wqe, u64 total_length)
 {
 	int i;
 	void *buffer = send_wqe->inline_data_buffer;
@@ -1036,13 +1026,13 @@ static int copy_inline_data(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_w
 }
 
 
-int pib_ib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
+int pib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 		     struct ib_recv_wr **bad_wr)
 {
 	int i, ret = 0;
-	struct pib_ib_dev *dev;
-	struct pib_ib_recv_wqe *recv_wqe;
-	struct pib_ib_qp *qp;
+	struct pib_dev *dev;
+	struct pib_recv_wqe *recv_wqe;
+	struct pib_qp *qp;
 	u64 total_length = 0;
 
 	if (!ibqp || !ibwr)
@@ -1062,7 +1052,7 @@ next_wr:
 	switch (qp->state) {
 	case IB_QPS_RESET:
 	default:
-		pr_err("pib: call pib_ib_post_recv when QP is in RESET\n");
+		pr_err("pib: call pib_post_recv when QP is in RESET\n");
 		ret = -EINVAL;
 		goto err;
 
@@ -1091,7 +1081,7 @@ next_wr:
 		goto err;
 	}
 
-	recv_wqe = list_first_entry(&qp->responder.free_rwqe_head, struct pib_ib_recv_wqe, list);
+	recv_wqe = list_first_entry(&qp->responder.free_rwqe_head, struct pib_recv_wqe, list);
 
 	recv_wqe->wr_id   = ibwr->wr_id;
 	recv_wqe->num_sge = ibwr->num_sge;
@@ -1099,14 +1089,14 @@ next_wr:
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		recv_wqe->sge_array[i] = ibwr->sg_list[i];
 
-		if (pib_ib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+		if (pib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
 			if (ibwr->sg_list[i].length == 0)
-				ibwr->sg_list[i].length = PIB_IB_MAX_PAYLOAD_LEN;
+				ibwr->sg_list[i].length = PIB_MAX_PAYLOAD_LEN;
 
 		total_length += ibwr->sg_list[i].length;
 	}
 	
-	if (PIB_IB_MAX_PAYLOAD_LEN < total_length)  {
+	if (PIB_MAX_PAYLOAD_LEN < total_length)  {
 		ret = -EINVAL;
 		goto err;
 	}
@@ -1132,7 +1122,7 @@ err:
 }
 
 
-void pib_util_free_send_wqe(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_wqe)
+void pib_util_free_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 {
 	INIT_LIST_HEAD(&send_wqe->list);
 
@@ -1140,13 +1130,13 @@ void pib_util_free_send_wqe(struct pib_ib_qp *qp, struct pib_ib_send_wqe *send_w
 }
 
 
-void pib_util_free_recv_wqe(struct pib_ib_qp *qp, struct pib_ib_recv_wqe *recv_wqe)
+void pib_util_free_recv_wqe(struct pib_qp *qp, struct pib_recv_wqe *recv_wqe)
 {
 	memset(recv_wqe, 0, sizeof(*recv_wqe));
 	INIT_LIST_HEAD(&recv_wqe->list);
 
 	if (qp->ib_qp_init_attr.srq) {
-		struct pib_ib_srq *srq = to_psrq(qp->ib_qp_init_attr.srq);
+		struct pib_srq *srq = to_psrq(qp->ib_qp_init_attr.srq);
 		spin_lock(&srq->lock);
 		/* @todo SRQ エラーをチェックすべき？ */ 
 		list_add_tail(&recv_wqe->list, &srq->free_recv_wqe_head);
@@ -1157,14 +1147,14 @@ void pib_util_free_recv_wqe(struct pib_ib_qp *qp, struct pib_ib_recv_wqe *recv_w
 }
 
 
-static void get_ready_to_send(struct pib_ib_dev *dev, struct pib_ib_qp *qp)
+static void get_ready_to_send(struct pib_dev *dev, struct pib_qp *qp)
 {
 	pib_util_reschedule_qp(qp);
 	complete(&dev->thread.completion);
 }
 
 
-void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type event)
+void pib_util_insert_async_qp_error(struct pib_qp *qp, enum ib_event_type event)
 {
 	struct ib_event ev;
 
@@ -1181,7 +1171,7 @@ void pib_util_insert_async_qp_error(struct pib_ib_qp *qp, enum ib_event_type eve
 }
 
 
-void pib_util_insert_async_qp_event(struct pib_ib_qp *qp, enum ib_event_type event)
+void pib_util_insert_async_qp_event(struct pib_qp *qp, enum ib_event_type event)
 {
 	pib_util_insert_async_qp_error(qp, event);
 }
