@@ -97,6 +97,7 @@ void pib_release_kthread(struct pib_dev *dev)
 	del_timer_sync(&dev->thread.timer);
 
 	if (dev->thread.task) {
+		set_bit(PIB_THREAD_STOP, &dev->thread.flags);
 		complete(&dev->thread.completion);
 		/* flush_kthread_worker(worker); */
 		kthread_stop(dev->thread.task);
@@ -245,6 +246,9 @@ static int kthread_routine(void *data)
 		while (dev->thread.flags) {
 			cond_resched();
 
+			if (test_and_clear_bit(PIB_THREAD_STOP, &dev->thread.flags))
+				goto done;
+
 			if (test_and_clear_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags)) {
 				int i, ret;
 				for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
@@ -259,6 +263,7 @@ static int kthread_routine(void *data)
 		}
 	}
 
+done:
 	return 0;
 }
 

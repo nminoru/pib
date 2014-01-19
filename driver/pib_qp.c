@@ -84,6 +84,8 @@ void pib_util_flush_qp(struct pib_qp *qp, int send_only)
 	struct pib_recv_wqe *recv_wqe, *next_recv_wqe;
 	struct pib_ack *ack, *ack_next;
 
+	BUG_ON(!spin_is_locked(&qp->lock));
+
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
 					 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
@@ -1150,6 +1152,8 @@ err:
 
 void pib_util_free_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 {
+	BUG_ON(!spin_is_locked(&qp->lock));
+
 	INIT_LIST_HEAD(&send_wqe->list);
 
 	list_add_tail(&send_wqe->list, &qp->requester.free_swqe_head);
@@ -1158,6 +1162,8 @@ void pib_util_free_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 
 void pib_util_free_recv_wqe(struct pib_qp *qp, struct pib_recv_wqe *recv_wqe)
 {
+	BUG_ON(!spin_is_locked(&qp->lock));
+
 	memset(recv_wqe, 0, sizeof(*recv_wqe));
 	INIT_LIST_HEAD(&recv_wqe->list);
 
@@ -1183,6 +1189,8 @@ static void get_ready_to_send(struct pib_dev *dev, struct pib_qp *qp)
 void pib_util_insert_async_qp_error(struct pib_qp *qp, enum ib_event_type event)
 {
 	struct ib_event ev;
+
+	BUG_ON(!spin_is_locked(&qp->lock));
 
 	if (!qp->ib_qp.event_handler)
 		return;

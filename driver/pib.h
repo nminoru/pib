@@ -31,8 +31,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	0
-#define PIB_DRIVER_VERSION 	"0.2.0"
+#define PIB_VERSION_REVISION	1
+#define PIB_DRIVER_VERSION 	"0.2.1"
 
 #define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
 #define PIB_DRIVER_FW_VERSION \
@@ -169,6 +169,7 @@ enum pib_swqe_list {
 
 
 enum pib_thread_flag {
+	PIB_THREAD_STOP,
 	PIB_THREAD_READY_TO_RECV,
 	PIB_THREAD_SCHEDULE
 };

@@ -1631,9 +1631,6 @@ receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 ps
 
 	/* @todo QP を再 enqueue する条件を考えよ */
 
-	/* ACK が受理できれば local_ack_time は延長可能 */
-	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
-
 	return -1;
 
 completion_error:
@@ -1682,6 +1679,10 @@ process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe 
 	if (no_packets < send_wqe->processing.all_packets) {
 		/* Left packets to send */
 		send_wqe->processing.ack_packets = no_packets;
+
+		/* ACK が受理できれば local_ack_time は延長可能 */
+		send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
+
 		return RET_STOP;
 	}
 
@@ -1729,9 +1730,6 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 
 	if (!first_send_wqe || (send_wqe->processing.based_psn + send_wqe->processing.sent_packets != psn))
 		/* 前にある Send WQE を飛ばして ACK が返ってきた */
-		return 0;
-
-	if (!pib_is_recv_ok(qp->state))
 		return 0;
 
 	if (get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.ack_packets, psn) != 0)
@@ -1833,9 +1831,6 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 
 	if (!first_send_wqe || (send_wqe->processing.based_psn != psn))
 		/* 前にある Send WQE を飛ばして ACK が返ってきた */
-		return 0;
-
-	if (!pib_is_recv_ok(qp->state))
 		return 0;
 
 	pd = to_ppd(qp->ib_qp.pd);
