@@ -16,6 +16,7 @@ int pib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	int ret, count;
 	struct pib_qp *qp;
 	struct pib_dev *dev;
+	unsigned long flags;
 	struct pib_mcast_link *mcast_link;
 
 	pib_debug("pib: pib_attach_mcast(qp=0x%06x, lid=0x%04x)\n",
@@ -32,7 +33,7 @@ int pib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
 
-	down_write(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 
 	count = 0;
 
@@ -47,7 +48,7 @@ int pib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 		goto done;
 	}
 
-	mcast_link = kmem_cache_zalloc(pib_mcast_link_cachep, GFP_ATOMIC);
+	mcast_link = kmem_cache_zalloc(pib_mcast_link_cachep, GFP_ATOMIC); /* @todo 割禁の外に */
 	if (!mcast_link) {
 		ret = -ENOMEM;
 		goto done;
@@ -63,7 +64,7 @@ int pib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	list_add_tail(&mcast_link->lid_list, &dev->mcast_table[lid - PIB_MCAST_LID_BASE]);
 
 done:
-	up_write(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return ret;
 }
@@ -74,6 +75,7 @@ int pib_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	int ret;
 	struct pib_qp *qp;
 	struct pib_dev *dev;
+	unsigned long flags;
 	struct pib_mcast_link *mcast_link;
 
 	pib_debug("pib: pib_detach_mcast(qp=0x%06x, lid=0x%04x)\n",
@@ -90,7 +92,7 @@ int pib_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
 
-	down_write(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 	list_for_each_entry(mcast_link, &qp->mcast_head, qp_list) {
 		if (mcast_link->lid == lid) {
 			list_del(&mcast_link->qp_list);
@@ -100,7 +102,7 @@ int pib_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 		}
 	}
 done:
-	up_write(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
 }
@@ -108,13 +110,14 @@ done:
 
 void pib_detach_all_mcast(struct pib_dev *dev, struct pib_qp *qp)
 {
+	unsigned long flags;
 	struct pib_mcast_link *mcast_link, *next_mcast_link;
 
-	down_write(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 	list_for_each_entry_safe(mcast_link, next_mcast_link, &qp->mcast_head, qp_list) {
 		list_del(&mcast_link->qp_list);
 		list_del(&mcast_link->lid_list);
 		kmem_cache_free(pib_mcast_link_cachep, mcast_link);
 	}
-	up_write(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 }

@@ -135,6 +135,7 @@ static int pib_modify_device(struct ib_device *ibdev, int mask,
 			     struct ib_device_modify *props)
 {
 	struct pib_dev *dev;
+	unsigned long flags;
 
 	pib_debug("pib: pib_modify_device: mask=%x\n", mask);
 
@@ -143,7 +144,7 @@ static int pib_modify_device(struct ib_device *ibdev, int mask,
 
 	dev = to_pdev(ibdev);
 
-	down_write(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 
 	if (mask & IB_DEVICE_MODIFY_NODE_DESC)
 		/* @todo ポート毎の処理 (c.f. qib_node_desc_chg) */
@@ -153,7 +154,7 @@ static int pib_modify_device(struct ib_device *ibdev, int mask,
 		/* @todo ポート毎の処理 (c.f. qib_sys_guid_chg) */
 		dev->ib_dev_attr.sys_image_guid = props->sys_image_guid;
 
-	up_write(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
 }
@@ -163,6 +164,7 @@ static int pib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 			      struct ib_port_modify *props)
 {
 	struct pib_dev *dev;
+	unsigned long flags;
 
 	pib_debug("pib: pib_modify_port: port=%u, mask=%x,%x,%x\n",
 		  port_num, mask, props->set_port_cap_mask, props->clr_port_cap_mask);
@@ -172,7 +174,7 @@ static int pib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 
 	dev = to_pdev(ibdev);
 
-	down_write(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 
 	if (mask & IB_PORT_INIT_TYPE)
 		pr_err("pib: pib_modify_port: init type\n");
@@ -188,7 +190,7 @@ static int pib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 
 	/* @todo port_cap_flags 変化を伝達 */
 
-	up_write(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
 }
@@ -453,8 +455,6 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int ib_dev_id)
 	spin_lock_init(&dev->schedule.lock);
 	dev->schedule.wakeup_time	= jiffies;
 	dev->schedule.rb_root		= RB_ROOT;
-
-	init_rwsem(&dev->rwsem);
 
 	dev->ib_dev_attr		= ib_dev_attr;
 

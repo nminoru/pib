@@ -127,6 +127,13 @@ enum pib_behavior {
 };
 
 
+enum pib_manner {
+	PIB_MANNER_SQ_PSN				= 0,
+	PIB_MANNER_RQ_PSN				= 1,
+	PIB_MANNER_LOST_WC_WHEN_QP_RESET		= 2,
+};
+
+
 enum pib_hys_port_state_{
 	PIB_PHYS_PORT_SLEEP    = 1,
 	PIB_PHYS_PORT_POLLING  = 2,
@@ -239,6 +246,9 @@ struct pib_dev {
 	struct list_head        cq_head;
 
 	unsigned int            behavior;
+	unsigned int            manner_warn;
+	unsigned int            manner_err;
+
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	u32                     imm_data_lkey;
 #endif
@@ -261,7 +271,6 @@ struct pib_dev {
 
 	struct list_head       *mcast_table;
 	struct pib_port	       *ports;
-	struct rw_semaphore	rwsem;
 };
 
 
@@ -428,7 +437,7 @@ struct pib_qp {
 
 	struct rb_node          rb_node; /* for dev->qp_table */
 
-	struct semaphore        sem;
+	spinlock_t		lock;
 
 	unsigned long           local_ack_timeout; /* in jiffies */
 
@@ -640,6 +649,17 @@ static inline int pib_get_behavior(const struct pib_dev *dev, enum pib_behavior 
 {
 	return (dev->behavior & (1UL << behavior)) != 0;
 }
+
+static inline int pib_warn_manner(const struct pib_dev *dev, enum pib_manner manner)
+{
+	return (dev->manner_warn & (1UL << manner)) != 0;
+}
+
+
+static inline int pib_error_manner(const struct pib_dev *dev, enum pib_manner manner)
+{
+	return (dev->manner_err & (1UL << manner)) != 0;
+}
  
 
 extern u32 pib_random(void);
@@ -689,7 +709,7 @@ extern int pib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
 extern int pib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
 extern int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
 extern int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
-extern void pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp);
+extern int pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp);
 extern int pib_util_insert_wc_success(struct pib_cq *cq, const struct ib_wc *wc);
 extern int pib_util_insert_wc_error(struct pib_cq *cq, struct pib_qp *qp, u64 wr_id, enum ib_wc_status status, enum ib_wc_opcode opcode);
 

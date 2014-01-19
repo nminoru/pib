@@ -274,17 +274,17 @@ static void process_on_scheduler(struct pib_dev *dev)
 restart:
 	now = jiffies;
 
-	down_write(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 
 	qp = pib_util_get_first_scheduling_qp(dev);
 	if (!qp) {
-		up_write(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 		return;
 	}
 
-	down(&qp->sem);
-
-	up_write(&dev->rwsem);
+	/* @notice ロックの入れ子関係を一部崩している */
+	spin_lock(&qp->lock);
+	spin_unlock(&dev->lock);
 
 	/* Responder: generating acknowledge packets */
 	if (qp->qp_type == IB_QPT_RC)
@@ -314,7 +314,7 @@ restart:
 	list_for_each_entry_safe_reverse(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		send_wqe->processing.list_type = PIB_SWQE_SENDING;
 		list_del_init(&send_wqe->list);
-		list_add_tail(&send_wqe->list, &qp->requester.sending_swqe_head);
+		list_add(&send_wqe->list, &qp->requester.sending_swqe_head);
 		qp->requester.nr_waiting_swqe--;
 		qp->requester.nr_sending_swqe++;
 	}
@@ -374,8 +374,8 @@ first_sending_wsqe:
 
 	case PIB_SWQE_WAITING:
 		list_del_init(&send_wqe->list);
-		qp->requester.nr_sending_swqe--;
 		list_add_tail(&send_wqe->list, &qp->requester.waiting_swqe_head);
+		qp->requester.nr_sending_swqe--;
 		qp->requester.nr_waiting_swqe++;
 		break;
 
@@ -388,7 +388,7 @@ first_sending_wsqe:
 done:
 	pib_util_reschedule_qp(qp); /* 必要の応じてスケジューラから抜くために呼び出す */
 
-	up(&qp->sem);
+	spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (dev->thread.ready_to_send)
 		process_sendmsg(dev);
@@ -430,9 +430,8 @@ static int process_new_send_wr(struct pib_qp *qp)
 	}
 
 	list_del_init(&send_wqe->list);
-	qp->requester.nr_submitted_swqe--;
-
 	list_add_tail(&send_wqe->list, &qp->requester.sending_swqe_head);
+	qp->requester.nr_submitted_swqe--;
 	qp->requester.nr_sending_swqe++;
 
 	send_wqe->processing.list_type = PIB_SWQE_SENDING;
@@ -604,6 +603,7 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 		u32 src_qp_num;
 		struct pib_mcast_link *mcast_link;
 		u32 qp_nums[PIB_MCAST_QP_ATTACH];
+		unsigned long flags;
 
 		if ((base_hdr->bth.OpCode != IB_OPCODE_UD_SEND_ONLY) && 
 		    (base_hdr->bth.OpCode != IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE)) {
@@ -618,13 +618,13 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 
 		src_qp_num = be32_to_cpu(deth->srcQP) & PIB_QPN_MASK;
 
-		down_read(&dev->rwsem);
+		spin_lock_irqsave(&dev->lock, flags);
 		i=0;
 		list_for_each_entry(mcast_link, &dev->mcast_table[dlid - PIB_MCAST_LID_BASE], lid_list) {
 			qp_nums[i] = mcast_link->qp_num;
 			i++;
 		}
-		up_read(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 
 		max = i;
 
@@ -653,10 +653,11 @@ silently_drop:
 
 static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
 {
+	unsigned long flags;
 	struct pib_qp *qp;
 	const u8 port_num = port_index + 1;
 
-	down_read(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 
 	switch (dest_qp_num) {
 
@@ -675,7 +676,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 	}
 
 	if (qp == NULL) {
-		up_read(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 		pib_debug("pib: drop packet: not found qp (qpn=0x%06x)\n", dest_qp_num);
 		goto silently_drop;
 	}
@@ -686,15 +687,15 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 	else if (PIB_MCAST_LID_BASE <= dlid)
 		;
 	else if (dlid != dev->ports[port_index].ib_port_attr.lid) {
-		up_read(&dev->rwsem);
-
+		spin_unlock_irqrestore(&dev->lock, flags);
 		pib_debug("pib: drop packet: differ packet's dlid from port lid (0x%04x, 0x%04x)\n",
 			  dlid, dev->ports[port_index].ib_port_attr.lid);
 		goto silently_drop;
 	}
 
-	down(&qp->sem);
-	up_read(&dev->rwsem); /* @notice */
+	/* @notice ロックの入れ子関係を一部崩している */
+	spin_lock(&qp->lock);
+	spin_unlock(&dev->lock);
 
 	switch (qp->qp_type) {
 
@@ -716,7 +717,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 
 	pib_util_reschedule_qp(qp);	
 
-	up(&qp->sem);
+	spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (dev->thread.ready_to_send)
 		process_sendmsg(dev);

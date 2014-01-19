@@ -318,6 +318,7 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	struct sockaddr_in6 sockaddr_in6;
 	struct kvec iov;
 	struct pib_dev *dev;
+	unsigned long flags;
 	struct pib_packet_base_hdr *base_hdr;
 	struct pib_packet_mad *mad_packet;
 	struct pib_packet_smp *smp_packet;
@@ -453,12 +454,12 @@ proccess_mad:
 
 	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
 
-	down_read(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 	if (dev->ports[dest_port_num - 1].sockaddr)
 		memcpy(&sockaddr_in6, dev->ports[dest_port_num - 1].sockaddr, sizeof(struct sockaddr_in)); /* @todo */
 	else
 		memset(&sockaddr_in6, 0, sizeof(sockaddr_in6));
-	up_read(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
@@ -476,12 +477,12 @@ relay_ucast:
 
 	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
 
-	down_read(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
 	if (dev->ports[dest_port_num - 1].sockaddr)
 		memcpy(&sockaddr_in6, dev->ports[dest_port_num - 1].sockaddr, sizeof(struct sockaddr_in)); /* @todo */
 	else
 		memset(&sockaddr_in6, 0, sizeof(sockaddr_in6));
-	up_read(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
@@ -511,12 +512,12 @@ relay_mcast:
 
 		dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
 
-		down_read(&dev->rwsem);
+		spin_lock_irqsave(&dev->lock, flags);
 		if (dev->ports[dest_port_num - 1].sockaddr)
 			memcpy(&sockaddr_in6, dev->ports[dest_port_num - 1].sockaddr, sizeof(struct sockaddr_in)); /* @todo */
 		else
 			memset(&sockaddr_in6, 0, sizeof(sockaddr_in6));
-		up_read(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 
 		msghdr.msg_name    = &sockaddr_in6;
 		msghdr.msg_namelen = sizeof(sockaddr_in6);
@@ -980,8 +981,9 @@ static u8 get_sw_port_num(const struct sockaddr *sockaddr)
 
 	for (i=0 ; i<pib_num_hca ; i++) {
 		struct pib_dev *dev = pib_devs[i];
+		unsigned long flags;
 
-		down_read(&dev->rwsem);
+		spin_lock_irqsave(&dev->lock, flags);
 		for (j=0 ; j<pib_phys_port_cnt ; j++) {
 			port_num++;
 
@@ -989,11 +991,11 @@ static u8 get_sw_port_num(const struct sockaddr *sockaddr)
 				continue;
 
 			if (sin_port == ((const struct sockaddr_in*)dev->ports[j].sockaddr)->sin_port) {
-				up_read(&dev->rwsem);
+				spin_unlock_irqrestore(&dev->lock, flags);
 				return port_num;
 			}
 		}
-		up_read(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 	}
 
 	return 0;

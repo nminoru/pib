@@ -57,7 +57,7 @@ static int pack_acknowledge_packet(struct pib_dev *dev, u8 port_num, struct pib_
  */
 static int receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
 static int receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn);
-static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn, int *nr_swqe_p);
+static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn);
 static void set_send_wqe_to_error(struct pib_qp *qp, u32 psn, enum ib_wc_status status);
 static int receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
 static int receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
@@ -1514,7 +1514,7 @@ retry_send:
 	list_for_each_entry_safe_reverse(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		send_wqe->processing.list_type = PIB_SWQE_SENDING;
 		list_del_init(&send_wqe->list);
-		list_add_tail(&send_wqe->list, &qp->requester.sending_swqe_head);
+		list_add(&send_wqe->list, &qp->requester.sending_swqe_head);
 		qp->requester.nr_waiting_swqe--;
 		qp->requester.nr_sending_swqe++;
 	}
@@ -1587,11 +1587,9 @@ receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 ps
 {
 	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
-	/* process_acknowledge */
-
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 
-		switch (process_acknowledge(dev, qp, send_wqe, psn, &qp->requester.nr_waiting_swqe)) {
+		switch (process_acknowledge(dev, qp, send_wqe, psn)) {
 
 		case RET_ERROR:
 			list_del_init(&send_wqe->list);
@@ -1611,7 +1609,7 @@ receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 ps
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.sending_swqe_head, list) {
 
-		switch (process_acknowledge(dev, qp, send_wqe, psn, &qp->requester.nr_sending_swqe)) {
+		switch (process_acknowledge(dev, qp, send_wqe, psn)) {
 
 		case RET_ERROR:
 			list_del_init(&send_wqe->list);
@@ -1645,6 +1643,7 @@ completion_error:
 	pib_util_free_send_wqe(qp, send_wqe);
 
 	qp->state = IB_QPS_ERR;
+
 	pib_util_flush_qp(qp, 0);
 
 	return -1;
@@ -1655,7 +1654,7 @@ completion_error:
  *
  */
 static int
-process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn, int *nr_swqe_p)
+process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn)
 {
 	u32 no_packets;
 	s32 psn_diff;

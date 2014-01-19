@@ -149,9 +149,11 @@ int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
 
 /**
  *  QP を RESET に変更した場合に該当する CQ から外す
+ *  @return 削除した WC 数
  */
-void pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp)
+int pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp)
 {
+	int count = 0;
 	unsigned long flags;
 	struct pib_cqe *cqe, *cqe_next;
 
@@ -163,9 +165,12 @@ void pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp)
 			cq->nr_cqe--;
 			list_del_init(&cqe->list);
 			list_add_tail(&cqe->list, &cq->free_cqe_head);
+			count++;
 		}
 	}
 	spin_unlock_irqrestore(&cq->lock, flags);
+
+	return count;
 }
 
 

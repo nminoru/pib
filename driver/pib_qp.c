@@ -16,7 +16,7 @@ static int qp_cap_is_ok(const struct pib_dev *dev, const struct ib_qp_cap *cap, 
 static void dealloc_free_wqe(struct pib_qp *qp);
 static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, const struct ib_qp_attr *attr, int attr_mask);
 static void get_ready_to_send(struct pib_dev *dev, struct pib_qp *qp);
-static void reset_qp(struct pib_qp *qp);
+static int reset_qp(struct pib_qp *qp);
 static void reset_qp_attr(struct pib_qp *qp);
 static int copy_inline_data(struct pib_qp *qp, struct pib_send_wqe *send_wqe, u64 total_length);
 
@@ -137,25 +137,36 @@ void pib_util_flush_qp(struct pib_qp *qp, int send_only)
 }
 
 
-static void reset_qp(struct pib_qp *qp)
+static int reset_qp(struct pib_qp *qp)
 {
+	int count; /* Completion を挙げるべきなのに報告されなかった WQE 数 */
+	int signal_all_wr;
 	struct pib_send_wqe *send_wqe, *next_send_wqe;
 	struct pib_recv_wqe *recv_wqe, *next_recv_wqe;
 	struct pib_ack *ack, *ack_next;
+	
+	count = 0;
+	signal_all_wr = qp->ib_qp_init_attr.sq_sig_type == IB_SIGNAL_ALL_WR;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
+		if (signal_all_wr || (send_wqe->send_flags & IB_SEND_SIGNALED))
+			count++;
 		list_del_init(&send_wqe->list);
 		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_waiting_swqe = 0;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.sending_swqe_head, list) {
+		if (signal_all_wr || (send_wqe->send_flags & IB_SEND_SIGNALED))
+			count++;
 		list_del_init(&send_wqe->list);
 		pib_util_free_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_sending_swqe = 0;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.submitted_swqe_head, list) {
+		if (signal_all_wr || (send_wqe->send_flags & IB_SEND_SIGNALED))
+			count++;
 		list_del_init(&send_wqe->list);
 		pib_util_free_send_wqe(qp, send_wqe);
 	}
@@ -166,6 +177,7 @@ static void reset_qp(struct pib_qp *qp)
 	list_for_each_entry_safe(recv_wqe, next_recv_wqe, &qp->responder.recv_wqe_head, list) {
 		list_del_init(&recv_wqe->list);
 		pib_util_free_recv_wqe(qp, recv_wqe);
+		count++;
 	}
 	qp->responder.nr_recv_wqe = 0;
 
@@ -175,13 +187,15 @@ static void reset_qp(struct pib_qp *qp)
 	}
 	qp->responder.nr_rd_atomic = 0;
 
-	pib_util_remove_cq(qp->send_cq, qp);
+	count += pib_util_remove_cq(qp->send_cq, qp);
 	if (qp->send_cq != qp->recv_cq)
-		pib_util_remove_cq(qp->recv_cq, qp);
+		count += pib_util_remove_cq(qp->recv_cq, qp);
 
 	reset_qp_attr(qp);
 
 	pib_util_reschedule_qp(qp);
+
+	return count;
 }
 
 
@@ -216,6 +230,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 	int is_register_qp_table = 0;
 	struct pib_dev *dev;
 	struct pib_qp *qp;
+	unsigned long flags;
 	u32 qp_num;
 
 	if (!ibpd || !init_attr)
@@ -244,7 +259,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 	qp->send_cq         = to_pcq(init_attr->send_cq);
 	qp->recv_cq         = to_pcq(init_attr->recv_cq);
 
-	sema_init(&qp->sem, 1);
+	spin_lock_init(&qp->lock);
 
 	INIT_LIST_HEAD(&qp->requester.submitted_swqe_head);
 	INIT_LIST_HEAD(&qp->requester.sending_swqe_head);
@@ -272,17 +287,17 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 	special_qp:
 		qp->ib_qp.qp_num = qp_num;
 
-		down_write(&dev->rwsem);
+		spin_lock_irqsave(&dev->lock, flags);
 		if (dev->ports[init_attr->port_num - 1].qp_info[qp_num])
 			pr_err("pib: try to create QP%u again\n", qp_num);
 		else
 			dev->ports[init_attr->port_num - 1].qp_info[qp_num] = qp;
-		up_write(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 		break;
 
 	case IB_QPT_RC:
 	case IB_QPT_UD:
-		down_write(&dev->rwsem);
+		spin_lock_irqsave(&dev->lock, flags);
 		qp_num = dev->last_qp_num;
 		for (;;) {
 			qp_num = (qp_num + 1) & PIB_QPN_MASK;
@@ -300,7 +315,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 		qp->ib_qp.qp_num = qp_num;
 		dev->last_qp_num = qp_num;
 		insert_qp(dev, qp);
-		up_write(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 		is_register_qp_table = 1;
 		break;
 
@@ -356,9 +371,9 @@ err_alloc_wqe:
 
 err_alloc_inlin_data_buffer:
 	if (is_register_qp_table) {
-		down_write(&dev->rwsem);
+		spin_lock_irqsave(&dev->lock, flags);
 		rb_erase(&qp->rb_node, &dev->qp_table);
-		up_write(&dev->rwsem);
+		spin_unlock_irqrestore(&dev->lock, flags);
 	}
 
 	kmem_cache_free(pib_qp_cachep, qp);
@@ -439,6 +454,7 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 	int qp_num;
 	struct pib_qp *qp;
 	struct pib_dev *dev;
+	unsigned long flags;
 
 	if (!ibqp)
 		return -EINVAL;
@@ -451,12 +467,13 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 
 	pib_detach_all_mcast(dev, qp);
 
-	down_write(&dev->rwsem);
+	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock(&qp->lock);
 
-	down(&qp->sem);
 	reset_qp(qp);
 	dealloc_free_wqe(qp);
-	up(&qp->sem);
+
+	spin_unlock(&qp->lock);
 
 	if (qp->requester.inline_data_buffer)
 		vfree(qp->requester.inline_data_buffer);
@@ -466,7 +483,7 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 	else
 		rb_erase(&qp->rb_node, &dev->qp_table);
 
-	up_write(&dev->rwsem);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kmem_cache_free(pib_qp_cachep, qp);
 
@@ -500,6 +517,7 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	int issue_sq_drained = 0;
 	struct pib_qp *qp;
 	struct pib_dev *dev;
+	unsigned long flags;
 	enum ib_qp_state cur_state, new_state;
 
 	if (!ibqp || !attr)
@@ -508,7 +526,7 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
 
-	down(&qp->sem);
+	spin_lock_irqsave(&qp->lock, flags);
 
 	cur_state = (attr_mask & IB_QP_CUR_STATE) ? attr->cur_qp_state : qp->state;
 	new_state = (attr_mask & IB_QP_STATE) ? attr->qp_state : cur_state;
@@ -526,11 +544,11 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		qp->ib_qp_attr.qkey        = attr->qkey;
 
 	if (attr_mask & IB_QP_RQ_PSN)
-		qp->responder.psn          = attr->rq_psn;
+		qp->responder.psn          = attr->rq_psn & PIB_PSN_MASK;
 
 	if (attr_mask & IB_QP_SQ_PSN) {
-		qp->requester.psn          = attr->sq_psn;
-		qp->requester.expected_psn = attr->sq_psn;
+		qp->requester.psn          = attr->sq_psn & PIB_PSN_MASK;
+		qp->requester.expected_psn = attr->sq_psn & PIB_PSN_MASK;
 	}
 
 	if (attr_mask & IB_QP_DEST_QPN)
@@ -621,7 +639,9 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		switch (new_state) {
 
 		case IB_QPS_RESET:
-			reset_qp(qp);
+			ret = reset_qp(qp);
+			if ((ret > 0) && pib_warn_manner(dev, PIB_MANNER_LOST_WC_WHEN_QP_RESET))
+				pr_info("pib: MANNER Some completions are lost when QP state is changed to reset\n");
 			break;
 
 		case IB_QPS_RTR:
@@ -665,12 +685,13 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	if (pending_send_wr)
 		get_ready_to_send(dev, qp);
 
-	up(&qp->sem);
+	spin_unlock_irqrestore(&qp->lock, flags);
 
 	return 0;
 
 err_inval:
-	up(&qp->sem);
+	spin_unlock_irqrestore(&qp->lock, flags);
+
 	ret = -EINVAL;
 
 	return ret;
@@ -741,16 +762,18 @@ static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, c
 			return 0;
 		}
 
-	if (attr_mask & IB_QP_RQ_PSN)
+	if ((attr_mask & IB_QP_RQ_PSN) && pib_warn_manner(dev, PIB_MANNER_RQ_PSN))
 		if (attr->rq_psn & ~PIB_PSN_MASK) {
-			pib_debug("pib: wrong rq_psn=0x%08x in modify_qp_is_ok\n", attr->rq_psn);
-			return 0;
+			pr_info("pib: MANNER Wrong rq_psn=0x%08x in modify_qp\n", attr->rq_psn);
+			if (pib_error_manner(dev, PIB_MANNER_RQ_PSN))
+				return 0;
 		}
 
-	if (attr_mask & IB_QP_SQ_PSN)
+	if ((attr_mask & IB_QP_SQ_PSN) && pib_warn_manner(dev, PIB_MANNER_SQ_PSN))
 		if (attr->sq_psn & ~PIB_PSN_MASK) {
-			pib_debug("pib: wrong sq_psn=0x%08x in modify_qp_is_ok\n", attr->sq_psn);
-			return 0;
+			pr_info("pib: MANNER Wrong sq_psn=0x%08x in modify_qp\n", attr->sq_psn);
+			if (pib_error_manner(dev, PIB_MANNER_SQ_PSN))
+				return 0;
 		}
 
 	if (attr_mask & IB_QP_CAP)
@@ -769,6 +792,7 @@ int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mas
 		 struct ib_qp_init_attr *qp_init_attr)
 {
 	struct pib_qp *qp;
+	unsigned long flags;
 
 	if (!ibqp || !qp_attr || !qp_init_attr)
 		return -EINVAL;
@@ -782,7 +806,7 @@ int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mas
 		init_attr->sq_sig_type = IB_SIGNAL_ALL_WR;
 #endif
 
-	down(&qp->sem);
+	spin_lock_irqsave(&qp->lock, flags);
 
 	*qp_attr              = qp->ib_qp_attr;
 	*qp_init_attr         = qp->ib_qp_init_attr;
@@ -793,7 +817,7 @@ int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mas
 	qp_attr->sq_psn       = qp->requester.psn & PIB_PSN_MASK;
 	qp_attr->rq_psn       = qp->responder.psn & PIB_PSN_MASK;
 
-	up(&qp->sem);
+	spin_unlock_irqrestore(&qp->lock, flags);
 
 	return 0;
 }
@@ -804,9 +828,10 @@ int pib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 {
 	int i, ret = 0;
 	int pending_send_wr = 0;
-	struct pib_dev *dev;
-	struct pib_send_wqe *send_wqe;
 	struct pib_qp *qp;
+	struct pib_dev *dev;
+	unsigned long flags;
+	struct pib_send_wqe *send_wqe;
 	u64 total_length = 0;
 	u32 imm_data;
 
@@ -817,7 +842,7 @@ int pib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 
 	qp = to_pqp(ibqp);
 
-	down(&qp->sem);
+	spin_lock_irqsave(&qp->lock, flags);
 
 	if ((qp->state == IB_QPS_RESET) || (qp->state == IB_QPS_INIT)) {
 		ret = -EINVAL;
@@ -984,7 +1009,7 @@ done:
 	if (pending_send_wr)
 		get_ready_to_send(dev, qp);
 
-	up(&qp->sem);
+	spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (ret && bad_wr)
 		*bad_wr = ibwr;
@@ -1031,8 +1056,9 @@ int pib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 {
 	int i, ret = 0;
 	struct pib_dev *dev;
-	struct pib_recv_wqe *recv_wqe;
 	struct pib_qp *qp;
+	unsigned long flags;
+	struct pib_recv_wqe *recv_wqe;
 	u64 total_length = 0;
 
 	if (!ibqp || !ibwr)
@@ -1045,7 +1071,7 @@ int pib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 	if (qp->ib_qp_init_attr.srq)
 		return -EINVAL;
 
-	down(&qp->sem);
+	spin_lock_irqsave(&qp->lock, flags);
 
 next_wr:
 	/* QP check */
@@ -1113,7 +1139,7 @@ skip:
 		goto next_wr;
 
 err:
-	up(&qp->sem);
+	spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (ret && bad_wr)
 		*bad_wr = ibwr;
@@ -1165,9 +1191,7 @@ void pib_util_insert_async_qp_error(struct pib_qp *qp, enum ib_event_type event)
 	ev.device     = qp->ib_qp.device;
 	ev.element.qp = &qp->ib_qp;
 
-	local_bh_disable(); /* @todo 取り除け */
 	qp->ib_qp.event_handler(&ev, qp->ib_qp.qp_context);
-	local_bh_enable();
 }
 
 
