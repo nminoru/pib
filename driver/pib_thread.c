@@ -261,6 +261,8 @@ static int kthread_routine(void *data)
 			if (test_and_clear_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags))
 				process_on_scheduler(dev);
 		}
+
+                process_on_scheduler(dev);
 	}
 
 done:
