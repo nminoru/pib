@@ -1,5 +1,6 @@
 /*
- * pib_easy_sw.c - Easy switch (Pseudo IBA switch to connect all ports of local host only)
+ * pib_easy_sw.c - Pseudo IB switch to connect all ports of all CA
+ *                 for single-host-mode
  *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
@@ -109,7 +110,8 @@ int pib_create_switch(struct pib_easy_sw *sw)
 			.init_type_reply = 0U,
 			.active_width    = IB_WIDTH_12X,
 			.active_speed    = IB_SPEED_QDR,
-			.phys_state      = PIB_PHYS_PORT_POLLING,
+			/* .phys_state      = PIB_PHYS_PORT_POLLING, */
+			.phys_state      = PIB_PHYS_PORT_LINK_UP,
 		};
 		
 		sw->ports[port_num].port_num	 = port_num;
@@ -359,13 +361,13 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	dlid = be16_to_cpu(base_hdr->lrh.dlid);
 
 	if ((dest_qp_num == PIB_QP0) || (dest_qp_num == PIB_QP1))
-		goto proccess_mad;
+		goto process_mad;
 
 	if ((dlid != 0) &&
-	    (base_hdr->lrh.dlid != IB_LID_PERMISSIVE) &&
+	    (dlid != PIB_LID_PERMISSIVE) &&
 	    (dlid != pib_easy_sw.ports[0].ib_port_attr.lid)) {
 		/* Easy switch 宛のパケットではない */
-		if ((dest_qp_num == IB_MULTICAST_QPN) || (PIB_MCAST_LID_BASE <= dlid))
+		if ((dest_qp_num == IB_MULTICAST_QPN) || !pib_is_unicast_lid(dlid))
 			goto relay_mcast;
 		else
 			goto relay_ucast;
@@ -375,12 +377,12 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	pr_err("pib: easy switch: drop packet: dlid=0x%04x, dest_qp_num=0x%06x\n", dlid, dest_qp_num);
 	goto silently_drop;
 
-proccess_mad:
+process_mad:
 	mad_packet = (struct pib_packet_mad *)sw->buffer;
 	if (recvmsg_size < sizeof(*mad_packet))
 	    goto silently_drop;
 
-	switch (mad_packet->mad.mad_hdr.mgmt_class) {
+	switch (mad_packet->mad_hdr.mgmt_class) {
 
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
 		smp_packet = (struct pib_packet_smp *)sw->buffer;
@@ -399,7 +401,7 @@ proccess_mad:
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
 	default:
 		pr_crit("pib: pib_easy_sw: mgmt_class = %u\n",
-			mad_packet->mad.mad_hdr.mgmt_class);
+			mad_packet->mad_hdr.mgmt_class);
 		BUG();
 		break;
 	}
@@ -497,11 +499,9 @@ relay_mcast:
 	for (out_sw_port_num = 1 ; out_sw_port_num < sw->port_cnt ; out_sw_port_num++) {
 		u16 pm_block;
 
-		/*
-		 * HACK:
-		 * マルチキャストグループに属していても入力ポートへは送信しないが、
-		 * 同一ポートにある別 QP へ届けるためにここでは送り返す。
-		 */
+		/* マルチキャストグループに属していても入力ポートへは送信しない */
+		if (in_sw_port_num == out_sw_port_num)
+			continue;
 
 		/* マルチキャストグループの出力ポートではない */
 		pm_block = sw->mcast_fwd_table[dlid - PIB_MCAST_LID_BASE].pm_blocks[out_sw_port_num / 16];
@@ -551,7 +551,7 @@ static int process_smp(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_nu
 
 	default:
 		pr_err("pib: process_smp: %u %u", smp->method, be16_to_cpu(smp->attr_id));
-		smp->status |= IB_SMP_UNSUP_METHOD;
+		smp->status |= PIB_SMP_UNSUP_METHOD;
 		return reply(smp);
 	}
 }
@@ -598,7 +598,7 @@ static int process_smp_get_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8
 
 	default:
 		pr_err("pib: process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
-		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
 }
@@ -637,7 +637,7 @@ static int process_smp_set_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8
 
 	default:
 		pr_err("pib: process_smp: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
-		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
 }
@@ -646,7 +646,7 @@ static int process_smp_set_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
 	if (smp->attr_mod)
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 
 	strncpy(smp->data, PIB_DRIVER_DESCRIPTION, 64);
 
@@ -656,12 +656,12 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_easy_sw *sw, 
 
 static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
-	struct pib_mad_node_info *node_info = (struct pib_mad_node_info *)&smp->data;
+	struct pib_smp_node_info *node_info = (struct pib_smp_node_info *)&smp->data;
 
-	/* smp->status |= IB_SMP_INVALID_FIELD; */
+	/* smp->status |= PIB_SMP_INVALID_FIELD; */
 
 	node_info->base_version		= IB_MGMT_BASE_VERSION;
-	node_info->class_version	= IB_MGMT_CLASS_VERSION;
+	node_info->class_version	= PIB_MGMT_CLASS_VERSION;
 	node_info->node_type		= RDMA_NODE_IB_SWITCH;
 	node_info->node_ports		= sw->port_cnt - 1;
 	node_info->sys_image_guid	= cpu_to_be64(hca_guid_base | 0x0200ULL);
@@ -681,7 +681,7 @@ static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_p
 
 static int subn_get_switchinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
-	struct pib_mad_switch_info *switch_info = (struct pib_mad_switch_info *)&smp->data;
+	struct pib_smp_switch_info *switch_info = (struct pib_smp_switch_info *)&smp->data;
 	u8 opimized_sl_to_vl_mapping_programming;
 
 	switch_info->linear_fdb_cap	= cpu_to_be16(768);
@@ -709,7 +709,7 @@ static int subn_get_switchinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in
 
 static int subn_set_switchinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num)
 {
-	struct pib_mad_switch_info *switch_info = (struct pib_mad_switch_info *)&smp->data;
+	struct pib_smp_switch_info *switch_info = (struct pib_smp_switch_info *)&smp->data;
 
 	sw->linear_fdb_top	= be16_to_cpu(switch_info->linear_fdb_top);
 	sw->default_port	= switch_info->default_port;
@@ -766,6 +766,9 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_p
 	pib_subn_set_portinfo(smp, port, port_num,
 			      (port_num != 0) ? PIB_PORT_SW_EXT : PIB_PORT_BASE_SP0);
 
+	if (port->ib_port_attr.phys_state != PIB_PHYS_PORT_LINK_UP)
+		port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
+
 	if (port->ib_port_attr.state < IB_PORT_INIT) {
 		sw->port_state_change    = 1;
 		port->ib_port_attr.state = IB_PORT_INIT;
@@ -787,12 +790,12 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in
 	sw_port_index = (attr_mod >> 16) & 0xFFFF;
 
 	if (block_index != 0) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 
 	if (sw->port_cnt <= sw_port_index) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 
@@ -816,12 +819,12 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in
 	sw_port_index = (attr_mod >> 16) & 0xFFFF;
 
 	if (block_index != 0) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 
 	if (sw->port_cnt <= sw_port_index) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 
@@ -869,7 +872,7 @@ static int subn_get_linear_forward_table(struct ib_smp *smp, struct pib_easy_sw 
 	attr_mod = be32_to_cpu(smp->attr_mod);
 
 	if (767 < attr_mod) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 	
@@ -890,7 +893,7 @@ static int subn_set_linear_forward_table(struct ib_smp *smp, struct pib_easy_sw 
 	attr_mod = be32_to_cpu(smp->attr_mod);
 
 	if (767 < attr_mod) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 	
@@ -917,7 +920,7 @@ static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_easy_sw 
 	attr_mod = be32_to_cpu(smp->attr_mod);
 
 	if (3071 < attr_mod) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 	

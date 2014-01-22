@@ -1,4 +1,6 @@
 /*
+ * pib_mad.c - Management Datagram(MAD) Processing and Subnet Management Agent
+ *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
@@ -8,8 +10,6 @@
 
 #include <rdma/ib_mad.h>
 #include <rdma/ib_smi.h>
-#include <rdma/ib_cache.h>
-#include <rdma/ib_pma.h>
 
 #include "pib.h"
 #include "pib_mad.h"
@@ -56,7 +56,7 @@ static int reply_failure(struct ib_smp *smp)
 }
 
 
-int pib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
+int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 		    struct ib_wc *in_wc, struct ib_grh *in_grh,
 		    struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
@@ -69,33 +69,25 @@ int pib_process_mad(struct ib_device *ibdev, int mad_flags,	u8 in_port_num,
 	if (in_mad->mad_hdr.method == IB_MGMT_METHOD_GET_RESP)
 		return IB_MAD_RESULT_SUCCESS;
 
-	if (in_mad->mad_hdr.base_version != IB_MGMT_BASE_VERSION)
-		goto bad_version;
-
 	switch (in_mad->mad_hdr.mgmt_class) {
 
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
 		return process_subn(dev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
 
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
-	case IB_MGMT_CLASS_PERF_MGMT:
 		pr_err("pib: Not Implementation class: %u\n", in_mad->mad_hdr.mgmt_class);
 		pib_print_mad("pib: IN", &in_mad->mad_hdr);
 		pib_print_mad("pib: OUT", &out_mad->mad_hdr);
 		return IB_MAD_RESULT_SUCCESS;
-		
+
+	case IB_MGMT_CLASS_PERF_MGMT:
+		return pib_process_pma_mad(dev, in_port_num, in_mad, out_mad);
+
 	default:
 		break;
 	}
 
 	return IB_MAD_RESULT_SUCCESS;
-
-bad_version:
-	/* out_mad->mad_hdr.method = IB_MGMT_METHOD_GET_RESP; */
-	/* out_mad->mad_hdr.status = IB_MGMT_MAD_STATUS_REDIRECT_REQD; */
-	out_mad->mad_hdr.status = IB_MGMT_MAD_STATUS_BAD_VERSION;
-
-	return IB_MAD_RESULT_FAILURE | IB_MAD_RESULT_REPLY;
 }
 
 
@@ -110,13 +102,18 @@ static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
 	int ret;
 	struct ib_smp *smp;
 
-	/* pib_print_smp("in ", smp); */
-
 	*out_mad = *in_mad;
 
 	smp  = (struct ib_smp *)out_mad;
 
+	/* @todo class version のチェックも */
+	if (in_mad->mad_hdr.base_version != IB_MGMT_BASE_VERSION) {
+		out_mad->mad_hdr.status = IB_MGMT_MAD_STATUS_BAD_VERSION;
+		return IB_MAD_RESULT_FAILURE | IB_MAD_RESULT_REPLY;
+	}
+
 #if 0
+	pib_print_smp("IN ", smp);
 	pib_debug("pib: hca    %s %s dev-id=%u status=0x%x attr_mod=0x%x in_port_num=%u\n",
 		  pib_get_mgmt_method(smp->method), pib_get_smp_attr(smp->attr_id),
 		  dev->ib_dev_id,
@@ -170,7 +167,7 @@ static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
 
 	default:
 		pr_err("pib: *** process_subn: %u %u ***", smp->method, be16_to_cpu(smp->attr_id));
-		smp->status |= IB_SMP_UNSUP_METHOD;
+		smp->status |= PIB_SMP_UNSUP_METHOD;
 		ret = reply(smp);
 	}
 
@@ -184,8 +181,6 @@ static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
 
 static int process_subn_get_method(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
-	memset(smp->data, 0, sizeof(smp->data));
-
 	switch (smp->attr_id) {
 
 	case IB_SMP_ATTR_NODE_DESC:
@@ -225,7 +220,7 @@ static int process_subn_get_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 
 	default:
 		pr_err("pib: process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
-		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
 }
@@ -265,7 +260,7 @@ static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 #endif
 	default:
 		pr_err("pib: process_subn: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
-		smp->status |= IB_SMP_UNSUP_METH_ATTR;
+		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
 }
@@ -274,7 +269,9 @@ static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	if (smp->attr_mod)
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
+
+	memset(smp->data, 0, sizeof(smp->data));
 
 	strncpy(smp->data, dev->ib_dev.node_desc, 64);
 
@@ -284,12 +281,14 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_dev *dev, u8 
 
 static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
-	struct pib_mad_node_info *node_info = (struct pib_mad_node_info *)&smp->data;
+	struct pib_smp_node_info *node_info = (struct pib_smp_node_info *)&smp->data;
 
 	/* smp->status |= IB_SMP_INVALID_FIELD; */
 
+	memset(smp->data, 0, sizeof(smp->data));
+
 	node_info->base_version		= IB_MGMT_BASE_VERSION;
-	node_info->class_version	= IB_MGMT_CLASS_VERSION;
+	node_info->class_version	= PIB_MGMT_CLASS_VERSION;
 	node_info->node_type		= RDMA_NODE_IB_CA;
 	node_info->node_ports		= dev->ib_dev.phys_port_cnt;
 	node_info->sys_image_guid	= dev->ib_dev_attr.sys_image_guid;
@@ -311,6 +310,8 @@ static int subn_get_guidinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 {
 	pr_err("pib: *** %s ***", __FUNCTION__);
 
+	memset(smp->data, 0, sizeof(smp->data));
+
 	return reply_failure(smp);
 }
 
@@ -329,11 +330,13 @@ static int subn_get_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	u32 port_num = be32_to_cpu(smp->attr_mod);
 	struct pib_port *port;
 
+	memset(smp->data, 0, sizeof(smp->data));
+
 	if (port_num == 0)
 		port_num = in_port_num;
 
 	if ((port_num < 1) || (dev->ib_dev.phys_port_cnt < port_num)) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 
@@ -351,6 +354,8 @@ bail:
 void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type)
 {
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
+
+	memset(smp->data, 0, sizeof(smp->data));
 
 	/*
 	 * m-key check
@@ -481,7 +486,7 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 		port_num = in_port_num;
 
 	if ((port_num < 1) || (dev->ib_dev.phys_port_cnt < port_num)) {
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 
@@ -531,6 +536,9 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 		event.event = IB_EVENT_LID_CHANGE;
 		ib_dispatch_event(&event);
 	}
+
+	if (port->ib_port_attr.phys_state != PIB_PHYS_PORT_LINK_UP)
+		port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
 
 	if (port->ib_port_attr.state < IB_PORT_INIT)
 		port->ib_port_attr.state = IB_PORT_INIT;
@@ -685,6 +693,8 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
 
+	memset(smp->data, 0, sizeof(smp->data));
+
 	attr_mod      = be32_to_cpu(smp->attr_mod);
 
 	block_index   = attr_mod         & 0xFFFF;
@@ -692,7 +702,7 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 
 	if (block_index != 0) {
 		pr_err("pib: *** %s: block_index = %u ***", __FUNCTION__, block_index);
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 
@@ -718,7 +728,7 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 
 	if (block_index != 0) {
 		pr_err("pib: *** %s: block_index = %u ***", __FUNCTION__, block_index);
-		smp->status |= IB_SMP_INVALID_FIELD;
+		smp->status |= PIB_SMP_INVALID_FIELD;
 		goto bail;
 	}
 

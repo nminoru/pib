@@ -1,4 +1,6 @@
 /*
+ * pib_mad.h 
+ *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
@@ -10,15 +12,15 @@
 #include <linux/init.h>
 
 
-#define IB_SMP_UNSUP_VERSION    cpu_to_be16(0x0004)
-#define IB_SMP_UNSUP_METHOD     cpu_to_be16(0x0008)
-#define IB_SMP_UNSUP_METH_ATTR  cpu_to_be16(0x000C)
-#define IB_SMP_INVALID_FIELD    cpu_to_be16(0x001C)
+#define PIB_MGMT_CLASS_VERSION	(1)
 
-#define IB_MGMT_CLASS_VERSION	(1)
+#define PIB_SMP_UNSUP_VERSION    cpu_to_be16(0x0004)
+#define PIB_SMP_UNSUP_METHOD     cpu_to_be16(0x0008)
+#define PIB_SMP_UNSUP_METH_ATTR  cpu_to_be16(0x000C)
+#define PIB_SMP_INVALID_FIELD    cpu_to_be16(0x001C)
 
 
-struct pib_mad_node_info {
+struct pib_smp_node_info {
 	u8	base_version;
 	u8	class_version;
 	u8	node_type;
@@ -34,7 +36,7 @@ struct pib_mad_node_info {
 } __attribute__ ((packed));
 
 
-struct pib_mad_switch_info {
+struct pib_smp_switch_info {
 	__be16  linear_fdb_cap;
 	__be16  random_fdb_cap;
 	__be16  multicast_fdb_cap;

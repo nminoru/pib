@@ -299,25 +299,20 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 
 	case IB_QPT_RC:
 	case IB_QPT_UD:
+		if (pib_get_behavior(PIB_BEHAVIOR_QPN_REALLOCATION))
+			dev->last_qp_num = PIB_QP1 + 1;
+
+		qp_num = pib_find_zero_bit(dev, PIB_BITMAP_QP_START, PIB_MAX_QP, &dev->last_qp_num);
+		if (qp_num == (u32)-1)
+			goto err_alloc_qp_num;
+
 		spin_lock_irqsave(&dev->lock, flags);
-		qp_num = dev->last_qp_num;
-		for (;;) {
-			qp_num = (qp_num + 1) & PIB_QPN_MASK;
-
-			switch (qp_num) {
-			case PIB_QP0:
-			case PIB_QP1:
-			case IB_MULTICAST_QPN:
-				continue;
-			}
-
-			if (pib_util_find_qp(dev, qp_num) == NULL)
-				break;
-		}
+		pib_util_find_qp(dev, qp_num);
 		qp->ib_qp.qp_num = qp_num;
 		dev->last_qp_num = qp_num;
 		insert_qp(dev, qp);
 		spin_unlock_irqrestore(&dev->lock, flags);
+
 		is_register_qp_table = 1;
 		break;
 
@@ -378,6 +373,9 @@ err_alloc_inlin_data_buffer:
 		spin_unlock_irqrestore(&dev->lock, flags);
 	}
 
+	pib_clear_bit(dev, PIB_BITMAP_QP_START, qp_num);
+
+err_alloc_qp_num:
 	kmem_cache_free(pib_qp_cachep, qp);
 
 	return ERR_PTR(-ENOMEM);
@@ -464,6 +462,7 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 	/* @todo ここより先で他のスレッドが qp を実行できないことをどう保証するか？ */
 
 	qp_num = ibqp->qp_num;
+
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
 
@@ -486,6 +485,8 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 		rb_erase(&qp->rb_node, &dev->qp_table);
 
 	spin_unlock_irqrestore(&dev->lock, flags);
+
+	pib_clear_bit(dev, PIB_BITMAP_QP_START, qp_num);
 
 	kmem_cache_free(pib_qp_cachep, qp);
 
@@ -642,7 +643,7 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 		case IB_QPS_RESET:
 			ret = reset_qp(qp);
-			if ((ret > 0) && pib_warn_manner(dev, PIB_MANNER_LOST_WC_WHEN_QP_RESET))
+			if ((ret > 0) && pib_warn_manner(PIB_MANNER_LOST_WC_WHEN_QP_RESET))
 				pr_info("pib: MANNER Some completions are lost when QP state is changed to reset\n");
 			break;
 
@@ -764,17 +765,17 @@ static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, c
 			return 0;
 		}
 
-	if ((attr_mask & IB_QP_RQ_PSN) && pib_warn_manner(dev, PIB_MANNER_RQ_PSN))
+	if ((attr_mask & IB_QP_RQ_PSN) && pib_warn_manner(PIB_MANNER_RQ_PSN))
 		if (attr->rq_psn & ~PIB_PSN_MASK) {
 			pr_info("pib: MANNER Wrong rq_psn=0x%08x in modify_qp\n", attr->rq_psn);
-			if (pib_error_manner(dev, PIB_MANNER_RQ_PSN))
+			if (pib_error_manner(PIB_MANNER_RQ_PSN))
 				return 0;
 		}
 
-	if ((attr_mask & IB_QP_SQ_PSN) && pib_warn_manner(dev, PIB_MANNER_SQ_PSN))
+	if ((attr_mask & IB_QP_SQ_PSN) && pib_warn_manner(PIB_MANNER_SQ_PSN))
 		if (attr->sq_psn & ~PIB_PSN_MASK) {
 			pr_info("pib: MANNER Wrong sq_psn=0x%08x in modify_qp\n", attr->sq_psn);
-			if (pib_error_manner(dev, PIB_MANNER_SQ_PSN))
+			if (pib_error_manner(PIB_MANNER_SQ_PSN))
 				return 0;
 		}
 
@@ -916,7 +917,7 @@ next_wr:
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		send_wqe->sge_array[i] = ibwr->sg_list[i];
 
-		if (pib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+		if (pib_get_behavior(PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
 			if (ibwr->sg_list[i].length == 0)
 				ibwr->sg_list[i].length = PIB_MAX_PAYLOAD_LEN;
 
@@ -974,7 +975,7 @@ next_wr:
 		switch (ibwr->opcode) {
 		case IB_WR_SEND:
 		case IB_WR_SEND_WITH_IMM:
-			if (!pib_get_behavior(dev, PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR))
+			if (!pib_get_behavior(PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR))
 				if (!ibwr->wr.ud.ah || qp->ib_qp.pd != ibwr->wr.ud.ah->pd) {
 					ret = -EINVAL;
 					goto done;
@@ -1117,7 +1118,7 @@ next_wr:
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		recv_wqe->sge_array[i] = ibwr->sg_list[i];
 
-		if (pib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+		if (pib_get_behavior(PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
 			if (ibwr->sg_list[i].length == 0)
 				ibwr->sg_list[i].length = PIB_MAX_PAYLOAD_LEN;
 

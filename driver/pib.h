@@ -31,8 +31,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	1
-#define PIB_DRIVER_VERSION 	"0.2.1"
+#define PIB_VERSION_REVISION	2
+#define PIB_DRIVER_VERSION 	"0.2.2"
 
 #define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
 #define PIB_DRIVER_FW_VERSION \
@@ -89,7 +89,8 @@
 #define PIB_PKEY_PER_BLOCK              (32)
 #define PIB_PKEY_TABLE_LEN              (PIB_PKEY_PER_BLOCK * 1)
 
-#define PIB_MCAST_QP_ATTACH             (128) 
+#define PIB_MCAST_QP_ATTACH             (128)
+#define PIB_LID_PERMISSIVE		(0xFFFF)
 
 #define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_SYS_IMAGE_GUID|IB_DEVICE_RC_RNR_NAK_GEN)
 #define PIB_PORT_CAP_FLAGS		(IB_PORT_SYS_IMAGE_GUID_SUP|IB_PORT_CM_SUP)
@@ -104,26 +105,41 @@
 			printk(KERN_DEBUG fmt, ## args);	\
 	} while (0)
 
+
 enum pib_behavior {
 	/*
 	 *  IBA Spec. Vol.1 10.2.3 C10-10
 	 *  The behavior that the UD-QP's PD doesn't match the PD of AH is
 	 *  whether an immediate error or a completion error(IBV_WC_LOC_QP_OP_ERR).
 	 */
-	PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR             = 1,
+	PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR             =  1,
 
 	/*
 	 *  IBA Spec. Vol.1 10.7.2.2 C10-87
 	 */
-	PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR = 2,
+	PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR =  2,
+
+	/*
+	 *  SRQ の登録順と取り出し順をシャッフルする
+	 */
+	PIB_BEHAVIOR_SRQ_SHUFFLE                          =  3,
+
+	/*
+	 *  WC_SUCCESS しない場合に無効なパラメータを乱数値で設定する。
+	 *  (opcode, byte_len, imm_data, src_qp, wc_flags, pke_index, slid, sl, did_path_bits)
+	 */
+	PIB_BEHAVIOR_CORRUPT_INVALID_WC_ATTRS             =  4,
+
+	/*
+	 *  空いている若い QPN を再利用する。
+	 */
+	PIB_BEHAVIOR_QPN_REALLOCATION			  =  5,
 
 	/*
 	 *  If the length of a scatter/gather list is zero in bytes,
 	 *  it consider as 2^31 in bytes.
 	 */
-	PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN     = 3,
-
-	PIB_BEHAVIOR_SRQ_SHUFFLE                          = 4,
+	PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN     = 16
 };
 
 
@@ -184,6 +200,25 @@ enum pib_mr_direction {
 };
 
 
+enum pib_obj {
+	PIB_MAX_CONTEXT	         =   0x10000,
+	PIB_MAX_SRQ	         =   0x10000,
+	PIB_MAX_CQ	         =   0x10000,
+	PIB_MAX_MR	         =   0x10000,
+	PIB_MAX_AH	         = 0x1000000,
+	PIB_MAX_QP	         = 0x1000000,
+
+	PIB_BITMAP_CONTEXT_START = 0,
+	PIB_BITMAP_SRQ_START     = PIB_MAX_CONTEXT,
+	PIB_BITMAP_CQ_START      = PIB_BITMAP_SRQ_START + PIB_MAX_SRQ,
+	PIB_BITMAP_MR_START      = PIB_BITMAP_CQ_START  + PIB_MAX_CQ,
+	PIB_BITMAP_AH_START      = PIB_BITMAP_MR_START  + PIB_MAX_MR,
+	PIB_BITMAP_QP_START      = PIB_BITMAP_AH_START  + PIB_MAX_AH,
+
+	PIB_MAX_OBJS		 = PIB_MAX_CONTEXT + PIB_MAX_SRQ + PIB_MAX_CQ + PIB_MAX_MR + PIB_MAX_AH + PIB_MAX_QP,
+};
+
+
 struct pib_mcast_link {
 	u16			lid;
 	u32			qp_num;
@@ -222,12 +257,21 @@ struct pib_dev {
 	struct ib_device	ib_dev;
 	struct ib_device_attr   ib_dev_attr;
 
-	int                     ib_dev_id;
+	int                     dev_id;
 
 	spinlock_t		lock;
 
+
+	unsigned long	       *bitmap;
+
 	int                     nr_pd;
 	int                     nr_srq;
+
+	u32			last_ucontext_num;
+	u32			last_srq_num;
+	u32			last_cq_num;
+	u32			last_mr_num;
+	u32			last_ah_num;
 
 	u32                     last_qp_num;
 	int                     nr_qp;
@@ -245,10 +289,6 @@ struct pib_dev {
 
 	int                     nr_cq;
 	struct list_head        cq_head;
-
-	unsigned int            behavior;
-	unsigned int            manner_warn;
-	unsigned int            manner_err;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	u32                     imm_data_lkey;
@@ -307,6 +347,7 @@ struct pib_easy_sw {
 
 struct pib_ucontext {
 	struct ib_ucontext      ib_ucontext;
+	u32			ucontext_num;
 };
 
 
@@ -323,12 +364,14 @@ struct pib_pd {
 struct pib_ah {
 	struct ib_ah            ib_ah;
 	struct ib_ah_attr       ib_ah_attr;
+	u32			ah_num;
 };
 
 
 struct pib_mr {
 	struct ib_mr            ib_mr;
 	struct ib_umem         *ib_umem;
+	u32			mr_num;
 
 	u32                     lkey_prefix;
 	u32                     rkey_prefix;
@@ -343,6 +386,7 @@ struct pib_mr {
 
 struct pib_cq {
 	struct ib_cq            ib_cq;
+	u32			cq_num;
 	
 	spinlock_t		lock;
 
@@ -355,6 +399,8 @@ struct pib_cq {
 struct pib_srq {
 	struct ib_srq           ib_srq;
 	struct ib_srq_attr      ib_srq_attr;
+
+	u32			srq_num;
 	
 	/* @todo ステータスが必要 IBA Spec. Vol.1 10.2.9.5 */
 
@@ -594,6 +640,9 @@ extern struct pib_dev *pib_devs[];
 extern struct pib_easy_sw pib_easy_sw;
 extern unsigned int pib_num_hca;
 extern unsigned int pib_phys_port_cnt;
+extern unsigned int pib_behavior;
+extern unsigned int pib_manner_warn;
+extern unsigned int pib_manner_err;
 extern struct kmem_cache *pib_ah_cachep;
 extern struct kmem_cache *pib_mr_cachep;
 extern struct kmem_cache *pib_qp_cachep;
@@ -646,36 +695,54 @@ static inline struct pib_cq *to_pcq(struct ib_cq *ibcq)
 	return container_of(ibcq, struct pib_cq, ib_cq);
 }
 
-static inline int pib_get_behavior(const struct pib_dev *dev, enum pib_behavior behavior)
+static inline int pib_get_behavior(enum pib_behavior behavior)
 {
-	return (dev->behavior & (1UL << behavior)) != 0;
+	return (pib_behavior & (1UL << behavior)) != 0;
 }
 
-static inline int pib_warn_manner(const struct pib_dev *dev, enum pib_manner manner)
+static inline int pib_warn_manner(enum pib_manner manner)
 {
-	return (dev->manner_warn & (1UL << manner)) != 0;
+	return (pib_manner_warn & (1UL << manner)) != 0;
 }
 
-
-static inline int pib_error_manner(const struct pib_dev *dev, enum pib_manner manner)
+static inline int pib_error_manner(enum pib_manner manner)
 {
-	return (dev->manner_err & (1UL << manner)) != 0;
+	return (pib_manner_err & (1UL << manner)) != 0;
 }
  
 
-extern u32 pib_random(void);
 
+/*
+ *  in pib_main.c
+ */
 extern struct ib_ucontext *pib_alloc_ucontext(struct ib_device *ibdev, struct ib_udata *udata);
 extern int pib_dealloc_ucontext(struct ib_ucontext *ibcontext);
 
 extern struct ib_pd * pib_alloc_pd(struct ib_device *ibdev, struct ib_ucontext *ibucontext, struct ib_udata *udata);
 extern int pib_dealloc_pd(struct ib_pd *ibpd);
+extern u32 pib_find_zero_bit(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p);
+extern void pib_clear_bit(struct pib_dev *dev, u32 start, u32 index);
 
+/*
+ *  in pib_thread.c
+ */
+extern void pib_util_reschedule_qp(struct pib_qp *qp);
+extern struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev);
+
+extern int pib_create_kthread(struct pib_dev *dev);
+extern void pib_release_kthread(struct pib_dev *dev);
+
+/*
+ *  in pib_ah.c
+ */
 extern struct ib_ah *pib_create_ah(struct ib_pd *pd, struct ib_ah_attr *ah_attr);
 extern int pib_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr);
 extern int pib_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr);
 extern int pib_destroy_ah(struct ib_ah *ibah);
 
+/*
+ *  in pib_mr.c
+ */
 extern struct ib_mr *pib_get_dma_mr(struct ib_pd *pd, int access_flags);
 extern struct ib_mr *pib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 				     u64 virt_addr, int access_flags,
@@ -691,13 +758,6 @@ enum ib_wc_status pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_ar
 enum ib_wc_status pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
 enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
 enum ib_wc_status pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
-
-
-extern void pib_util_reschedule_qp(struct pib_qp *qp);
-extern struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev);
-
-extern int pib_create_kthread(struct pib_dev *dev);
-extern void pib_release_kthread(struct pib_dev *dev);
 
 /*
  *  in pib_cq.c
@@ -786,6 +846,11 @@ extern void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_port *port, u8 
 extern void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type);
 
 /*
+ *  in pib_perfmgt.c
+ */
+extern int pib_process_pma_mad(struct pib_dev *dev, u8 port_num, struct ib_mad *in_mad, struct ib_mad *out_mad);
+
+/*
  *  in pib_easy_sw.c
  */
 extern int pib_create_switch(struct pib_easy_sw *sw);
@@ -794,6 +859,7 @@ extern void pib_release_switch(struct pib_easy_sw *sw);
 /*
  *  in pib_lib.c
  */
+extern u32 pib_random(void);
 extern const char *pib_get_qp_type(enum ib_qp_type type);
 extern const char *pib_get_qp_state(enum ib_qp_state state);
 extern const char *pib_get_wc_status(enum ib_wc_status status);
@@ -807,6 +873,7 @@ extern u32 pib_get_num_of_packets(struct pib_qp *qp, u32 length);
 extern u32 pib_get_rnr_nak_time(int timeout);
 extern unsigned long pib_get_local_ack_time(int timeout);
 extern u8 pib_get_local_ca_ack_delay(void);
+extern int pib_is_unicast_lid(u16 lid);
 extern const char *pib_get_mgmt_method(u8 method);
 extern const char *pib_get_smp_attr(__be16 attr_id);
 extern const char *pib_get_sa_attr(__be16 attr_id);

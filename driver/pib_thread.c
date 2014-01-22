@@ -63,7 +63,7 @@ int pib_create_kthread(struct pib_dev *dev)
 			goto err_sock;
 	}
 
-	task = kthread_create(kthread_routine, dev, "pib_%d", dev->ib_dev_id);
+	task = kthread_create(kthread_routine, dev, "pib_%d", dev->dev_id);
 	if (IS_ERR(task))
 		goto err_task;
 
@@ -687,9 +687,9 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 	}
 
 	/* LRH: check port LID and DLID of incoming packet */
-	if (((dest_qp_num == PIB_QP0) && (base_hdr->lrh.dlid == IB_LID_PERMISSIVE)))
+	if (((dest_qp_num == PIB_QP0) && (dlid == PIB_LID_PERMISSIVE)))
 		;
-	else if (PIB_MCAST_LID_BASE <= dlid)
+	else if (!pib_is_unicast_lid(dlid))
 		;
 	else if (dlid != dev->ports[port_index].ib_port_attr.lid) {
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -917,6 +917,22 @@ static void process_sendmsg(struct pib_dev *dev)
 
 	iov.iov_base = dev->thread.buffer;
 	iov.iov_len  = dev->thread.msg_size;
+
+	ret = kernel_sendmsg(dev->ports[port_num - 1].socket,
+			     &msghdr, &iov, 1, iov.iov_len);
+
+	if (pib_is_unicast_lid(dlid))
+		goto done;
+
+	/*
+	 * マルチキャストの場合、同じ HCA に同一の multicast group の受け取りを
+	 * する別の QP がある可能性があるので、loopback にも送信する。
+	 */
+	sockaddr = dev->ports[port_num - 1].sockaddr;
+
+	msghdr.msg_name    = sockaddr;
+	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
+		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 
 	ret = kernel_sendmsg(dev->ports[port_num - 1].socket,
 			     &msghdr, &iov, 1, iov.iov_len);

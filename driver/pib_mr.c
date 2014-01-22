@@ -19,7 +19,7 @@ static int reg_mr(struct pib_pd *pd, struct pib_mr *mr)
 {
 	int i;
 	unsigned long flags;
-
+	
 	/* find an empty slot in mr_table[] */
 	spin_lock_irqsave(&pd->lock, flags);
 	for (i=0 ; i<PIB_MAX_MR_PER_PD ; i++)
@@ -54,23 +54,29 @@ found:
 struct ib_mr *
 pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 {
+	struct pib_dev *dev;
 	struct pib_pd *pd;
 	struct pib_mr *mr;
+	u32 mr_num;
 
 	if (!ibpd)
 		return ERR_PTR(-EINVAL);
 
+	dev = to_pdev(ibpd->device);
 	pd = to_ppd(ibpd);
 
 	mr = kmem_cache_zalloc(pib_mr_cachep, GFP_KERNEL);
-	if (!mr) {
+	if (!mr)
 		return ERR_PTR(-ENOMEM);
-	}
 
-	if (reg_mr(pd, mr)) {
-		kmem_cache_free(pib_mr_cachep, mr);
-		return ERR_PTR(-ENOMEM);
-	}
+	mr_num = pib_find_zero_bit(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
+	if (mr_num == (u32)-1)
+		goto err_alloc_mr_num;
+
+	mr->mr_num = mr_num;
+
+	if (reg_mr(pd, mr))
+		goto err_reg_mr;
 
 	mr->start        = 0;
 	mr->length       = (u64)-1;
@@ -79,6 +85,13 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	mr->access_flags = access_flags;
 
 	return &mr->ib_mr;
+
+err_reg_mr:
+	pib_clear_bit(dev, PIB_BITMAP_MR_START, mr_num);
+
+err_alloc_mr_num:
+	kmem_cache_free(pib_mr_cachep, mr);
+	return ERR_PTR(-ENOMEM);
 }
 
 
@@ -87,14 +100,16 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		u64 virt_addr, int access_flags,
 		struct ib_udata *udata)
 {
+	struct pib_dev *dev;
 	struct pib_pd *pd;
 	struct pib_mr *mr;
 	struct ib_umem *umem;
-	int ret;
+	u32 mr_num;
 
 	if (!ibpd)
 		return ERR_PTR(-EINVAL);
 
+	dev = to_pdev(ibpd->device);
 	pd = to_ppd(ibpd);
 
 	umem = ib_umem_get(ibpd->uobject->context, start, length,
@@ -103,10 +118,14 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		return (struct ib_mr *)umem;
 
 	mr = kmem_cache_zalloc(pib_mr_cachep, GFP_KERNEL);
-	if (!mr) {
-		ret = -ENOMEM;
+	if (!mr)
 		goto err_alloc_mr;
-	}
+
+	mr_num = pib_find_zero_bit(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
+	if (mr_num == (u32)-1)
+		goto err_alloc_mr_num;
+
+	mr->mr_num = mr_num;
 
 	mr->start        = start;
 	mr->length       = length;
@@ -114,24 +133,27 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	mr->access_flags = access_flags;
 	mr->ib_umem      = umem;
 
-	if (reg_mr(pd, mr)) {
-		ret = -ENOMEM;
-		goto err_alloc_mr;
-	}
+	if (reg_mr(pd, mr))
+		goto err_reg_mr;
 
 	return &mr->ib_mr;
 
-err_alloc_mr:
+err_reg_mr:
+	pib_clear_bit(dev, PIB_BITMAP_MR_START, mr_num);
+
+err_alloc_mr_num:
 	kmem_cache_free(pib_mr_cachep, mr);
 
+err_alloc_mr:
 	ib_umem_release(umem);
 
-	return ERR_PTR(ret);
+	return ERR_PTR(-ENOMEM);
 }
 
 
 int pib_dereg_mr(struct ib_mr *ibmr)
 {
+	struct pib_dev *dev;
 	struct pib_mr *mr;
 	struct pib_pd *pd;
 	unsigned long flags;
@@ -139,6 +161,7 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 	if (!ibmr)
 		return -EINVAL;
 
+	dev = to_pdev(ibmr->device);
 	mr  = to_pmr(ibmr);
 	pd  = to_ppd(ibmr->pd);
 
@@ -149,6 +172,8 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
+
+	pib_clear_bit(dev, PIB_BITMAP_MR_START, mr->mr_num);
 
 	kmem_cache_free(pib_mr_cachep, mr);
 

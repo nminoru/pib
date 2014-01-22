@@ -404,6 +404,12 @@ u8 pib_get_local_ca_ack_delay(void)
 }
 
 
+int pib_is_unicast_lid(u16 lid)
+{
+	return (lid < PIB_MCAST_LID_BASE)|| (lid == PIB_LID_PERMISSIVE);
+}
+
+
 const char *pib_get_mgmt_class(u8 mgmt_class)
 {
 	switch (mgmt_class) {

@@ -52,6 +52,17 @@ unsigned int pib_phys_port_cnt = 2;
 module_param_named(phys_port_cnt, pib_phys_port_cnt, uint, S_IRUGO);
 MODULE_PARM_DESC(phys_port_cnt, "Number of physical ports");
 
+unsigned int pib_behavior;
+module_param_named(behavior, pib_behavior, uint, 0644);
+MODULE_PARM_DESC(behavior, "behavior");
+
+unsigned int pib_manner_warn;
+module_param_named(manner_warn, pib_manner_warn, uint, 0644);
+MODULE_PARM_DESC(manner_warn, "manner");
+
+unsigned int pib_manner_err;
+module_param_named(manner_err, pib_manner_warn, uint, 0644);
+MODULE_PARM_DESC(manner_err, "Number of physical ports");
 
 static struct class *dummy_parent_class; /* /sys/class/pib */
 static struct device *dummy_parent_device;
@@ -82,6 +93,10 @@ static int pib_query_port(struct ib_device *ibdev, u8 port_num,
 	
 	return 0;
 }
+
+
+static void setup_bitmap(struct pib_dev *dev);
+static int set_port(struct pib_dev *dev, int port_index);
 
 
 static enum rdma_link_layer
@@ -204,34 +219,6 @@ static int pib_mmap(struct ib_ucontext *context, struct vm_area_struct *vma)
 }
 
 
-static ssize_t show_behavior(struct device *device, struct device_attribute *attr,
-			     char *buf)
-{
-	struct pib_dev *dev =
-		container_of(device, struct pib_dev, ib_dev.dev);
-
-	return sprintf(buf, "0x%x\n", dev->behavior);
-}
-
-
-static ssize_t store_behavior(struct device *device, struct device_attribute *attr,
-			      const char *buf, size_t count)
-{
-	unsigned int behavior;
-	ssize_t result;	
-	struct pib_dev *dev =
-		container_of(device, struct pib_dev, ib_dev.dev);
-
-	result = sscanf(buf, "0x%x", &behavior);
-	if (result != 1)
-		return -EINVAL;
-
-	dev->behavior = behavior;
-	
-	return count;
-}
-
-
 static ssize_t show_local_ca_ack_delay(struct device *device, struct device_attribute *attr,
 				       char *buf)
 {
@@ -278,7 +265,6 @@ static ssize_t show_imm_data_lkey(struct device *device, struct device_attribute
 #endif
 
 
-static DEVICE_ATTR(behavior,		S_IRUGO|S_IWUGO, show_behavior,  store_behavior);
 static DEVICE_ATTR(local_ca_ack_delay,	S_IRUGO|S_IWUGO, show_local_ca_ack_delay, store_local_ca_ack_delay);
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
@@ -287,7 +273,6 @@ static DEVICE_ATTR(imm_data_lkey, S_IRUGO, show_imm_data_lkey, NULL);
 
 
 static struct device_attribute *pib_class_attributes[] = {
-	&dev_attr_behavior,
 	&dev_attr_local_ca_ack_delay,
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	&dev_attr_imm_data_lkey,
@@ -295,7 +280,7 @@ static struct device_attribute *pib_class_attributes[] = {
 };
 
 
-static struct pib_dev *pib_dev_add(struct device *dma_device, int ib_dev_id)
+static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 {
 	int i, j;
 	struct pib_dev *dev;
@@ -307,15 +292,15 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int ib_dev_id)
 		.vendor_id           = 1U,
 		.vendor_part_id      = 1U,
 		.hw_ver              = 0U,
-		.max_qp              = 131008,
+		.max_qp              = PIB_MAX_QP - 1,
 		.max_qp_wr           = 16351,
 		.device_cap_flags    = 0,
 
 		.max_sge             = PIB_MAX_SGE,
 		.max_sge_rd          =       8,
-		.max_cq              =   65408,
+		.max_cq              = PIB_MAX_CQ - 1,
 		.max_cqe             = 4194303,
-		.max_mr              =  524272,
+		.max_mr              = PIB_MAX_MR - 1,
 		.max_pd              =   32764,
 		.max_qp_rd_atom      = PIB_MAX_RD_ATOM,
 		.max_ee_rd_atom      =       0,
@@ -332,10 +317,10 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int ib_dev_id)
 		.max_mcast_grp       =    8192,
 		.max_mcast_qp_attach = PIB_MCAST_QP_ATTACH,
 		.max_total_mcast_qp_attach = 2031616,
-		.max_ah              =   65536,
+		.max_ah              = PIB_MAX_AH - 1,
 		.max_fmr             =       0, 
 		.max_map_per_fmr     =       0,
-		.max_srq             =   65472,
+		.max_srq             = PIB_MAX_SRQ - 1,
 		.max_srq_wr          =   16383,
 		.max_srq_sge         = PIB_MAX_SGE -1, /* for Mellanox HCA simulation */
 		.max_fast_reg_page_list_len = 0,
@@ -349,13 +334,13 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int ib_dev_id)
 		return NULL;
 	}
 
-	dev->ib_dev_id			= ib_dev_id;
+	dev->dev_id			= dev_id;
 
 	strlcpy(dev->ib_dev.name, "pib_%d", IB_DEVICE_NAME_MAX);
 
 	dev->ib_dev.owner		= THIS_MODULE;
 	dev->ib_dev.node_type		= RDMA_NODE_IB_CA;
-	dev->ib_dev.node_guid		= cpu_to_be64(hca_guid_base | ((3 + ib_dev_id) << 8) | 0);
+	dev->ib_dev.node_guid		= cpu_to_be64(hca_guid_base | ((3 + dev_id) << 8) | 0);
 	dev->ib_dev.local_dma_lkey	= 0;
 	dev->ib_dev.phys_port_cnt	= pib_phys_port_cnt;
 	dev->ib_dev.num_comp_vectors	= num_possible_cpus();
@@ -465,62 +450,20 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int ib_dev_id)
 	for (i=0 ; i<PIB_MAX_LID - PIB_MCAST_LID_BASE ; i++)
 		INIT_LIST_HEAD(&dev->mcast_table[i]);
 
-	dev->ports			= vzalloc(sizeof(struct sockaddr*) * dev->ib_dev.phys_port_cnt);
+	dev->ports	= vzalloc(sizeof(struct sockaddr*) * dev->ib_dev.phys_port_cnt);
 	if (!dev->ports)
 		goto err_ports;
 
-	for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
-		struct ib_port_attr ib_port_attr = {
-			/* .state           = IB_PORT_DOWN, */
-			.state           = IB_PORT_INIT,
-			.max_mtu         = IB_MTU_4096,
-			.active_mtu      = IB_MTU_256,
-			.gid_tbl_len     = PIB_GID_PER_PORT,
-			.port_cap_flags  = PIB_PORT_CAP_FLAGS,
-			.max_msg_sz      = PIB_MAX_PAYLOAD_LEN,
-			.bad_pkey_cntr   = 0U,
-			.qkey_viol_cntr  = 128,
-			.pkey_tbl_len    = PIB_PKEY_TABLE_LEN,
-			.lid             = 0U,
-			.sm_lid          = 0U,
-			.lmc             = 0U,
-			.max_vl_num      = 4U,
-			.sm_sl           = 0U,
-			.subnet_timeout  = 0U,
-			.init_type_reply = 0U,
-			.active_width    = IB_WIDTH_12X,
-			.active_speed    = IB_SPEED_QDR,
-			.phys_state      = PIB_PHYS_PORT_POLLING,
-		};
+	dev->bitmap	= vzalloc(PIB_MAX_OBJS / BITS_PER_BYTE);
+	if (!dev->bitmap)
+		goto err_bitmap;
 
-		dev->ports[i].port_num	= i + 1;
-		dev->ports[i].ib_port_attr = ib_port_attr;
+	setup_bitmap(dev);
 
-		if (lid_table != NULL) {
-			dev->ports[i].lid_table = lid_table;
-		} else {
-			dev->ports[i].lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
-			if (!dev->ports[i].lid_table)
-				goto err_ld_table;
-		}
+	for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
+		if (set_port(dev, i))
+			goto err_ld_table;
 
-		/*
-		 * @see IBA Spec. Vol.1 4.1.1
-		 */
-		dev->ports[i].gid[0].global.subnet_prefix =
-			/* default GID prefix */
-			cpu_to_be64(0xFE80000000000000ULL);
-		dev->ports[i].gid[0].global.interface_id  =
-			cpu_to_be64(hca_guid_base | ((3 + ib_dev_id) << 8) | (i + 1));
-
-		dev->ports[i].link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
-		dev->ports[i].link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
-
-		for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
-			dev->ports[i].pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
-	}
-
-	dev->behavior		= 0U;
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	dev->imm_data_lkey	= PIB_IMM_DATA_LKEY;
 #endif
@@ -538,7 +481,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int ib_dev_id)
 			goto err_create_file;
 
 	pr_info("pib: add HCA (dev_id=%d, ports=%u)\n",
-		dev->ib_dev_id, dev->ib_dev.phys_port_cnt);
+		dev->dev_id, dev->ib_dev.phys_port_cnt);
 
 	return dev;
 
@@ -559,6 +502,9 @@ err_ld_table:
 			if (dev->ports[i].lid_table)
 				vfree(dev->ports[i].lid_table);
 
+	vfree(dev->bitmap);
+err_bitmap:
+
 	vfree(dev->ports);
 err_ports:
 
@@ -571,11 +517,125 @@ err_mcast_table:
 }
 
 
+static void setup_bitmap(struct pib_dev *dev)
+{
+	unsigned long *bitmap = dev->bitmap;
+
+	bitmap_set(bitmap, PIB_BITMAP_CONTEXT_START, 1);
+	bitmap_set(bitmap, PIB_BITMAP_SRQ_START,     1);
+	bitmap_set(bitmap, PIB_BITMAP_CQ_START,      1);
+	bitmap_set(bitmap, PIB_BITMAP_MR_START,      1);
+	bitmap_set(bitmap, PIB_BITMAP_AH_START,      1);
+
+	bitmap_set(bitmap, PIB_BITMAP_QP_START + PIB_QP0,          1);
+	bitmap_set(bitmap, PIB_BITMAP_QP_START + PIB_QP1,          1);
+	bitmap_set(bitmap, PIB_BITMAP_QP_START + IB_MULTICAST_QPN, 1);
+
+}
+
+
+static int set_port(struct pib_dev *dev, int port_index)
+{
+	int j;
+	struct ib_port_attr ib_port_attr = {
+		/* .state           = IB_PORT_DOWN, */
+		.state           = IB_PORT_INIT,
+		.max_mtu         = IB_MTU_4096,
+		.active_mtu      = IB_MTU_256,
+		.gid_tbl_len     = PIB_GID_PER_PORT,
+		.port_cap_flags  = PIB_PORT_CAP_FLAGS,
+		.max_msg_sz      = PIB_MAX_PAYLOAD_LEN,
+		.bad_pkey_cntr   = 0U,
+		.qkey_viol_cntr  = 128,
+		.pkey_tbl_len    = PIB_PKEY_TABLE_LEN,
+		.lid             = 0U,
+		.sm_lid          = 0U,
+		.lmc             = 0U,
+		.max_vl_num      = 4U,
+		.sm_sl           = 0U,
+		.subnet_timeout  = 0U,
+		.init_type_reply = 0U,
+		.active_width    = IB_WIDTH_12X,
+		.active_speed    = IB_SPEED_QDR,
+		/* .phys_state      = PIB_PHYS_PORT_POLLING, */
+		.phys_state      = PIB_PHYS_PORT_LINK_UP,
+	};
+
+	dev->ports[port_index].port_num	= port_index + 1;
+	dev->ports[port_index].ib_port_attr = ib_port_attr;
+
+	if (lid_table != NULL) {
+		dev->ports[port_index].lid_table = lid_table;
+	} else {
+		dev->ports[port_index].lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
+		if (!dev->ports[port_index].lid_table)
+			return -1;
+	}
+
+	/*
+	 * @see IBA Spec. Vol.1 4.1.1
+	 */
+	dev->ports[port_index].gid[0].global.subnet_prefix =
+		/* default GID prefix */
+		cpu_to_be64(0xFE80000000000000ULL);
+	dev->ports[port_index].gid[0].global.interface_id  =
+		cpu_to_be64(hca_guid_base | ((3 + dev->dev_id) << 8) | (port_index + 1));
+
+	dev->ports[port_index].link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
+	dev->ports[port_index].link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
+
+	for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
+		dev->ports[port_index].pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
+
+	return 0;
+}
+
+
+u32 pib_find_zero_bit(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p)
+{
+	u32 n = *last_num_p;
+	unsigned long *bitmap = dev->bitmap + start / BITS_PER_LONG;
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->lock, flags);
+
+	n = find_next_zero_bit(bitmap, size, n);
+	if (n != size)
+		goto found;
+
+	n = find_next_zero_bit(bitmap, size, 1);
+	if (n != size)
+		goto found;
+
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	return (u32)-1;
+
+found:
+	bitmap_set(bitmap, n, 1);
+
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	return n;
+}
+
+
+void pib_clear_bit(struct pib_dev *dev, u32 start, u32 index)
+{
+	unsigned long *bitmap = dev->bitmap + start / BITS_PER_LONG;
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->lock, flags);
+	bitmap_clear(bitmap, index, 1);
+	spin_unlock_irqrestore(&dev->lock, flags);
+}
+
+
 static void pib_dev_remove(struct pib_dev *dev)
 {
 	int i;
 
-	pr_info("pib: remove HCA (dev_id=%d)\n", dev->ib_dev_id);
+	pr_info("pib: remove HCA (dev_id=%d)\n", dev->dev_id);
 
 	ib_unregister_device(&dev->ib_dev);
 
@@ -587,6 +647,7 @@ static void pib_dev_remove(struct pib_dev *dev)
 				vfree(dev->ports[i].lid_table);
 
 	vfree(dev->ports);
+	vfree(dev->bitmap);
 	vfree(dev->mcast_table);
 
 	ib_dealloc_device(&dev->ib_dev);

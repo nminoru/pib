@@ -166,7 +166,8 @@ struct pib_packet_mad {
 	struct pib_packet_lrh   lrh;
 	struct pib_packet_bth   bth;
 	struct pib_packet_deth  deth;
-	struct ib_mad		mad;
+	struct ib_mad_hdr	mad_hdr;
+	u8			data[IB_MGMT_MAD_DATA];
 } __attribute__ ((packed));
 
 
@@ -176,5 +177,6 @@ struct pib_packet_smp {
 	struct pib_packet_deth  deth;
 	struct ib_smp		smp;
 } __attribute__ ((packed));
+
 
 #endif /* PIB_PACKET_H */

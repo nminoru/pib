@@ -20,6 +20,10 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	struct pib_dev *dev;
 	struct pib_cq *cq;
 	struct pib_cqe *cqe, *cqe_next;
+	u32 cq_num;
+
+	if (!ibdev)
+		return ERR_PTR(-EINVAL);
 
 	dev = to_pdev(ibdev);
 
@@ -32,6 +36,12 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	cq = kmem_cache_zalloc(pib_cq_cachep, GFP_KERNEL);
 	if (!cq)
 		return ERR_PTR(-ENOMEM);
+
+	cq_num = pib_find_zero_bit(dev, PIB_BITMAP_CQ_START, PIB_MAX_CQ, &dev->last_cq_num);
+	if (cq_num == (u32)-1)
+		goto err_alloc_cq_num;
+
+	cq->cq_num      = cq_num;
 
 	cq->ib_cq.cqe	= entries;
 	cq->nr_cqe	= 0;
@@ -62,6 +72,9 @@ err_allloc_ceq:
 		kmem_cache_free(pib_cqe_cachep, cqe);
 	}
 
+	pib_clear_bit(dev, PIB_BITMAP_CQ_START, cq_num);
+
+err_alloc_cq_num:
 	kmem_cache_free(pib_cq_cachep, cq);
 
 	return ERR_PTR(-ENOMEM);
@@ -70,13 +83,15 @@ err_allloc_ceq:
 
 int pib_destroy_cq(struct ib_cq *ibcq)
 {
-	unsigned long flags;
+	struct pib_dev *dev;
 	struct pib_cq *cq;
 	struct pib_cqe *cqe, *cqe_next;
+	unsigned long flags;
 
 	if (!ibcq)
 		return 0;
 
+	dev = to_pdev(ibcq->device);
 	cq = to_pcq(ibcq);
 
 	spin_lock_irqsave(&cq->lock, flags);
@@ -90,6 +105,8 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 	}
 	cq->nr_cqe = 0;
 	spin_unlock_irqrestore(&cq->lock, flags);
+
+	pib_clear_bit(dev, PIB_BITMAP_CQ_START, cq->cq_num);
 
 	kmem_cache_free(pib_cq_cachep, cq);
 
@@ -188,6 +205,17 @@ int pib_util_insert_wc_error(struct pib_cq *cq, struct pib_qp *qp, u64 wr_id, en
 		.opcode   = opcode,
 		.qp       = &qp->ib_qp,
 	};
+
+	if (pib_get_behavior(PIB_BEHAVIOR_CORRUPT_INVALID_WC_ATTRS)) {
+		wc.opcode         = pib_random();
+		wc.byte_len       = pib_random();
+		wc.ex.imm_data    = pib_random();
+		wc.wc_flags       = pib_random();
+		wc.pkey_index     = pib_random();
+		wc.slid           = pib_random();
+		wc.sl             = pib_random();
+		wc.dlid_path_bits = pib_random();
+	}
 
 	return insert_wc(cq, &wc);
 }

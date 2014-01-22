@@ -29,17 +29,27 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 			      struct ib_udata *udata)
 {
 	int i;
+	struct pib_dev *dev;
 	struct pib_srq *srq;
+	u32 srq_num;
 
 	if (!ibpd || !init_attr)
 		return ERR_PTR(-EINVAL);
 
-	if (!pib_srq_attr_is_ok(to_pdev(ibpd->device), &init_attr->attr))
+	dev = to_pdev(ibpd->device);
+
+	if (!pib_srq_attr_is_ok(dev, &init_attr->attr))
 		return ERR_PTR(-EINVAL);
 
 	srq = kmem_cache_zalloc(pib_srq_cachep, GFP_KERNEL);
 	if (!srq)
 		return ERR_PTR(-ENOMEM);
+
+	srq_num = pib_find_zero_bit(dev, PIB_BITMAP_SRQ_START, PIB_MAX_SRQ, &dev->last_srq_num);
+	if (srq_num == (u32)-1)
+		goto err_alloc_srq_num;
+
+	srq->srq_num = srq_num;
 
 	srq->ib_srq_attr = init_attr->attr;
 	srq->ib_srq_attr.srq_limit = 0; /* srq_limit isn't set when ibv_craete_srq */
@@ -69,6 +79,9 @@ err_alloc_wqe:
 		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 
+	pib_clear_bit(dev, PIB_BITMAP_SRQ_START, srq_num);
+
+err_alloc_srq_num:
 	kmem_cache_free(pib_srq_cachep, srq);
 	
 	return ERR_PTR(-ENOMEM);
@@ -77,13 +90,15 @@ err_alloc_wqe:
 
 int pib_destroy_srq(struct ib_srq *ibsrq)
 {
-	unsigned long flags;
+	struct pib_dev *dev;
 	struct pib_srq *srq;
 	struct pib_recv_wqe *recv_wqe, *next;
+	unsigned long flags;
 
 	if (!ibsrq)
 		return 0;
 
+	dev = to_pdev(ibsrq->device);
 	srq = to_psrq(ibsrq);
 
 	spin_lock_irqsave(&srq->lock, flags);
@@ -98,7 +113,9 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 	srq->nr_recv_wqe = 0;
 	spin_unlock_irqrestore(&srq->lock, flags);
 
-	kmem_cache_free(pib_srq_cachep, to_psrq(ibsrq));
+	pib_clear_bit(dev, PIB_BITMAP_SRQ_START, srq->srq_num);
+
+	kmem_cache_free(pib_srq_cachep, srq);
 
 	return 0;
 }
@@ -183,7 +200,7 @@ next_wr:
 	for (i=0 ; i<ibwr->num_sge ; i++) {
 		recv_wqe->sge_array[i] = ibwr->sg_list[i];
 
-		if (pib_get_behavior(dev, PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
+		if (pib_get_behavior(PIB_BEHAVIOR_ZERO_LEN_SGE_CONSIDER_AS_MAX_LEN))
 			if (ibwr->sg_list[i].length == 0)
 				ibwr->sg_list[i].length = PIB_MAX_PAYLOAD_LEN;
 
@@ -197,7 +214,7 @@ next_wr:
 
 	recv_wqe->total_length = (u32)total_length;
 
-	if (pib_get_behavior(dev, PIB_BEHAVIOR_SRQ_SHUFFLE)) {
+	if (pib_get_behavior(PIB_BEHAVIOR_SRQ_SHUFFLE)) {
 		/* shuffle WRs */
 		if ((post_srq_recv_counter++ % 2) == 0)
 			list_add_tail(&recv_wqe->list, &srq->recv_wqe_head);

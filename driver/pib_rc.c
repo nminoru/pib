@@ -37,8 +37,8 @@ static enum ib_wc_status process_Atomic_request(struct pib_dev *dev, struct pib_
  *  Responder: Receiving Inbound Request Packets
  */
 static void receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
-static int receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh);
-static int receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh);
+static int receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+static int receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int siz);
 static int receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_qp *qp, void *buffer, int siz, int new_request, int slot_index);
 static int receive_Atomic_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp,  void *buffer, int size);
 static void push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome);
@@ -524,7 +524,7 @@ receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_
 	case IB_OPCODE_RC_SEND_ONLY:
 	case IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE:
 	case IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE:
-		ret = receive_SEND_request(dev, port_num, psn, OpCode, qp, buffer, size, &base_hdr->lrh);
+		ret = receive_SEND_request(dev, port_num, psn, OpCode, qp, base_hdr, buffer, size);
 		break;
 
 	case IB_OPCODE_RC_RDMA_WRITE_FIRST:
@@ -533,7 +533,7 @@ receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_
 	case IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE:
 	case IB_OPCODE_RC_RDMA_WRITE_ONLY:
 	case IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE:
-		ret = receive_RDMA_WRITE_request(dev, port_num, psn, OpCode, qp, buffer, size, &base_hdr->lrh);
+		ret = receive_RDMA_WRITE_request(dev, port_num, psn, OpCode, qp, base_hdr, buffer, size);
 		break;
 
 	case IB_OPCODE_RC_RDMA_READ_REQUEST:
@@ -560,7 +560,7 @@ receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_
 
 
 static int
-receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh)
+receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
 {
 	int init = 0;
 	int finit = 0;
@@ -680,7 +680,7 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 			.qp          = &qp->ib_qp,
 			.ex.imm_data = imm_data,
 			.src_qp      = 0,
-			.slid        = be16_to_cpu(lrh->slid),
+			.slid        = be16_to_cpu(base_hdr->lrh.slid),
 			.wc_flags    = with_imm ? IB_WC_WITH_IMM : 0,
 		};
 
@@ -733,7 +733,7 @@ completion_error:
 
 
 static int
-receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, void *buffer, int size, struct pib_packet_lrh *lrh)
+receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
 {
 	int init = 0;
 	int finit = 0;
@@ -868,7 +868,7 @@ receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode
 	 */
 	if (status != IB_WC_SUCCESS) {
 	skip:		
-		if (with_imm && !pib_get_behavior(dev, PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR))
+		if (with_imm && !pib_get_behavior(PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR))
 			goto completion_error;
 		else
 			goto asynchronous_error;
@@ -886,7 +886,7 @@ receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode
 			.qp          = &qp->ib_qp,
 			.ex.imm_data = imm_data,
 			.src_qp      = 0,
-			.slid        = be16_to_cpu(lrh->slid),
+			.slid        = be16_to_cpu(base_hdr->lrh.slid),
 			.wc_flags    = IB_WC_WITH_IMM,
 		};
 
