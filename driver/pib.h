@@ -31,8 +31,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	3
-#define PIB_DRIVER_VERSION 	"0.2.3"
+#define PIB_VERSION_REVISION	4
+#define PIB_DRIVER_VERSION 	"0.2.4"
 
 #define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
 #define PIB_DRIVER_FW_VERSION \
@@ -207,6 +207,7 @@ enum pib_mr_direction {
 
 enum pib_obj {
 	PIB_MAX_CONTEXT	         =   0x10000,
+	PIB_MAX_PD	         =   0x10000,
 	PIB_MAX_SRQ	         =   0x10000,
 	PIB_MAX_CQ	         =   0x10000,
 	PIB_MAX_MR	         =   0x10000,
@@ -214,13 +215,14 @@ enum pib_obj {
 	PIB_MAX_QP	         = 0x1000000,
 
 	PIB_BITMAP_CONTEXT_START = 0,
-	PIB_BITMAP_SRQ_START     = PIB_MAX_CONTEXT,
+	PIB_BITMAP_PD_START      = PIB_MAX_CONTEXT,
+	PIB_BITMAP_SRQ_START     = PIB_BITMAP_PD_START  + PIB_MAX_PD,
 	PIB_BITMAP_CQ_START      = PIB_BITMAP_SRQ_START + PIB_MAX_SRQ,
 	PIB_BITMAP_MR_START      = PIB_BITMAP_CQ_START  + PIB_MAX_CQ,
 	PIB_BITMAP_AH_START      = PIB_BITMAP_MR_START  + PIB_MAX_MR,
 	PIB_BITMAP_QP_START      = PIB_BITMAP_AH_START  + PIB_MAX_AH,
 
-	PIB_MAX_OBJS		 = PIB_MAX_CONTEXT + PIB_MAX_SRQ + PIB_MAX_CQ + PIB_MAX_MR + PIB_MAX_AH + PIB_MAX_QP,
+	PIB_MAX_OBJS		 = PIB_MAX_CONTEXT + PIB_MAX_PD + PIB_MAX_SRQ + PIB_MAX_CQ + PIB_MAX_MR + PIB_MAX_AH + PIB_MAX_QP,
 };
 
 
@@ -306,6 +308,7 @@ struct pib_dev {
 	int                     nr_srq;
 
 	u32			last_ucontext_num;
+	u32			last_pd_num;
 	u32			last_srq_num;
 	u32			last_cq_num;
 	u32			last_mr_num;
@@ -392,6 +395,7 @@ struct pib_ucontext {
 
 struct pib_pd {
 	struct ib_pd            ib_pd;
+	u32			pd_num;
 
 	spinlock_t		lock;
 

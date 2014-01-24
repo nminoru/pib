@@ -30,8 +30,6 @@ static int reg_mr(struct pib_pd *pd, struct pib_mr *mr)
 	return -1;
 
 found:
-	pd->mr_table[i] = mr;
-
 	mr->lkey_prefix = pib_random() * PIB_MAX_MR_PER_PD;
 	mr->rkey_prefix = pib_random() * PIB_MAX_MR_PER_PD;
 
@@ -45,6 +43,8 @@ found:
 	if (mr->ib_mr.lkey == PIB_IMM_DATA_LKEY)
 		goto found;
 #endif
+
+	pd->mr_table[i] = mr;
 
 	pd->nr_mr++;
 
@@ -78,14 +78,14 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 
 	mr->mr_num = mr_num;
 
-	if (reg_mr(pd, mr))
-		goto err_reg_mr;
-
 	mr->start        = 0;
 	mr->length       = (u64)-1;
 	mr->virt_addr    = 0;
 	mr->is_dma = 1;
 	mr->access_flags = access_flags;
+
+	if (reg_mr(pd, mr))
+		goto err_reg_mr;
 
 	return &mr->ib_mr;
 
@@ -156,10 +156,12 @@ err_alloc_mr:
 
 int pib_dereg_mr(struct ib_mr *ibmr)
 {
+	int ret = 0;
 	struct pib_dev *dev;
-	struct pib_mr *mr;
+	struct pib_mr *mr, *mr_comp;
 	struct pib_pd *pd;
 	unsigned long flags;
+	u32 lkey;
 
 	if (!ibmr)
 		return -EINVAL;
@@ -169,8 +171,16 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 	pd  = to_ppd(ibmr->pd);
 
 	spin_lock_irqsave(&pd->lock, flags);
-	pd->mr_table[mr->lkey_prefix & PIB_MR_INDEX_MASK] = NULL;
-	pd->nr_mr--;
+	lkey = (mr->ib_mr.lkey & PIB_MR_INDEX_MASK);
+	mr_comp = pd->mr_table[lkey];
+	if (mr == mr_comp) {
+		pd->mr_table[lkey] = NULL;
+		pd->nr_mr--;
+	} else {
+		pr_err("pib: MR(%u) don't be registered in PD(%u) (pib_dereg_mr)\n",
+		       mr->mr_num, pd->pd_num);
+		ret = -ENOENT;
+	}
 	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (mr->ib_umem)
@@ -180,7 +190,7 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 
 	kmem_cache_free(pib_mr_cachep, mr);
 
-	return 0;
+	return ret;
 }
 
 

@@ -588,11 +588,14 @@ const char *pib_get_sa_attr(__be16 attr_id)
 void pib_print_header(const char *direct, void *buffer)
 {
 	u8 OpCode;
-	struct pib_packet_lrh *lrh;
-	struct ib_grh         *grh;
-	struct pib_packet_bth *bth;
+	struct pib_packet_lrh *lrh = NULL;
+	struct ib_grh         *grh = NULL;
+	struct pib_packet_bth *bth = NULL; 
 
-	pib_parse_packet_header(buffer, PIB_PACKET_BUFFER, &lrh, &grh, &bth);
+	if (pib_parse_packet_header(buffer, PIB_PACKET_BUFFER, &lrh, &grh, &bth) < 0) {
+		pr_info("%s: broken packet\n", direct);
+		return;
+	}
 
 	OpCode = bth->OpCode;
 
@@ -602,6 +605,16 @@ void pib_print_header(const char *direct, void *buffer)
 	pr_info("%s: pktlen         %u - %u\n",direct,
 		(be16_to_cpu(lrh->pktlen) & 0x7FF) * 4,
 		(bth->se_m_padcnt_tver >> 4) & 0x3);
+
+	if (grh) {
+		pr_info("%s: SGID           %016llx:%016llx\n", direct,
+			be64_to_cpu(grh->sgid.global.subnet_prefix),
+			be64_to_cpu(grh->sgid.global.interface_id));
+		pr_info("%s: DGID           %016llx:%016llx\n", direct,
+			be64_to_cpu(grh->dgid.global.subnet_prefix),
+			be64_to_cpu(grh->dgid.global.interface_id));
+	}
+
 	pr_info("%s: destQP         0x%06x\n", direct,
 		be32_to_cpu(bth->destQP) & PIB_QPN_MASK);
 	pr_info("%s: psn            0x%06x\n", direct,

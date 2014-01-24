@@ -316,7 +316,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 		.max_cq              = PIB_MAX_CQ - 1,
 		.max_cqe             = 4194303,
 		.max_mr              = PIB_MAX_MR - 1,
-		.max_pd              =   32764,
+		.max_pd              = PIB_MAX_PD - 1,
 		.max_qp_rd_atom      = PIB_MAX_RD_ATOM,
 		.max_ee_rd_atom      =       0,
 		.max_res_rd_atom     = 2096128,
@@ -537,6 +537,7 @@ static void setup_obj_num_bitmap(struct pib_dev *dev)
 	unsigned long *bitmap = dev->obj_num_bitmap;
 
 	bitmap_set(bitmap, PIB_BITMAP_CONTEXT_START, 1);
+	bitmap_set(bitmap, PIB_BITMAP_PD_START,      1);
 	bitmap_set(bitmap, PIB_BITMAP_SRQ_START,     1);
 	bitmap_set(bitmap, PIB_BITMAP_CQ_START,      1);
 	bitmap_set(bitmap, PIB_BITMAP_MR_START,      1);
