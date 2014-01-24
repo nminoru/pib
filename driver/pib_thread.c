@@ -33,7 +33,7 @@ static void process_on_scheduler(struct pib_dev *dev);
 static int process_new_send_wr(struct pib_qp *qp);
 static int process_send_wr(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
 static int process_incoming_message(struct pib_dev *dev, int port_index);
-static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 static void process_sendmsg(struct pib_dev *dev);
 static struct sockaddr *get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dlid);
 static void sock_data_ready_callback(struct sock *sk, int bytes);
@@ -262,7 +262,7 @@ static int kthread_routine(void *data)
 				process_on_scheduler(dev);
 		}
 
-                process_on_scheduler(dev);
+		process_on_scheduler(dev);
 	}
 
 done:
@@ -539,11 +539,13 @@ completion_error:
 
 static int process_incoming_message(struct pib_dev *dev, int port_index)
 {
-	int ret;
+	int ret, header_size;
 	struct msghdr msghdr = {.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
 	struct kvec iov;
 	void *buffer;
-	struct pib_packet_base_hdr *base_hdr;
+	struct pib_packet_lrh *lrh;
+	struct ib_grh         *grh;
+	struct pib_packet_bth *bth;
 	u32 dest_qp_num;
 	u16 dlid;
 
@@ -562,46 +564,29 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 	} else if (ret == 0)
 		return -EAGAIN;
 
-	/* Analyze Local Route Hedaer & Base Transport Header */
-	base_hdr = (struct pib_packet_base_hdr *)buffer;
-	if (ret < sizeof(*base_hdr)) {
-		pib_debug("pib: drop packet: too small packet (size=%u)\n", ret);
+	header_size = pib_parse_packet_header(buffer, ret, &lrh, &grh, &bth);
+	if (header_size < 0) {
+		pib_debug("pib: wrong drop packet(size=%u)\n", ret);
 		goto silently_drop;
 	}
 
-	/* check packet length */
-	if (pib_packet_lrh_get_pktlen(&base_hdr->lrh) * 4 != ret) {
-		pib_debug("pib: drop packet: differ UDP packet's size from IB message\n");
-		goto silently_drop;
-	}
-
-	buffer += sizeof(*base_hdr);
-	ret    -= sizeof(*base_hdr);
-
-	if ((base_hdr->lrh.vl_lver & 0xF) != 0)  {/* Link Version */
-		pib_debug("pib: drop packet: wrong link version (%u)\n", (base_hdr->lrh.vl_lver & 0xF));
-		goto silently_drop;
-	}
-
-	/* 0x2: Transport: IBA, Next Header: BTH */
-	if ((base_hdr->lrh.sl_rsv_lnh & 0x3) != 1) {
-		pib_debug("pib: drop packet: BTH\n");
-		goto silently_drop;
-	}
+	buffer += header_size;
+	ret    -= header_size;
 
 	/* Payload */
-	ret -= pib_packet_bth_get_padcnt(&base_hdr->bth); /* Pad Count */
+	ret -= pib_packet_bth_get_padcnt(bth); /* Pad Count */
 	if (ret < 0) {
 		pib_debug("pib: drop packet: too small packet except LRH & BTH (size=%u)\n", ret);
 		goto silently_drop;
 	}
 
-	dlid        = be16_to_cpu(base_hdr->lrh.dlid);
-	dest_qp_num = be32_to_cpu(base_hdr->bth.destQP) & PIB_QPN_MASK;
+	dlid        = be16_to_cpu(lrh->dlid);
+	dest_qp_num = be32_to_cpu(bth->destQP) & PIB_QPN_MASK;
 
 	if ((dest_qp_num == PIB_QP0) || (dlid < PIB_MCAST_LID_BASE)) {
 		/* Unicast */
-		process_incoming_message_per_qp(dev, port_index, dlid, dest_qp_num, base_hdr, buffer, ret);
+		process_incoming_message_per_qp(dev, port_index, dlid, dest_qp_num,
+						lrh, grh, bth, buffer, ret);
 	} else {
 		/* Multicast */
 		int i, max;
@@ -612,8 +597,8 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 		u32 qp_nums[PIB_MCAST_QP_ATTACH];
 		unsigned long flags;
 
-		if ((base_hdr->bth.OpCode != IB_OPCODE_UD_SEND_ONLY) && 
-		    (base_hdr->bth.OpCode != IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE)) {
+		if ((bth->OpCode != IB_OPCODE_UD_SEND_ONLY) && 
+		    (bth->OpCode != IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE)) {
 			pib_debug("pib: drop packet: \n");
 			goto silently_drop;
 		}
@@ -636,7 +621,7 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 		max = i;
 
 		port_lid = dev->ports[port_index].ib_port_attr.lid;
-		slid     = be16_to_cpu(base_hdr->lrh.slid);
+		slid     = be16_to_cpu(lrh->slid);
 
 		/* 
 		 * マルチキャストパケットを届ける QP は複数かもしれない。
@@ -647,7 +632,8 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 				continue;
 
 			pib_debug("pib: MC packet qp_num=0x%06x\n", qp_nums[i]);
-			process_incoming_message_per_qp(dev, port_index, dlid, qp_nums[i], base_hdr, buffer, ret);
+			process_incoming_message_per_qp(dev, port_index, dlid, qp_nums[i],
+							lrh, grh, bth, buffer, ret);
 
 			cond_resched();
 		}
@@ -658,7 +644,69 @@ silently_drop:
 }
 
 
-static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
+int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_p, struct ib_grh **grh_p, struct pib_packet_bth **bth_p)
+{
+	int ret = 0;
+	struct pib_packet_lrh *lrh;
+	struct ib_grh         *grh = NULL;
+	struct pib_packet_bth *bth;
+	u8 lnh;
+
+	/* Analyze Local Route Hedaer */
+	lrh = (struct pib_packet_lrh *)buffer;
+
+	if (size < sizeof(*lrh))
+		return -1;
+
+	/* check packet length */
+	if (pib_packet_lrh_get_pktlen(lrh) * 4 != size)
+		return -1;
+
+	buffer += sizeof(*lrh);
+	size   -= sizeof(*lrh);
+	ret    += sizeof(*lrh); 
+
+	/* check Link Version */
+	if ((lrh->vl_lver & 0xF) != 0)
+		return -2;
+
+	/* check Transport &  Next Header */
+	lnh = (lrh->sl_rsv_lnh & 0x3);
+
+	if (lnh == 0x2)
+		/* IBA local */
+		goto skip_grh;
+	else if (lnh != 0x3)
+		return -3;
+
+	/* IBA global */
+	grh = (struct ib_grh *)buffer;
+
+	if (size < sizeof(*grh))
+		return -1;
+
+	buffer += sizeof(*grh);
+	size   -= sizeof(*grh);
+	ret    += sizeof(*grh); 
+
+skip_grh:
+	/* Base Transport Header */
+	bth = (struct pib_packet_bth *)buffer;
+	    
+	if (size < sizeof(*bth))
+		return -1;
+
+	ret    += sizeof(*bth);
+
+	*lrh_p = lrh;
+	*grh_p = grh;
+	*bth_p = bth;
+
+	return ret;
+}
+
+
+static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size)
 {
 	unsigned long flags;
 	struct pib_qp *qp;
@@ -707,13 +755,13 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 	switch (qp->qp_type) {
 
 	case IB_QPT_RC:
-		pib_receive_rc_qp_incoming_message(dev, port_num, qp, base_hdr, buffer, size);
+		pib_receive_rc_qp_incoming_message(dev, port_num, qp, lrh, grh, bth, buffer, size);
 		break;
 
 	case IB_QPT_UD:
 	case IB_QPT_GSI:
 	case IB_QPT_SMI:
-		pib_receive_ud_qp_incoming_message(dev, port_num, qp, base_hdr, buffer, size);
+		pib_receive_ud_qp_incoming_message(dev, port_num, qp, lrh, grh, bth, buffer, size);
 		break;
 
 	default:
@@ -886,14 +934,15 @@ static void process_sendmsg(struct pib_dev *dev)
 	int ret;
 	u8 port_num;
 	u32 src_qp_num;
+	u16 slid;
 	u16 dlid;
 	struct sockaddr *sockaddr;
 	struct msghdr	msghdr;
 	struct kvec	iov;
-	const struct pib_packet_base_hdr *base_hdr;
 
 	port_num   = dev->thread.port_num;
 	src_qp_num = dev->thread.src_qp_num;
+	slid       = dev->thread.slid;
 	dlid       = dev->thread.dlid;
 
 	sockaddr = get_sockaddr_from_dlid(dev, port_num, src_qp_num, dlid);
@@ -904,11 +953,9 @@ static void process_sendmsg(struct pib_dev *dev)
 
 	BUG_ON(dev->thread.msg_size == 0);
 
-	base_hdr = (const struct pib_packet_base_hdr *)dev->thread.buffer;
-
 	/* QP0 以外は SLID または DLID が 0 のパケットは投げない */
 	if (src_qp_num != PIB_QP0)
-		if ((be16_to_cpu(base_hdr->lrh.slid) == 0) || (dlid == 0))
+		if ((slid == 0) || (dlid == 0))
 			goto done;
 
 	memset(&msghdr, 0, sizeof(msghdr));

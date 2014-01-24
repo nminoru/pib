@@ -585,20 +585,27 @@ const char *pib_get_sa_attr(__be16 attr_id)
 }
 
 
-void pib_print_base_hdr(const char *direct, const struct pib_packet_base_hdr *base_hdr)
+void pib_print_header(const char *direct, void *buffer)
 {
-	u8 OpCode = base_hdr->bth.OpCode;
+	u8 OpCode;
+	struct pib_packet_lrh *lrh;
+	struct ib_grh         *grh;
+	struct pib_packet_bth *bth;
+
+	pib_parse_packet_header(buffer, PIB_PACKET_BUFFER, &lrh, &grh, &bth);
+
+	OpCode = bth->OpCode;
 
 	pr_info("%s: opcode         0x%02x\n", direct, OpCode);
 	pr_info("%s: lid            0x%04x -> 0x%04x\n", direct,
-		be16_to_cpu(base_hdr->lrh.slid), be16_to_cpu(base_hdr->lrh.dlid));
+		be16_to_cpu(lrh->slid), be16_to_cpu(lrh->dlid));
 	pr_info("%s: pktlen         %u - %u\n",direct,
-		(be16_to_cpu(base_hdr->lrh.pktlen) & 0x7FF) * 4,
-		(base_hdr->bth.se_m_padcnt_tver >> 4) & 0x3);
+		(be16_to_cpu(lrh->pktlen) & 0x7FF) * 4,
+		(bth->se_m_padcnt_tver >> 4) & 0x3);
 	pr_info("%s: destQP         0x%06x\n", direct,
-		be32_to_cpu(base_hdr->bth.destQP) & PIB_QPN_MASK);
+		be32_to_cpu(bth->destQP) & PIB_QPN_MASK);
 	pr_info("%s: psn            0x%06x\n", direct,
-		be32_to_cpu(base_hdr->bth.psn)    & PIB_PSN_MASK);
+		be32_to_cpu(bth->psn)    & PIB_PSN_MASK);
 }
 
 

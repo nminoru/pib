@@ -321,9 +321,13 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	struct kvec iov;
 	struct pib_dev *dev;
 	unsigned long flags;
-	struct pib_packet_base_hdr *base_hdr;
-	struct pib_packet_mad *mad_packet;
-	struct pib_packet_smp *smp_packet;
+	void *buffer;
+	struct pib_packet_lrh *lrh;
+	struct ib_grh         *grh;
+	struct pib_packet_bth *bth;
+	struct pib_packet_deth *deth = NULL;
+	struct ib_mad	      *mad = NULL;
+	struct ib_smp         *smp = NULL;
 
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
@@ -348,17 +352,23 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 
 	recvmsg_size = ret;
 
-	base_hdr = (struct pib_packet_base_hdr *)sw->buffer;
-	if (recvmsg_size < sizeof(*base_hdr))
-		goto silently_drop;
+	buffer = sw->buffer;
 
-	dest_qp_num = be32_to_cpu(base_hdr->bth.destQP);
+	ret = pib_parse_packet_header(buffer, recvmsg_size, &lrh, &grh, &bth);
+	if (ret < 0) {
+		pib_debug("pib: wrong drop packet(size=%u)\n", ret);
+		goto silently_drop;
+	}
+
+	buffer += ret;
+
+	dest_qp_num = be32_to_cpu(bth->destQP);
 	if (dest_qp_num & ~PIB_QPN_MASK) {
 		pib_debug("pib: easy switch: drop packet: dest_qp_num=0x%06x\n", dest_qp_num);
 		goto silently_drop;
 	}
 
-	dlid = be16_to_cpu(base_hdr->lrh.dlid);
+	dlid = be16_to_cpu(lrh->dlid);
 
 	if ((dest_qp_num == PIB_QP0) || (dest_qp_num == PIB_QP1))
 		goto process_mad;
@@ -378,71 +388,78 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	goto silently_drop;
 
 process_mad:
-	mad_packet = (struct pib_packet_mad *)sw->buffer;
-	if (recvmsg_size < sizeof(*mad_packet))
+	ret = recvmsg_size - (buffer - sw->buffer);
+
+	deth = (struct pib_packet_deth*)buffer;
+	if (ret < sizeof(*deth))
+		goto silently_drop;
+
+	buffer += sizeof(*deth);
+	ret    -= sizeof(*deth);
+
+	smp = (struct ib_smp*)buffer;
+	mad = (struct ib_mad*)buffer;
+
+	if (ret < sizeof(*mad))
 	    goto silently_drop;
 
-	switch (mad_packet->mad_hdr.mgmt_class) {
+	switch (mad->mad_hdr.mgmt_class) {
 
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
-		smp_packet = (struct pib_packet_smp *)sw->buffer;
-
-		if ((smp_packet->smp.dr_slid != IB_LID_PERMISSIVE) ||
-		    (smp_packet->smp.dr_dlid != IB_LID_PERMISSIVE)) {
+		if ((smp->dr_slid != IB_LID_PERMISSIVE) ||
+		    (smp->dr_dlid != IB_LID_PERMISSIVE)) {
 			/* DR SLID と DR DLID が指定には未対応 */
 			pr_crit("pib: pib_easy_sw: SUBN_DIRECTED_ROUTE dr_slid=0x%04x, dr_dlid=0x%04x\n",
-				smp_packet->smp.dr_slid,
-				smp_packet->smp.dr_dlid);
+				smp->dr_slid, smp->dr_dlid);
 			BUG();
 		}
-
 		break;
 
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
 	default:
 		pr_crit("pib: pib_easy_sw: mgmt_class = %u\n",
-			mad_packet->mad_hdr.mgmt_class);
+			mad->mad_hdr.mgmt_class);
 		BUG();
 		break;
 	}
 
 	self_consumed = 0;
 
-	if ((smp_packet->smp.status & IB_SMP_DIRECTION) == 0) {
+	if ((smp->status & IB_SMP_DIRECTION) == 0) {
 		/* Outgoing SMP */
-		if (smp_packet->smp.hop_ptr == smp_packet->smp.hop_cnt) {
-			if (smp_packet->smp.dr_dlid == IB_LID_PERMISSIVE) {
-				smp_packet->smp.hop_ptr--;
-				ret = process_smp(&smp_packet->smp, sw, in_sw_port_num);
+		if (smp->hop_ptr == smp->hop_cnt) {
+			if (smp->dr_dlid == IB_LID_PERMISSIVE) {
+				smp->hop_ptr--;
+				ret = process_smp(smp, sw, in_sw_port_num);
 				out_sw_port_num = in_sw_port_num;
 				self_consumed = 1;
 			} else {
 				pr_crit("pib: packet.smp.dr_dlid = 0x%04x\n",
-					be16_to_cpu(smp_packet->smp.dr_dlid));
+					be16_to_cpu(smp->dr_dlid));
 				BUG();
 			}
-		} else if (smp_packet->smp.hop_ptr == smp_packet->smp.hop_cnt + 1) {
-			smp_packet->smp.hop_ptr--;
-			ret = process_smp(&smp_packet->smp, sw, in_sw_port_num);
+		} else if (smp->hop_ptr == smp->hop_cnt + 1) {
+			smp->hop_ptr--;
+			ret = process_smp(smp, sw, in_sw_port_num);
 			out_sw_port_num = in_sw_port_num;
 			self_consumed = 1;
 		} else {
 			ret = IB_MAD_RESULT_SUCCESS;
-			out_sw_port_num = smp_packet->smp.initial_path[smp_packet->smp.hop_ptr + 1];
-			smp_packet->smp.hop_ptr++;
+			out_sw_port_num = smp->initial_path[smp->hop_ptr + 1];
+			smp->hop_ptr++;
 		}
 	} else {
 		/* Returning SMP */
 		ret = IB_MAD_RESULT_SUCCESS;
-		smp_packet->smp.hop_ptr--;
-		out_sw_port_num = smp_packet->smp.initial_path[smp_packet->smp.hop_ptr];
-		smp_packet->smp.return_path[smp_packet->smp.hop_ptr] = out_sw_port_num;
+		smp->hop_ptr--;
+		out_sw_port_num = smp->initial_path[smp->hop_ptr];
+		smp->return_path[smp->hop_ptr] = out_sw_port_num;
 	}
 
 	if (self_consumed) {
-		smp_packet->lrh.dlid = smp_packet->lrh.slid;
-		if (smp_packet->smp.dr_slid == IB_LID_PERMISSIVE)
-			smp_packet->lrh.slid = IB_LID_PERMISSIVE;
+		lrh->dlid = lrh->slid;
+		if (smp->dr_slid == IB_LID_PERMISSIVE)
+			lrh->slid = IB_LID_PERMISSIVE;
 	}
 
 	if (ret & IB_MAD_RESULT_FAILURE) {

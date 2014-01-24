@@ -45,7 +45,7 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	if (!srq)
 		return ERR_PTR(-ENOMEM);
 
-	srq_num = pib_find_zero_bit(dev, PIB_BITMAP_SRQ_START, PIB_MAX_SRQ, &dev->last_srq_num);
+	srq_num = pib_alloc_obj_num(dev, PIB_BITMAP_SRQ_START, PIB_MAX_SRQ, &dev->last_srq_num);
 	if (srq_num == (u32)-1)
 		goto err_alloc_srq_num;
 
@@ -79,7 +79,7 @@ err_alloc_wqe:
 		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 
-	pib_clear_bit(dev, PIB_BITMAP_SRQ_START, srq_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_SRQ_START, srq_num);
 
 err_alloc_srq_num:
 	kmem_cache_free(pib_srq_cachep, srq);
@@ -113,8 +113,8 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 	srq->nr_recv_wqe = 0;
 	spin_unlock_irqrestore(&srq->lock, flags);
 
-	pib_clear_bit(dev, PIB_BITMAP_SRQ_START, srq->srq_num);
-
+	pib_dealloc_obj_num(dev, PIB_BITMAP_SRQ_START, srq->srq_num);
+	
 	kmem_cache_free(pib_srq_cachep, srq);
 
 	return 0;
@@ -124,17 +124,40 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 		   enum ib_srq_attr_mask attr_mask, struct ib_udata *udata)
 {
+	int ret;
+	struct pib_dev *dev;
 	struct pib_srq *srq;
+	unsigned long flags;
 
 	if (!ibsrq || !attr)
 		return -EINVAL;
 
+	dev = to_pdev(ibsrq->device);
 	srq = to_psrq(ibsrq);
 
+	spin_lock_irqsave(&srq->lock, flags);
+
 	if (attr_mask & IB_SRQ_MAX_WR) {
-		/* @todo not yet implemented. */
-		pr_err("pib: pib_modify_srq doesn't support for IB_SRQ_MAX_WR yet\n");
-		return -EINVAL;
+		struct ib_srq_attr new_attr;
+
+		if (!(dev->ib_dev_attr.device_cap_flags & IB_DEVICE_SRQ_RESIZE)) {
+			pib_debug("pib: Can't resize SRQ w/o DEVICE_SRQ_RESIZE\n");
+			ret = -EINVAL;
+			goto done;
+		}
+
+		new_attr = srq->ib_srq_attr;
+		new_attr.max_wr  = attr->max_wr;
+		new_attr.max_sge = attr->max_sge;
+
+		if (!pib_srq_attr_is_ok(dev, &new_attr)) {
+			ret = -EINVAL;
+			goto done;
+		}
+
+		/* @todo ここで free_recv 増減を行う */
+
+		srq->ib_srq_attr = new_attr;
 	}
 
 	if (attr_mask & IB_SRQ_LIMIT) {
@@ -142,7 +165,12 @@ int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 		srq->issue_srq_limit = 0;
 	}
 
-	return 0;
+	ret = 0;
+
+done:
+	spin_unlock_irqrestore(&srq->lock, flags);
+
+	return ret;
 }
 
 
@@ -208,7 +236,7 @@ next_wr:
 	}
 
 	if (PIB_MAX_PAYLOAD_LEN < total_length) {
-		ret = -EINVAL;
+		ret = -EMSGSIZE;
 		goto err;
 	} 
 

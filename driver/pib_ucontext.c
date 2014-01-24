@@ -26,7 +26,7 @@ pib_alloc_ucontext(struct ib_device *ibdev,
 	if (!ucontext)
 		return ERR_PTR(-ENOMEM);
 
-	ucontext_num = pib_find_zero_bit(dev, PIB_BITMAP_CONTEXT_START, PIB_MAX_CONTEXT, &dev->last_ucontext_num);
+	ucontext_num = pib_alloc_obj_num(dev, PIB_BITMAP_CONTEXT_START, PIB_MAX_CONTEXT, &dev->last_ucontext_num);
 	if (ucontext_num == (u32)-1)
 		goto err_alloc_ucontext_num;
 
@@ -52,7 +52,7 @@ int pib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 	dev      = to_pdev(ibcontext->device);
 	ucontext = to_pucontext(ibcontext);
 
-	pib_clear_bit(dev, PIB_BITMAP_CONTEXT_START, ucontext->ucontext_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_CONTEXT_START, ucontext->ucontext_num);
 
 	kfree(ucontext);
 

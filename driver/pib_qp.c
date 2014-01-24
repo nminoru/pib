@@ -14,7 +14,7 @@
 static int qp_init_attr_is_ok(const struct pib_dev *dev, const struct ib_qp_init_attr *init_attr);
 static int qp_cap_is_ok(const struct pib_dev *dev, const struct ib_qp_cap *cap, int use_srq);
 static void dealloc_free_wqe(struct pib_qp *qp);
-static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, const struct ib_qp_attr *attr, int attr_mask);
+static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, enum ib_qp_state cur_state, const struct ib_qp_attr *attr, int attr_mask);
 static void get_ready_to_send(struct pib_dev *dev, struct pib_qp *qp);
 static int reset_qp(struct pib_qp *qp);
 static void reset_qp_attr(struct pib_qp *qp);
@@ -302,7 +302,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 		if (pib_get_behavior(PIB_BEHAVIOR_QPN_REALLOCATION))
 			dev->last_qp_num = PIB_QP1 + 1;
 
-		qp_num = pib_find_zero_bit(dev, PIB_BITMAP_QP_START, PIB_MAX_QP, &dev->last_qp_num);
+		qp_num = pib_alloc_obj_num(dev, PIB_BITMAP_QP_START, PIB_MAX_QP, &dev->last_qp_num);
 		if (qp_num == (u32)-1)
 			goto err_alloc_qp_num;
 
@@ -373,7 +373,7 @@ err_alloc_inlin_data_buffer:
 		spin_unlock_irqrestore(&dev->lock, flags);
 	}
 
-	pib_clear_bit(dev, PIB_BITMAP_QP_START, qp_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
 
 err_alloc_qp_num:
 	kmem_cache_free(pib_qp_cachep, qp);
@@ -486,7 +486,7 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	pib_clear_bit(dev, PIB_BITMAP_QP_START, qp_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
 
 	kmem_cache_free(pib_qp_cachep, qp);
 
@@ -534,10 +534,11 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	cur_state = (attr_mask & IB_QP_CUR_STATE) ? attr->cur_qp_state : qp->state;
 	new_state = (attr_mask & IB_QP_STATE) ? attr->qp_state : cur_state;
 
+	/* @todo IB_QP_CAP は常にエラーになる */
 	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask))
 		goto err_inval;
 
-	if (!modify_qp_is_ok(to_pdev(ibqp->device), qp, attr, attr_mask))
+	if (!modify_qp_is_ok(dev, qp, cur_state, attr, attr_mask))
 		goto err_inval;
 
 	if (attr_mask & IB_QP_PATH_MTU)
@@ -561,6 +562,8 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		qp->ib_qp_attr.qp_access_flags = attr->qp_access_flags;
 	
 	if (attr_mask & IB_QP_CAP) {
+		/* @todo ここで増減を */
+
 		qp->ib_qp_attr.cap.max_send_wr  = attr->cap.max_send_wr;
 		qp->ib_qp_attr.cap.max_send_sge = attr->cap.max_send_sge;
 		if (qp->ib_qp_init_attr.recv_cq) {
@@ -676,7 +679,8 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		}
 
 		if (issue_sq_drained) {
-			pib_util_insert_async_qp_event(qp, IB_EVENT_SQ_DRAINED);
+			if (qp->ib_qp_attr.en_sqd_async_notify)
+				pib_util_insert_async_qp_event(qp, IB_EVENT_SQ_DRAINED);
 			qp->issue_sq_drained = 1;
 		}
 
@@ -701,14 +705,17 @@ err_inval:
 }
 
 
-static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, const struct ib_qp_attr *attr, int attr_mask)
+static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, enum ib_qp_state cur_state, const struct ib_qp_attr *attr, int attr_mask)
 {
-	/* IB_QP_EN_SQD_ASYNC_NOTIFY */
-	/*    en_sqd_async_notify */
-
 	/* IB_QP_ACCESS_FLAGS */
 
-	if (attr_mask & IB_QP_PORT)
+	if (attr_mask & IB_QP_PORT) {
+		if ((cur_state == IB_QPS_SQD) &&
+		    !(dev->ib_dev_attr.device_cap_flags & IB_DEVICE_CHANGE_PHY_PORT)) {
+			pib_debug("pib: Can't modify primary port number in SQD state w/o DEVICE_CHANGE_PHY_PORT\n");
+			return 0;
+		}
+
 		if (qp->qp_type == IB_QPT_SMI ||
 		    qp->qp_type == IB_QPT_GSI ||
 		    attr->port_num == 0 ||
@@ -716,6 +723,7 @@ static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, c
 			pib_debug("pib: wrong port_num=%u in modify_qp_is_ok\n", attr->port_num);
 			return 0;
 		}
+	}
 
 	if (attr_mask & IB_QP_AV)
 		if (attr->ah_attr.dlid >= PIB_MCAST_LID_BASE) {
@@ -779,9 +787,16 @@ static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, c
 				return 0;
 		}
 
-	if (attr_mask & IB_QP_CAP)
+
+	if (attr_mask & IB_QP_CAP) {
+		if (!(dev->ib_dev_attr.device_cap_flags & IB_DEVICE_RESIZE_MAX_WR)) {
+			pib_debug("pib: Can't modify QP capabilities w/o DEVICE_RESIZE_MAX_WR\n");
+			return 0;
+		}
+
 		if (!qp_cap_is_ok(dev, &attr->cap, (qp->ib_qp_init_attr.srq != NULL)))
 			return 0;
+	}
 
 	/* IB_QP_PATH_MIG_STATE */
 	/*  */
@@ -819,6 +834,9 @@ int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mas
 
 	qp_attr->sq_psn       = qp->requester.psn & PIB_PSN_MASK;
 	qp_attr->rq_psn       = qp->responder.psn & PIB_PSN_MASK;
+
+	qp_attr->sq_draining  = !(list_empty(&qp->requester.sending_swqe_head) &&
+				  list_empty(&qp->requester.waiting_swqe_head));
 
 	spin_unlock_irqrestore(&qp->lock, flags);
 
@@ -930,7 +948,7 @@ next_wr:
 	}
 
 	if (PIB_MAX_PAYLOAD_LEN < total_length) { 
-		ret = -EINVAL;
+		ret = -EMSGSIZE;
 		goto done;
 	}
 
@@ -1126,7 +1144,7 @@ next_wr:
 	}
 	
 	if (PIB_MAX_PAYLOAD_LEN < total_length)  {
-		ret = -EINVAL;
+		ret = -EMSGSIZE;
 		goto err;
 	}
 

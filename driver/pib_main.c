@@ -95,7 +95,7 @@ static int pib_query_port(struct ib_device *ibdev, u8 port_num,
 }
 
 
-static void setup_bitmap(struct pib_dev *dev);
+static void setup_obj_num_bitmap(struct pib_dev *dev);
 static int set_port(struct pib_dev *dev, int port_index);
 
 
@@ -128,6 +128,21 @@ static int pib_query_gid(struct ib_device *ibdev, u8 port_num, int index,
 	*gid = dev->ports[port_num - 1].gid[index];
 
 	return 0;
+}
+
+
+void pib_fill_grh(struct pib_dev *dev, u8 port_num, struct ib_grh *dest, const struct ib_global_route *src)
+{
+	BUG_ON((port_num        < 1) || (dev->ib_dev.phys_port_cnt < port_num));
+	BUG_ON((src->sgid_index < 0) || (PIB_GID_PER_PORT < src->sgid_index));
+
+	dest->version_tclass_flow =
+		cpu_to_be32((6 << 28)|(src->traffic_class << 20)|(src->flow_label & 0xFFFFF));
+	dest->paylen	= cpu_to_be16(0); /* @todo */
+	dest->next_hdr  = 0;
+	dest->hop_limit = src->hop_limit;
+	dest->sgid	= dev->ports[port_num - 1].gid[src->sgid_index];
+	dest->dgid	= src->dgid;
 }
 
 
@@ -294,7 +309,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 		.hw_ver              = 0U,
 		.max_qp              = PIB_MAX_QP - 1,
 		.max_qp_wr           = 16351,
-		.device_cap_flags    = 0,
+		.device_cap_flags    = PIB_DEVICE_CAP_FLAGS,
 
 		.max_sge             = PIB_MAX_SGE,
 		.max_sge_rd          =       8,
@@ -341,7 +356,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	dev->ib_dev.owner		= THIS_MODULE;
 	dev->ib_dev.node_type		= RDMA_NODE_IB_CA;
 	dev->ib_dev.node_guid		= cpu_to_be64(hca_guid_base | ((3 + dev_id) << 8) | 0);
-	dev->ib_dev.local_dma_lkey	= 0;
+	dev->ib_dev.local_dma_lkey	= PIB_LOCAL_DMA_LKEY;
 	dev->ib_dev.phys_port_cnt	= pib_phys_port_cnt;
 	dev->ib_dev.num_comp_vectors	= num_possible_cpus();
 	dev->ib_dev.uverbs_abi_ver	= PIB_UVERBS_ABI_VERSION;
@@ -454,11 +469,11 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	if (!dev->ports)
 		goto err_ports;
 
-	dev->bitmap	= vzalloc(PIB_MAX_OBJS / BITS_PER_BYTE);
-	if (!dev->bitmap)
-		goto err_bitmap;
+	dev->obj_num_bitmap	= vzalloc(PIB_MAX_OBJS / BITS_PER_BYTE);
+	if (!dev->obj_num_bitmap)
+		goto err_obj_num_bitmap;
 
-	setup_bitmap(dev);
+	setup_obj_num_bitmap(dev);
 
 	for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
 		if (set_port(dev, i))
@@ -502,8 +517,8 @@ err_ld_table:
 			if (dev->ports[i].lid_table)
 				vfree(dev->ports[i].lid_table);
 
-	vfree(dev->bitmap);
-err_bitmap:
+	vfree(dev->obj_num_bitmap);
+err_obj_num_bitmap:
 
 	vfree(dev->ports);
 err_ports:
@@ -517,9 +532,9 @@ err_mcast_table:
 }
 
 
-static void setup_bitmap(struct pib_dev *dev)
+static void setup_obj_num_bitmap(struct pib_dev *dev)
 {
-	unsigned long *bitmap = dev->bitmap;
+	unsigned long *bitmap = dev->obj_num_bitmap;
 
 	bitmap_set(bitmap, PIB_BITMAP_CONTEXT_START, 1);
 	bitmap_set(bitmap, PIB_BITMAP_SRQ_START,     1);
@@ -546,7 +561,7 @@ static int set_port(struct pib_dev *dev, int port_index)
 		.port_cap_flags  = PIB_PORT_CAP_FLAGS,
 		.max_msg_sz      = PIB_MAX_PAYLOAD_LEN,
 		.bad_pkey_cntr   = 0U,
-		.qkey_viol_cntr  = 128,
+		.qkey_viol_cntr  = 0U,
 		.pkey_tbl_len    = PIB_PKEY_TABLE_LEN,
 		.lid             = 0U,
 		.sm_lid          = 0U,
@@ -591,10 +606,10 @@ static int set_port(struct pib_dev *dev, int port_index)
 }
 
 
-u32 pib_find_zero_bit(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p)
+u32 pib_alloc_obj_num(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p)
 {
 	u32 n = *last_num_p;
-	unsigned long *bitmap = dev->bitmap + start / BITS_PER_LONG;
+	unsigned long *bitmap = dev->obj_num_bitmap + start / BITS_PER_LONG;
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -620,9 +635,9 @@ found:
 }
 
 
-void pib_clear_bit(struct pib_dev *dev, u32 start, u32 index)
+void pib_dealloc_obj_num(struct pib_dev *dev, u32 start, u32 index)
 {
-	unsigned long *bitmap = dev->bitmap + start / BITS_PER_LONG;
+	unsigned long *bitmap = dev->obj_num_bitmap + start / BITS_PER_LONG;
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -647,7 +662,7 @@ static void pib_dev_remove(struct pib_dev *dev)
 				vfree(dev->ports[i].lid_table);
 
 	vfree(dev->ports);
-	vfree(dev->bitmap);
+	vfree(dev->obj_num_bitmap);
 	vfree(dev->mcast_table);
 
 	ib_dealloc_device(&dev->ib_dev);

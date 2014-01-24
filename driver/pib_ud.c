@@ -39,8 +39,12 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	void *buffer;
 	u8 port_num;
 	struct pib_ah *ah;
-	u16 dlid;
-	struct pib_packet_ud_request *ud_packet;
+	u16 slid, dlid;
+	struct pib_packet_lrh *lrh;
+	struct ib_grh         *grh;
+	struct pib_packet_bth *bth;
+	struct pib_packet_deth *deth;
+	u8 lnh;
 	enum ib_wr_opcode opcode;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	int with_imm;
@@ -89,6 +93,7 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 			goto completion_error;
 		}
 
+	slid = dev->ports[port_num - 1].ib_port_attr.lid;
 	dlid = ah->ib_ah_attr.dlid;
 
 	push_wc  = (qp->ib_qp_init_attr.sq_sig_type == IB_SIGNAL_ALL_WR)
@@ -98,20 +103,34 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	buffer = dev->thread.buffer;
 
-	/* write IB Packet Header (LRH, BTH, DETH) */
-	ud_packet = (struct pib_packet_ud_request*)buffer;
+	memset(buffer, 0, sizeof(*lrh) + sizeof(*grh) + sizeof(*bth) + sizeof(*deth));
 
-	memset(ud_packet, 0, sizeof(*ud_packet));
+	/* write IB Packet Header (LRH, GRH, BTH, DETH) */
+	lrh = (struct pib_packet_lrh*)buffer; 
+	buffer += sizeof(*lrh);
+	if (ah->ib_ah_attr.ah_flags & IB_AH_GRH) {
+		grh = (struct ib_grh*)buffer;
+		pib_fill_grh(dev, port_num, grh, &ah->ib_ah_attr.grh);
+		buffer += sizeof(*grh);
+		lnh = 0x3;
+	} else {
+		grh = NULL;
+		lnh = 0x2;
+	}
+	bth = (struct pib_packet_bth*)buffer;
+	buffer += sizeof(*bth);
+	deth = (struct pib_packet_deth*)buffer;
+	buffer += sizeof(*deth);
 
-	ud_packet->bth.OpCode = with_imm ? IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE : IB_OPCODE_UD_SEND_ONLY;
+	bth->OpCode = with_imm ? IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE : IB_OPCODE_UD_SEND_ONLY;
 
-	ud_packet->lrh.sl_rsv_lnh = (ah->ib_ah_attr.sl << 4) | 1; /* Transport: IBA & Next Header: BTH */
-	ud_packet->lrh.dlid   = cpu_to_be16(ah->ib_ah_attr.dlid);
-	ud_packet->lrh.slid   = cpu_to_be16(dev->ports[port_num - 1].ib_port_attr.lid);
+	lrh->sl_rsv_lnh = (ah->ib_ah_attr.sl << 4) | lnh; /* Transport: IBA & Next Header: BTH */
+	lrh->dlid   = cpu_to_be16(ah->ib_ah_attr.dlid);
+	lrh->slid   = cpu_to_be16(slid);
 
-	ud_packet->bth.pkey   = cpu_to_be16(send_wqe->wr.ud.pkey_index); /* @todo from QP for UD/RC QP */
-	ud_packet->bth.destQP = cpu_to_be32(send_wqe->wr.ud.remote_qpn);
-	ud_packet->bth.psn    = cpu_to_be32(qp->ib_qp_attr.sq_psn & PIB_PSN_MASK); /* A-bit is 0 */
+	bth->pkey   = cpu_to_be16(send_wqe->wr.ud.pkey_index); /* @todo from QP for UD/RC QP */
+	bth->destQP = cpu_to_be32(send_wqe->wr.ud.remote_qpn);
+	bth->psn    = cpu_to_be32(qp->ib_qp_attr.sq_psn & PIB_PSN_MASK); /* A-bit is 0 */
 
 	/*
 	 *  An attempt to send a Q_Key with the most siginificant bit set results
@@ -119,16 +138,25 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	 *
 	 *  @see IBA Spec. Vol.1 3.5.3 KEYS
 	 */
-	ud_packet->deth.qkey  = cpu_to_be32(((s32)send_wqe->wr.ud.remote_qkey < 0) ?
-					    qp->ib_qp_attr.qkey : send_wqe->wr.ud.remote_qkey);
+	deth->qkey  = cpu_to_be32(((s32)send_wqe->wr.ud.remote_qkey < 0) ?
+				  qp->ib_qp_attr.qkey : send_wqe->wr.ud.remote_qkey);
 
-	ud_packet->deth.srcQP = cpu_to_be32(qp->ib_qp.qp_num);
-
-	buffer += sizeof(*ud_packet);
+	deth->srcQP = cpu_to_be32(qp->ib_qp.qp_num);
 
 	if (with_imm) {
 		*(__be32*)buffer = send_wqe->imm_data;
 		buffer += 4;
+	}
+
+	/* SMP の場合の補正 */
+	if (send_wqe->wr.ud.remote_qpn == PIB_QP0) {
+		struct ib_smp *smp = (struct ib_smp*)buffer;
+		if (smp->mgmt_class == IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE) { 
+			if (smp->dr_slid == IB_LID_PERMISSIVE)
+				lrh->slid = IB_LID_PERMISSIVE;
+			if (smp->dr_dlid == IB_LID_PERMISSIVE)
+				lrh->dlid = IB_LID_PERMISSIVE;
+		}
 	}
 
 	/* The maximum message length constrained in size to fi in a single packet. */
@@ -159,24 +187,12 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	packet_length     = buffer - dev->thread.buffer;
 	fix_packet_length = (packet_length + 3) & ~3;
 
-	pib_packet_lrh_set_pktlen(&ud_packet->lrh, fix_packet_length / 4); 
-	pib_packet_bth_set_padcnt(&ud_packet->bth, fix_packet_length - packet_length);
-
-	if (send_wqe->wr.ud.remote_qpn == PIB_QP0) {
-		struct pib_packet_smp *packet;
-		
-		packet = (struct pib_packet_smp *)buffer;
-
-		if (packet->smp.mgmt_class == IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE) {
-			if (packet->smp.dr_slid == IB_LID_PERMISSIVE)
-				ud_packet->lrh.slid = IB_LID_PERMISSIVE;
-			if (packet->smp.dr_dlid == IB_LID_PERMISSIVE)
-				ud_packet->lrh.dlid = IB_LID_PERMISSIVE;
-		}
-	}
+	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
+	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
 
 	dev->thread.port_num	= port_num;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.slid	= slid;
 	dev->thread.dlid	= dlid;
 	dev->thread.msg_size	= fix_packet_length;
 	dev->thread.ready_to_send = 1;
@@ -220,7 +236,7 @@ completion_error:
 }
 
 
-void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size)
+void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size)
 {
 	struct pib_pd *pd;
 	struct pib_recv_wqe *recv_wqe = NULL;
@@ -233,7 +249,7 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 	if (!pib_is_recv_ok(qp->state))
 		goto silently_drop;
 
-	switch (base_hdr->bth.OpCode) {
+	switch (bth->OpCode) {
 
 	case IB_OPCODE_UD_SEND_ONLY:
 	case IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE:
@@ -244,7 +260,7 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 	}
 
 	/* UD don't set acknowledge request bit */
-	if (be32_to_cpu(base_hdr->bth.psn) & 0x80000000U) /* A-bit */
+	if (be32_to_cpu(bth->psn) & 0x80000000U) /* A-bit */
 		goto silently_drop;
 
 	/* Analyze Datagram Extended Transport Header */
@@ -279,7 +295,7 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 	}
 
 	/* Analyze Immediate Extended Transport Header */
-	if (base_hdr->bth.OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) {
+	if (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) {
 		if (size < 4)
 			goto silently_drop;
 
@@ -310,16 +326,25 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 	pd = to_ppd(qp->ib_qp.pd);
 
 	spin_lock_irqsave(&pd->lock, flags);
-	status = pib_util_mr_copy_data(pd, recv_wqe->sge_array, recv_wqe->num_sge,
-				       buffer, 40, size,
-				       IB_ACCESS_LOCAL_WRITE,
-				       PIB_MR_COPY_TO);
+
+	if (grh)
+		status = pib_util_mr_copy_data(pd, recv_wqe->sge_array, recv_wqe->num_sge,
+					       grh, 0, sizeof(*grh),
+					       IB_ACCESS_LOCAL_WRITE,
+					       PIB_MR_COPY_TO);
+	if (status == IB_WC_SUCCESS)
+		status = pib_util_mr_copy_data(pd, recv_wqe->sge_array, recv_wqe->num_sge,
+					       buffer, sizeof(*grh), size,
+					       IB_ACCESS_LOCAL_WRITE,
+					       PIB_MR_COPY_TO);
+
 	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS)
 		goto completion_error;
 
 	{
+		int ret;
 		struct ib_wc wc = {
 			.wr_id       = recv_wqe->wr_id,
 			.status      = IB_WC_SUCCESS,
@@ -328,11 +353,14 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 			.qp          = &qp->ib_qp,
 			.ex.imm_data = imm_data,
 			.src_qp      = be32_to_cpu(deth->srcQP) & PIB_QPN_MASK,
-			.slid        = be16_to_cpu(base_hdr->lrh.slid),
-			.wc_flags    = (base_hdr->bth.OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) ? IB_WC_WITH_IMM : 0,
+			.slid        = be16_to_cpu(lrh->slid),
 		};
 
-		int ret;
+		if (grh)
+			wc.wc_flags |= IB_WC_GRH;
+
+		if (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE)
+			wc.wc_flags |= IB_WC_WITH_IMM;
 
 		ret = pib_util_insert_wc_success(qp->recv_cq, &wc); /* @todo */
 	}

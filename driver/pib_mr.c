@@ -38,6 +38,9 @@ found:
 	mr->ib_mr.lkey = (u32)i | mr->lkey_prefix;
 	mr->ib_mr.rkey = (u32)i | mr->rkey_prefix;
 
+	if (mr->ib_mr.lkey == PIB_LOCAL_DMA_LKEY)
+		goto found;
+
 #ifdef PIB_HACK_IMM_DATA_LKEY 
 	if (mr->ib_mr.lkey == PIB_IMM_DATA_LKEY)
 		goto found;
@@ -69,7 +72,7 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
-	mr_num = pib_find_zero_bit(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
+	mr_num = pib_alloc_obj_num(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
 	if (mr_num == (u32)-1)
 		goto err_alloc_mr_num;
 
@@ -87,7 +90,7 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	return &mr->ib_mr;
 
 err_reg_mr:
-	pib_clear_bit(dev, PIB_BITMAP_MR_START, mr_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr_num);
 
 err_alloc_mr_num:
 	kmem_cache_free(pib_mr_cachep, mr);
@@ -121,7 +124,7 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	if (!mr)
 		goto err_alloc_mr;
 
-	mr_num = pib_find_zero_bit(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
+	mr_num = pib_alloc_obj_num(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
 	if (mr_num == (u32)-1)
 		goto err_alloc_mr_num;
 
@@ -139,7 +142,7 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	return &mr->ib_mr;
 
 err_reg_mr:
-	pib_clear_bit(dev, PIB_BITMAP_MR_START, mr_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr_num);
 
 err_alloc_mr_num:
 	kmem_cache_free(pib_mr_cachep, mr);
@@ -173,7 +176,7 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
 
-	pib_clear_bit(dev, PIB_BITMAP_MR_START, mr->mr_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr->mr_num);
 
 	kmem_cache_free(pib_mr_cachep, mr);
 

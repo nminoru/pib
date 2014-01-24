@@ -31,8 +31,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	2
-#define PIB_DRIVER_VERSION 	"0.2.2"
+#define PIB_VERSION_REVISION	3
+#define PIB_DRIVER_VERSION 	"0.2.3"
 
 #define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
 #define PIB_DRIVER_FW_VERSION \
@@ -56,6 +56,8 @@
  */
 #define PIB_HACK_IMM_DATA_LKEY
 #endif
+
+#define PIB_LOCAL_DMA_LKEY		(0)
 
 
 #define PIB_MAX_HCA			(4)
@@ -92,7 +94,10 @@
 #define PIB_MCAST_QP_ATTACH             (128)
 #define PIB_LID_PERMISSIVE		(0xFFFF)
 
-#define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_SYS_IMAGE_GUID|IB_DEVICE_RC_RNR_NAK_GEN)
+#define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_CHANGE_PHY_PORT |\
+					 IB_DEVICE_SYS_IMAGE_GUID  |\
+					 IB_DEVICE_RC_RNR_NAK_GEN)
+
 #define PIB_PORT_CAP_FLAGS		(IB_PORT_SYS_IMAGE_GUID_SUP|IB_PORT_CM_SUP)
 
 #define PIB_LINK_WIDTH_SUPPORTED	(IB_WIDTH_1X | IB_WIDTH_4X | IB_WIDTH_8X | IB_WIDTH_12X)
@@ -227,6 +232,38 @@ struct pib_mcast_link {
 };
 
 
+struct pib_port_perf {
+	u8			OpCode; /* all 0xFF */
+	__be16			tag;
+	u16			counter_select[16];
+	u64			counter[16];
+
+	u64			symbol_error_counter;
+	u64			link_error_recovery_counter;
+	u64			link_downed_counter;
+	u64			rcv_errors;
+	u64			rcv_remphys_errors;
+	u64			rcv_switch_relay_errors;
+	u64			xmit_discards;
+	u64			xmit_constraint_errors;
+	u64			rcv_constraint_errors;
+	u64			local_link_integrity_errors;
+	u64			excessive_buffer_overrun_errors;
+	u64			vl15_dropped;
+	u64			xmit_data;
+	u64			rcv_data;
+	u64			xmit_packets;
+	u64			rcv_packets;
+
+	u64			xmit_wait;
+	
+	u64			unicast_xmit_packets;
+	u64			unicast_rcv_packets;
+	u64			multicast_xmit_packets;
+	u64			multicast_rcv_packets;
+};
+
+
 struct pib_port {
 	u8                      port_num;
 
@@ -243,6 +280,8 @@ struct pib_port {
 	u8			subnet_timeout;
 	u8			local_phy_errors;
 	u8			overrun_errors;
+
+	struct pib_port_perf	perf;  
 
 	struct sockaddr       **lid_table;
 	struct socket          *socket;
@@ -261,8 +300,7 @@ struct pib_dev {
 
 	spinlock_t		lock;
 
-
-	unsigned long	       *bitmap;
+	unsigned long	       *obj_num_bitmap;
 
 	int                     nr_pd;
 	int                     nr_srq;
@@ -304,6 +342,7 @@ struct pib_dev {
 		void	       *buffer; /* buffer for sendmsg/recvmsg */
 
 		u8		port_num;
+		u16		slid;
 		u16		dlid;
 		u32		src_qp_num;
 		size_t		msg_size;
@@ -720,8 +759,10 @@ extern int pib_dealloc_ucontext(struct ib_ucontext *ibcontext);
 
 extern struct ib_pd * pib_alloc_pd(struct ib_device *ibdev, struct ib_ucontext *ibucontext, struct ib_udata *udata);
 extern int pib_dealloc_pd(struct ib_pd *ibpd);
-extern u32 pib_find_zero_bit(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p);
-extern void pib_clear_bit(struct pib_dev *dev, u32 start, u32 index);
+extern u32 pib_alloc_obj_num(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p);
+extern void pib_dealloc_obj_num(struct pib_dev *dev, u32 start, u32 index);
+extern void pib_fill_grh(struct pib_dev *dev, u8 port_num, struct ib_grh *dest, const struct ib_global_route *src);
+
 
 /*
  *  in pib_thread.c
@@ -731,6 +772,7 @@ extern struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev);
 
 extern int pib_create_kthread(struct pib_dev *dev);
 extern void pib_release_kthread(struct pib_dev *dev);
+extern int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_p, struct ib_grh **grh_p, struct pib_packet_bth **bth_p);
 
 /*
  *  in pib_ah.c
@@ -827,13 +869,13 @@ extern struct ib_dma_mapping_ops pib_dma_mapping_ops;
  *  in pib_ud.c
  */
 extern int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
-extern void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+extern void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 
 /*
  *  in pib_rc.c
  */
 extern int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
-extern void pib_receive_rc_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_base_hdr *base_hdr, void *buffer, int size);
+extern void pib_receive_rc_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 extern int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp);
 
 /*
@@ -877,7 +919,7 @@ extern int pib_is_unicast_lid(u16 lid);
 extern const char *pib_get_mgmt_method(u8 method);
 extern const char *pib_get_smp_attr(__be16 attr_id);
 extern const char *pib_get_sa_attr(__be16 attr_id);
-extern void pib_print_base_hdr(const char *direct, const struct pib_packet_base_hdr *base_hdr);
+extern void pib_print_header(const char *direct, void *buffer);
 extern void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr);
 extern void pib_print_smp(const char *direct, const struct ib_smp *smp);
 

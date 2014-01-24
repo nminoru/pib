@@ -25,7 +25,7 @@ pib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 	if (!ah)
 		return ERR_PTR(-ENOMEM);
 
-	ah_num = pib_find_zero_bit(dev, PIB_BITMAP_AH_START, PIB_MAX_AH, &dev->last_ah_num);
+	ah_num = pib_alloc_obj_num(dev, PIB_BITMAP_AH_START, PIB_MAX_AH, &dev->last_ah_num);
 	if (ah_num == (u32)-1)
 		goto err_alloc_ah_num;
 
@@ -83,7 +83,7 @@ int pib_destroy_ah(struct ib_ah *ibah)
 	dev = to_pdev(ibah->device);
 	ah  = to_pah(ibah);
 
-	pib_clear_bit(dev, PIB_BITMAP_AH_START, ah->ah_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_AH_START, ah->ah_num);
 
 	kmem_cache_free(pib_ah_cachep, ah);
 

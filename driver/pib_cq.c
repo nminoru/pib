@@ -37,7 +37,7 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	if (!cq)
 		return ERR_PTR(-ENOMEM);
 
-	cq_num = pib_find_zero_bit(dev, PIB_BITMAP_CQ_START, PIB_MAX_CQ, &dev->last_cq_num);
+	cq_num = pib_alloc_obj_num(dev, PIB_BITMAP_CQ_START, PIB_MAX_CQ, &dev->last_cq_num);
 	if (cq_num == (u32)-1)
 		goto err_alloc_cq_num;
 
@@ -72,7 +72,7 @@ err_allloc_ceq:
 		kmem_cache_free(pib_cqe_cachep, cqe);
 	}
 
-	pib_clear_bit(dev, PIB_BITMAP_CQ_START, cq_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_CQ_START, cq_num);
 
 err_alloc_cq_num:
 	kmem_cache_free(pib_cq_cachep, cq);
@@ -106,7 +106,7 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 	cq->nr_cqe = 0;
 	spin_unlock_irqrestore(&cq->lock, flags);
 
-	pib_clear_bit(dev, PIB_BITMAP_CQ_START, cq->cq_num);
+	pib_dealloc_obj_num(dev, PIB_BITMAP_CQ_START, cq->cq_num);
 
 	kmem_cache_free(pib_cq_cachep, cq);
 
