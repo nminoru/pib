@@ -91,6 +91,7 @@ int pib_create_switch(struct pib_easy_sw *sw)
 
 	for (port_num = 0 ; port_num < sw->port_cnt ; port_num++) {
 		int j;
+		struct pib_port *port;
 		struct ib_port_attr ib_port_attr = {
 			.state           = IB_PORT_INIT,
 			.max_mtu         = IB_MTU_4096,
@@ -113,21 +114,25 @@ int pib_create_switch(struct pib_easy_sw *sw)
 			/* .phys_state      = PIB_PHYS_PORT_POLLING, */
 			.phys_state      = PIB_PHYS_PORT_LINK_UP,
 		};
+
+		port = &sw->ports[port_num];
+
+		spin_lock_init(&port->lock);
 		
-		sw->ports[port_num].port_num	 = port_num;
-		sw->ports[port_num].ib_port_attr = ib_port_attr;
-		sw->ports[port_num].gid[0].global.subnet_prefix =
+		port->port_num	 = port_num;
+		port->ib_port_attr = ib_port_attr;
+		port->gid[0].global.subnet_prefix =
 			/* default GID prefix */
 			cpu_to_be64(0xFE80000000000000ULL);
 		/* the same guid for all ports on a switch */
-		sw->ports[port_num].gid[0].global.interface_id  =
+		port->gid[0].global.interface_id  =
 			cpu_to_be64(hca_guid_base | 0x0100ULL);
 
-		sw->ports[port_num].link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
-		sw->ports[port_num].link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
+		port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
+		port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
 
 		for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
-			sw->ports[port_num].pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
+			port->pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
 	}
 
 	sw->buffer = vmalloc(PIB_PACKET_BUFFER);
@@ -350,6 +355,9 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 		goto silently_drop;
 	}
 
+	sw->ports[in_sw_port_num].perf.rcv_packets++;
+	sw->ports[in_sw_port_num].perf.rcv_data += ret;
+
 	recvmsg_size = ret;
 
 	buffer = sw->buffer;
@@ -408,7 +416,7 @@ process_mad:
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
 		if ((smp->dr_slid != IB_LID_PERMISSIVE) ||
 		    (smp->dr_dlid != IB_LID_PERMISSIVE)) {
-			/* DR SLID と DR DLID が指定には未対応 */
+			/* DR SLID と DR DLID が指定されてない場合には未対応 */
 			pr_crit("pib: pib_easy_sw: SUBN_DIRECTED_ROUTE dr_slid=0x%04x, dr_dlid=0x%04x\n",
 				smp->dr_slid, smp->dr_dlid);
 			BUG();
@@ -416,6 +424,37 @@ process_mad:
 		break;
 
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
+		if (dlid != pib_easy_sw.ports[0].ib_port_attr.lid)
+			goto relay_ucast;
+
+		ret = process_smp(smp, sw, in_sw_port_num);
+		lrh->dlid = lrh->slid;
+		lrh->slid = dlid;
+		if (ret & IB_MAD_RESULT_FAILURE) {
+			pib_debug("pib: process_smp: failure\n");
+			goto silently_drop;
+		}
+		out_sw_port_num = in_sw_port_num;
+		goto send_packet;
+
+	case IB_MGMT_CLASS_PERF_MGMT: {
+		struct pib_node node = {
+			.port_count = sw->port_cnt,
+			.port_start = 0,
+			.ports      = sw->ports,
+		};
+
+		ret = pib_process_pma_mad(&node, in_sw_port_num, mad, mad);
+		lrh->dlid = lrh->slid;
+		lrh->slid = dlid;
+		if (ret & IB_MAD_RESULT_FAILURE) {
+			pib_debug("pib: process_smp: failure\n");
+			goto silently_drop;
+		}
+		out_sw_port_num = in_sw_port_num;
+		goto send_packet;
+	}
+
 	default:
 		pr_crit("pib: pib_easy_sw: mgmt_class = %u\n",
 			mad->mad_hdr.mgmt_class);
@@ -456,6 +495,7 @@ process_mad:
 		smp->return_path[smp->hop_ptr] = out_sw_port_num;
 	}
 
+
 	if (self_consumed) {
 		lrh->dlid = lrh->slid;
 		if (smp->dr_slid == IB_LID_PERMISSIVE)
@@ -467,6 +507,7 @@ process_mad:
 		goto silently_drop;
 	}
 
+send_packet:
 	BUG_ON((out_sw_port_num == 0) || (sw->port_cnt <= out_sw_port_num));
 
 	dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
@@ -486,6 +527,11 @@ process_mad:
 	iov.iov_len	   = recvmsg_size;
 
 	ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
+
+	if (ret > 0) {
+		sw->ports[out_sw_port_num].perf.xmit_packets++;
+		sw->ports[out_sw_port_num].perf.xmit_data += ret;
+	}
 
 	return 0;
 
@@ -509,6 +555,11 @@ relay_ucast:
 	iov.iov_len	   = recvmsg_size;
 
 	ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
+
+	if (ret > 0) {
+		sw->ports[out_sw_port_num].perf.xmit_packets++;
+		sw->ports[out_sw_port_num].perf.xmit_data += ret;
+	}
 
 	return 0;
 
@@ -542,6 +593,11 @@ relay_mcast:
 		iov.iov_len	   = recvmsg_size;
 
 		ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
+
+		if (ret > 0) {
+			sw->ports[out_sw_port_num].perf.xmit_packets++;
+			sw->ports[out_sw_port_num].perf.xmit_data += ret;
+		}
 	}
 
 	return 0;

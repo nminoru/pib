@@ -542,6 +542,7 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 	int ret, header_size;
 	struct msghdr msghdr = {.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
 	struct kvec iov;
+	struct pib_port *port;
 	void *buffer;
 	struct pib_packet_lrh *lrh;
 	struct ib_grh         *grh;
@@ -554,7 +555,9 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 	iov.iov_base = buffer;
 	iov.iov_len  = PIB_PACKET_BUFFER;
 
-	ret = kernel_recvmsg(dev->ports[port_index].socket, &msghdr,
+	port = &dev->ports[port_index];
+
+	ret = kernel_recvmsg(port->socket, &msghdr,
 			     &iov, 1, iov.iov_len, msghdr.msg_flags);
 
 	if (ret < 0) {
@@ -563,6 +566,9 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 		return ret;
 	} else if (ret == 0)
 		return -EAGAIN;
+
+	port->perf.rcv_packets++;
+	port->perf.rcv_data += ret;
 
 	header_size = pib_parse_packet_header(buffer, ret, &lrh, &grh, &bth);
 	if (header_size < 0) {
@@ -620,7 +626,7 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 
 		max = i;
 
-		port_lid = dev->ports[port_index].ib_port_attr.lid;
+		port_lid = port->ib_port_attr.lid;
 		slid     = be16_to_cpu(lrh->slid);
 
 		/* 
@@ -939,6 +945,7 @@ static void process_sendmsg(struct pib_dev *dev)
 	struct sockaddr *sockaddr;
 	struct msghdr	msghdr;
 	struct kvec	iov;
+	struct pib_port *port;
 
 	port_num   = dev->thread.port_num;
 	src_qp_num = dev->thread.src_qp_num;
@@ -967,8 +974,14 @@ static void process_sendmsg(struct pib_dev *dev)
 	iov.iov_base = dev->thread.buffer;
 	iov.iov_len  = dev->thread.msg_size;
 
-	ret = kernel_sendmsg(dev->ports[port_num - 1].socket,
-			     &msghdr, &iov, 1, iov.iov_len);
+	port = &dev->ports[port_num - 1];
+
+	ret = kernel_sendmsg(port->socket, &msghdr, &iov, 1, iov.iov_len);
+
+	if (ret > 0) {
+		port->perf.xmit_packets++;
+		port->perf.xmit_data += ret;
+	}
 
 	if (pib_is_unicast_lid(dlid))
 		goto done;
@@ -977,14 +990,13 @@ static void process_sendmsg(struct pib_dev *dev)
 	 * マルチキャストの場合、同じ HCA に同一の multicast group の受け取りを
 	 * する別の QP がある可能性があるので、loopback にも送信する。
 	 */
-	sockaddr = dev->ports[port_num - 1].sockaddr;
+	sockaddr = port->sockaddr;
 
 	msghdr.msg_name    = sockaddr;
 	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
 		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 
-	ret = kernel_sendmsg(dev->ports[port_num - 1].socket,
-			     &msghdr, &iov, 1, iov.iov_len);
+	ret = kernel_sendmsg(port->socket, &msghdr, &iov, 1, iov.iov_len);
 
 done:
 	dev->thread.ready_to_send = 0;
@@ -995,28 +1007,26 @@ static struct sockaddr *
 get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dlid)
 {
 	unsigned long flags;
-	struct sockaddr *sockaddr;
+	struct sockaddr *sockaddr = NULL;
 
-	if (src_qp_num == PIB_QP0) {
-		spin_lock_irqsave(&pib_easy_sw.lock, flags);
-		sockaddr = pib_easy_sw.sockaddr;
-		spin_unlock_irqrestore(&pib_easy_sw.lock, flags);
-	} else {
+	if (src_qp_num != PIB_QP0) {
 		if (dlid == 0)
-			sockaddr = dev->ports[port_num - 1].sockaddr; /* @todo */
+			sockaddr = dev->ports[port_num - 1].sockaddr;
 		else if (dlid == dev->ports[port_num - 1].ib_port_attr.lid)
 			/* loopback */
 			sockaddr = dev->ports[port_num - 1].sockaddr;
 		else if (dlid < PIB_MCAST_LID_BASE)
 			/* unicast */
 			sockaddr = dev->ports[port_num - 1].lid_table[dlid];
-		else {
-			/* multicast */
-			spin_lock_irqsave(&pib_easy_sw.lock, flags);
-			sockaddr = pib_easy_sw.sockaddr;
-			spin_unlock_irqrestore(&pib_easy_sw.lock, flags);
-		}
 	}
+
+	if (sockaddr)
+		return sockaddr;
+
+	/* multicast packets or packets to switch */
+	spin_lock_irqsave(&pib_easy_sw.lock, flags);
+	sockaddr = pib_easy_sw.sockaddr;
+	spin_unlock_irqrestore(&pib_easy_sw.lock, flags);
 
 	return sockaddr;
 }

@@ -78,18 +78,18 @@ static u32 get_saturation32(u64 value)
 }
 
 
-static int pma_get_method(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_set_method(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
+static int pma_get_method(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_set_method(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
 
-static int pma_get_class_port_info(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_get_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_set_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_get_port_samples_result(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_get_port_samples_result_ext(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_get_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_set_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_get_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
-static int pma_set_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num);
+static int pma_get_class_port_info(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_get_port_samples_control(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_set_port_samples_control(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_get_port_samples_result(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_get_port_samples_result_ext(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_get_port_counters(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_set_port_counters(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_get_port_counters_ext(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
+static int pma_set_port_counters_ext(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num);
 
 
 static int reply(struct ib_mad_hdr *mad_hdr)
@@ -108,7 +108,7 @@ static int reply_failure(struct ib_mad_hdr *mad_hdr)
 }
 
 
-int pib_process_pma_mad(struct pib_dev *dev, u8 port_num,
+int pib_process_pma_mad(struct pib_node *node, u8 port_num,
 			struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
 	int ret;
@@ -130,11 +130,11 @@ int pib_process_pma_mad(struct pib_dev *dev, u8 port_num,
 	switch (method) {
 
 	case IB_MGMT_METHOD_GET:
-		ret = pma_get_method(pmp, dev, port_num);
+		ret = pma_get_method(pmp, node, port_num);
 		break;
 
 	case IB_MGMT_METHOD_SET:
-		ret = pma_set_method(pmp, dev, port_num);
+		ret = pma_set_method(pmp, node, port_num);
 		break;
 
 	case IB_MGMT_METHOD_TRAP:
@@ -153,33 +153,33 @@ int pib_process_pma_mad(struct pib_dev *dev, u8 port_num,
 }
 
 
-static int pma_get_method(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_get_method(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	switch (pmp->mad_hdr.attr_id) {
 
 	case IB_PMA_CLASS_PORT_INFO:
 		pr_info("pib: PerformanceGet(CLASS_PORT_INFO) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_get_class_port_info(pmp, dev, port_num);
+		return pma_get_class_port_info(pmp, node, port_num);
 
 	case IB_PMA_PORT_SAMPLES_CONTROL:
 		pr_info("pib: PerformanceGet(PORT_SAMPLES_CONTROL) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_get_port_samples_control(pmp, dev, port_num);
+		return pma_get_port_samples_control(pmp, node, port_num);
 
 	case IB_PMA_PORT_SAMPLES_RESULT:
 		pr_info("pib: PerformanceGet(PORT_SAMPLES_RESULT) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_get_port_samples_result(pmp, dev, port_num);
+		return pma_get_port_samples_result(pmp, node, port_num);
 
 	case IB_PMA_PORT_SAMPLES_RESULT_EXT:
 		pr_info("pib: PerformanceGet(PORT_SAMPLES_RESULT_EXT) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_get_port_samples_result_ext(pmp, dev, port_num);
+		return pma_get_port_samples_result_ext(pmp, node, port_num);
 
 	case IB_PMA_PORT_COUNTERS:
 		pr_info("pib: PerformanceGet(PORT_COUNTERS) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_get_port_counters(pmp, dev, port_num);
+		return pma_get_port_counters(pmp, node, port_num);
 
 	case IB_PMA_PORT_COUNTERS_EXT:
 		pr_info("pib: PerformanceGet(PORT_COUNTERS_EXT) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_get_port_counters_ext(pmp, dev, port_num);
+		return pma_get_port_counters_ext(pmp, node, port_num);
 
 	default:
 		pr_err("pib: PerformanceGet() attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
@@ -189,26 +189,26 @@ static int pma_get_method(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_n
 }
 
 
-static int pma_set_method(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_set_method(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	switch (pmp->mad_hdr.attr_id) {
 
 	case IB_PMA_PORT_SAMPLES_CONTROL:
 		pr_info("pib: PerformanceSet(PORT_SAMPLES_CONTROL) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_set_port_samples_control(pmp, dev, port_num);
+		return pma_set_port_samples_control(pmp, node, port_num);
 
 #if 0
 	case IB_PMA_PORT_SAMPLES_RESULT_EXT:
-		return pma_set_port_samples_result_ext(pmp, dev, port_num);
+		return pma_set_port_samples_result_ext(pmp, node, port_num);
 #endif
 
 	case IB_PMA_PORT_COUNTERS:
 		pr_info("pib: PerformanceSet(PORT_COUNTERS) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_set_port_counters(pmp, dev, port_num);
+		return pma_set_port_counters(pmp, node, port_num);
 
 	case IB_PMA_PORT_COUNTERS_EXT:
 		pr_info("pib: PerformanceSet(PORT_COUNTERS_EXT) attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
-		return pma_set_port_counters_ext(pmp, dev, port_num);
+		return pma_set_port_counters_ext(pmp, node, port_num);
 
 	default:
 		pr_err("pib: PerformanceSet() attr_id=0x%04x", be16_to_cpu(pmp->mad_hdr.attr_id));
@@ -218,7 +218,7 @@ static int pma_set_method(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_n
 }
 
 
-static int pma_get_class_port_info(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_get_class_port_info(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	struct ib_class_port_info *info =
 		(struct ib_class_port_info *)pmp->data;
@@ -250,11 +250,12 @@ bail:
 }
 
 
-static int pma_get_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_get_port_samples_control(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	int i;
 	struct ib_pma_portsamplescontrol *p =
 		(struct ib_pma_portsamplescontrol *)pmp->data;
+	struct pib_port *port;
 	struct pib_port_perf *perf; 
 	unsigned long flags;
 	u8 port_select;
@@ -271,14 +272,15 @@ static int pma_get_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *
 	}
 
 	/* Base management port is ignore. */
-	if ((port_select < 0) || (dev->ib_dev.phys_port_cnt < port_select)) { 
+	if ((port_select < node->port_start) || (node->port_count <= port_select)) {
 		pmp->mad_hdr.status = PIB_PMA_STATUS_INVALID_ATTRIB_VALUE;
 		goto bail;
 	}
 
-	perf = &dev->ports[port_select - 1].perf;
+	port = &node->ports[port_select - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	p->opcode            = perf->OpCode;
 	p->tick              = 1;
@@ -297,18 +299,19 @@ static int pma_get_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *
 	for (i=0 ; i<ARRAY_SIZE(p->counter_select) ; i++)
 		p->counter_select[i] = cpu_to_be16(perf->counter_select[i]);
 
-	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
 	return reply(&pmp->mad_hdr);
 }
 
 
-static int pma_set_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_set_port_samples_control(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	int i;
 	struct ib_pma_portsamplescontrol *p =
 		(struct ib_pma_portsamplescontrol *)pmp->data;
+	struct pib_port *port;
 	struct pib_port_perf *perf; 
 	unsigned long flags;
 	u8 port_select;
@@ -325,14 +328,16 @@ static int pma_set_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *
 	}
 
 	/* Base management port is ignore. */
-	if ((port_select < 0) || (dev->ib_dev.phys_port_cnt < port_select)) { 
+	if ((port_select < node->port_start) || (node->port_count <= port_select)) {
 		pmp->mad_hdr.status = PIB_PMA_STATUS_INVALID_ATTRIB_VALUE;
 		goto bail;
 	}
 
-	perf = &dev->ports[port_select - 1].perf;
+	port = &node->ports[port_select - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
+
 	perf->OpCode	= p->opcode;
 	perf->tag	= p->tag;
 
@@ -344,18 +349,19 @@ static int pma_set_port_samples_control(struct ib_pma_mad *pmp, struct pib_dev *
 	for (i=0 ; i<ARRAY_SIZE(p->counter_select) ; i++)
 		perf->counter_select[i] = be16_to_cpu(p->counter_select[i]);
 
-	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
-	return pma_get_port_samples_control(pmp, dev, port_num);
+	return pma_get_port_samples_control(pmp, node, port_num);
 }
 
 
-static int pma_get_port_samples_result(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_get_port_samples_result(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	int i;
 	struct ib_pma_portsamplesresult *p =
 		(struct ib_pma_portsamplesresult *)pmp->data;
+	struct pib_port *port;
 	struct pib_port_perf *perf; 
 	unsigned long flags;
 
@@ -366,26 +372,30 @@ static int pma_get_port_samples_result(struct ib_pma_mad *pmp, struct pib_dev *d
 		goto bail;
 	}
 
-	perf = &dev->ports[port_num - 1].perf;
+	port = &node->ports[port_num - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
+
 	p->tag           = perf->tag;
 	p->sample_status = PIB_PMA_SAMPLE_STATUS_DONE;
 
 	for (i=0 ; i<ARRAY_SIZE(p->counter) ; i++)
 		p->counter[i] = cpu_to_be32((u32)perf->counter[i]);
-	spin_unlock_irqrestore(&dev->lock, flags);
+
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
 	return reply(&pmp->mad_hdr);
 }
 
 
-static int pma_get_port_samples_result_ext(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_get_port_samples_result_ext(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	int i;
 	struct ib_pma_portsamplesresult_ext *p = 
 		(struct ib_pma_portsamplesresult_ext *)pmp->data;
+	struct pib_port *port;
 	struct pib_port_perf *perf; 
 	unsigned long flags;
 
@@ -396,26 +406,28 @@ static int pma_get_port_samples_result_ext(struct ib_pma_mad *pmp, struct pib_de
 		goto bail;
 	}
 
-	perf = &dev->ports[port_num - 1].perf;
+	port = &node->ports[port_num - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
 	p->tag            = perf->tag;
 	p->sample_status  = cpu_to_be16(PIB_PMA_SAMPLE_STATUS_DONE);
 	p->extended_width = cpu_to_be32(0x80000000); /* 64 bits counter */
 
 	for (i=0 ; i<ARRAY_SIZE(p->counter) ; i++)
 		p->counter[i] = cpu_to_be64(perf->counter[i]);
-	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
 	return reply(&pmp->mad_hdr);
 }
 
 
-static int pma_get_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_get_port_counters(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	struct ib_pma_portcounters *p =
 		(struct ib_pma_portcounters *)pmp->data;
+	struct pib_port *port;
 	struct pib_port_perf *perf; 
 	unsigned long flags;
 	u8 port_select;
@@ -432,14 +444,15 @@ static int pma_get_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8
 	}
 
 	/* Base management port is ignore. */
-	if ((port_select < 0) || (dev->ib_dev.phys_port_cnt < port_select)) { 
+	if ((port_select < node->port_start) || (node->port_count <= port_select)) {
 		pmp->mad_hdr.status = PIB_PMA_STATUS_INVALID_ATTRIB_VALUE;
 		goto bail;
 	}
 
-	perf = &dev->ports[port_select - 1].perf;
+	port = &node->ports[port_select - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	p->symbol_error_counter		= cpu_to_be16(get_saturation16(perf->symbol_error_counter));
 	p->link_error_recovery_counter	= get_saturation8(perf->link_error_recovery_counter);
@@ -462,17 +475,18 @@ static int pma_get_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8
 	p->port_rcv_packets		= cpu_to_be32(get_saturation32(perf->rcv_packets));
 	p->port_xmit_wait		= cpu_to_be32(get_saturation32(perf->xmit_wait));
 
-	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
 	return reply(&pmp->mad_hdr);
 }
 
 
-static int pma_set_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_set_port_counters(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	struct ib_pma_portcounters *p =
 		(struct ib_pma_portcounters *)pmp->data;
+	struct pib_port *port;
 	struct pib_port_perf *perf; 
 	unsigned long flags;
 	u8 port_select;
@@ -489,14 +503,15 @@ static int pma_set_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8
 	}
 
 	/* Base management port is ignore. */
-	if ((port_select < 0) || (dev->ib_dev.phys_port_cnt < port_select)) { 
+	if ((port_select < node->port_start) || (node->port_count <= port_select)) {
 		pmp->mad_hdr.status = PIB_PMA_STATUS_INVALID_ATTRIB_VALUE;
 		goto bail;
 	}
 
-	perf = &dev->ports[port_select - 1].perf;
+	port = &node->ports[port_select - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
 
 	if (p->counter_select & IB_PMA_SEL_SYMBOL_ERROR)
 		perf->symbol_error_counter = be16_to_cpu(p->symbol_error_counter);
@@ -546,17 +561,18 @@ static int pma_set_port_counters(struct ib_pma_mad *pmp, struct pib_dev *dev, u8
 	if (p->counter_select & IB_PMA_SEL_PORT_RCV_PACKETS)
 		perf->rcv_packets = be32_to_cpu(p->port_rcv_packets);
 
-	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
-	return pma_set_port_counters(pmp, dev, port_num);
+	return pma_set_port_counters(pmp, node, port_num);
 }
 
 
-static int pma_get_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_get_port_counters_ext(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	struct ib_pma_portcounters_ext *p =
 		(struct ib_pma_portcounters_ext *)pmp->data;
+	struct pib_port *port;
 	struct pib_port_perf *perf; 
 	unsigned long flags;
 	u8 port_select;
@@ -573,14 +589,15 @@ static int pma_get_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev
 	}
 
 	/* Base management port is ignore. */
-	if ((port_select < 0) || (dev->ib_dev.phys_port_cnt < port_select)) { 
+	if ((port_select < node->port_start) || (node->port_count <= port_select)) {
 		pmp->mad_hdr.status = PIB_PMA_STATUS_INVALID_ATTRIB_VALUE;
 		goto bail;
 	}
 
-	perf = &dev->ports[port_select - 1].perf;
+	port = &node->ports[port_select - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
 	p->port_xmit_data		= cpu_to_be64(perf->xmit_data);
 	p->port_rcv_data		= cpu_to_be64(perf->rcv_data);
 	p->port_xmit_packets		= cpu_to_be64(perf->xmit_packets);
@@ -589,18 +606,19 @@ static int pma_get_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev
 	p->port_unicast_rcv_packets	= cpu_to_be64(perf->unicast_rcv_packets);
 	p->port_multicast_xmit_packets	= cpu_to_be64(perf->multicast_xmit_packets);
 	p->port_multicast_rcv_packets	= cpu_to_be64(perf->multicast_rcv_packets);
-	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
 	return reply(&pmp->mad_hdr);
 }
 
 
-static int pma_set_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev, u8 port_num)
+static int pma_set_port_counters_ext(struct ib_pma_mad *pmp, struct pib_node *node, u8 port_num)
 {
 	struct ib_pma_portcounters_ext *p =
 		(struct ib_pma_portcounters_ext *)pmp->data;
-	struct pib_port_perf *perf; 
+	struct pib_port *port;
+	struct pib_port_perf *perf;
 	unsigned long flags;
 	u8 port_select;
 
@@ -612,14 +630,15 @@ static int pma_set_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev
 	}
 
 	/* Base management port is ignore. */
-	if ((port_select < 0) || (dev->ib_dev.phys_port_cnt < port_select)) { 
+	if ((port_select < node->port_start) || (node->port_count <= port_select)) {
 		pmp->mad_hdr.status = PIB_PMA_STATUS_INVALID_ATTRIB_VALUE;
 		goto bail;
 	}
 
-	perf = &dev->ports[port_select - 1].perf;
+	port = &node->ports[port_select - node->port_start];
+	perf = &port->perf;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock_irqsave(&port->lock, flags);
 	if (p->counter_select & IB_PMA_SELX_PORT_XMIT_DATA)
 		perf->xmit_data = be64_to_cpu(p->port_xmit_data);
 
@@ -643,8 +662,8 @@ static int pma_set_port_counters_ext(struct ib_pma_mad *pmp, struct pib_dev *dev
 
 	if (p->counter_select & IB_PMA_SELX_PORT_MULTI_RCV_PACKETS)
 		p->port_multicast_rcv_packets = 0;
-	spin_unlock_irqrestore(&dev->lock, flags);
+	spin_unlock_irqrestore(&port->lock, flags);
 
 bail:
-	return pma_get_port_counters_ext(pmp, dev, port_num);
+	return pma_get_port_counters_ext(pmp, node, port_num);
 }

@@ -96,7 +96,7 @@ static int pib_query_port(struct ib_device *ibdev, u8 port_num,
 
 
 static void setup_obj_num_bitmap(struct pib_dev *dev);
-static int set_port(struct pib_dev *dev, int port_index);
+static int init_port(struct pib_dev *dev, u8 port_num);
 
 
 static enum rdma_link_layer
@@ -476,7 +476,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	setup_obj_num_bitmap(dev);
 
 	for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
-		if (set_port(dev, i))
+		if (init_port(dev, i + 1))
 			goto err_ld_table;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
@@ -550,9 +550,10 @@ static void setup_obj_num_bitmap(struct pib_dev *dev)
 }
 
 
-static int set_port(struct pib_dev *dev, int port_index)
+static int init_port(struct pib_dev *dev, u8 port_num)
 {
 	int j;
+	struct pib_port *port;
 	struct ib_port_attr ib_port_attr = {
 		/* .state           = IB_PORT_DOWN, */
 		.state           = IB_PORT_INIT,
@@ -577,31 +578,35 @@ static int set_port(struct pib_dev *dev, int port_index)
 		.phys_state      = PIB_PHYS_PORT_LINK_UP,
 	};
 
-	dev->ports[port_index].port_num	= port_index + 1;
-	dev->ports[port_index].ib_port_attr = ib_port_attr;
+	port = &dev->ports[port_num - 1];
+
+	spin_lock_init(&port->lock);
+
+	port->port_num	   = port_num;
+	port->ib_port_attr = ib_port_attr;
 
 	if (lid_table != NULL) {
-		dev->ports[port_index].lid_table = lid_table;
+		port->lid_table = lid_table;
 	} else {
-		dev->ports[port_index].lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
-		if (!dev->ports[port_index].lid_table)
+		port->lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
+		if (!port->lid_table)
 			return -1;
 	}
 
 	/*
 	 * @see IBA Spec. Vol.1 4.1.1
 	 */
-	dev->ports[port_index].gid[0].global.subnet_prefix =
+	port->gid[0].global.subnet_prefix =
 		/* default GID prefix */
 		cpu_to_be64(0xFE80000000000000ULL);
-	dev->ports[port_index].gid[0].global.interface_id  =
-		cpu_to_be64(hca_guid_base | ((3 + dev->dev_id) << 8) | (port_index + 1));
+	port->gid[0].global.interface_id  =
+		cpu_to_be64(hca_guid_base | ((3 + dev->dev_id) << 8) | (port_num));
 
-	dev->ports[port_index].link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
-	dev->ports[port_index].link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
+	port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
+	port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
 
 	for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
-		dev->ports[port_index].pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
+		port->pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
 
 	return 0;
 }

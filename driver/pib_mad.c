@@ -72,16 +72,18 @@ int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 	switch (in_mad->mad_hdr.mgmt_class) {
 
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
+	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
 		return process_subn(dev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
 
-	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
-		pr_err("pib: Not Implementation class: %u\n", in_mad->mad_hdr.mgmt_class);
-		pib_print_mad("pib: IN", &in_mad->mad_hdr);
-		pib_print_mad("pib: OUT", &out_mad->mad_hdr);
-		return IB_MAD_RESULT_SUCCESS;
+	case IB_MGMT_CLASS_PERF_MGMT: {
+		struct pib_node node = {
+			.port_count = dev->ib_dev.phys_port_cnt + 1, /* 1 個余分に数える */
+			.port_start = 1,
+			.ports      = dev->ports,
+		};
 
-	case IB_MGMT_CLASS_PERF_MGMT:
-		return pib_process_pma_mad(dev, in_port_num, in_mad, out_mad);
+		return pib_process_pma_mad(&node, in_port_num, in_mad, out_mad);
+	}
 
 	default:
 		break;

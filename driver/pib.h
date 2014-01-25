@@ -31,8 +31,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	4
-#define PIB_DRIVER_VERSION 	"0.2.4"
+#define PIB_VERSION_REVISION	5
+#define PIB_DRIVER_VERSION 	"0.2.5"
 
 #define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
 #define PIB_DRIVER_FW_VERSION \
@@ -267,8 +267,9 @@ struct pib_port_perf {
 
 
 struct pib_port {
-	u8                      port_num;
+	spinlock_t		lock;
 
+	u8                      port_num;
 	struct ib_port_attr     ib_port_attr;
 
 	u8			mkey;
@@ -291,6 +292,13 @@ struct pib_port {
 	union ib_gid		gid[PIB_GID_PER_PORT];
 	struct pib_qp	       *qp_info[PIB_MAD_QPS_CORE];
 	u16			pkey_table[PIB_PKEY_TABLE_LEN];
+};
+
+
+struct pib_node {
+	u8                      port_count; /* 指定可能なポート数 */
+	u8                      port_start;
+	struct pib_port	       *ports;
 };
 
 
@@ -894,7 +902,7 @@ extern void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_port *port, u8 
 /*
  *  in pib_perfmgt.c
  */
-extern int pib_process_pma_mad(struct pib_dev *dev, u8 port_num, struct ib_mad *in_mad, struct ib_mad *out_mad);
+extern int pib_process_pma_mad(struct pib_node *node, u8 port_num, struct ib_mad *in_mad, struct ib_mad *out_mad);
 
 /*
  *  in pib_easy_sw.c
