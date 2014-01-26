@@ -42,6 +42,7 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 		goto err_alloc_cq_num;
 
 	cq->cq_num      = cq_num;
+	cq->state	= PIB_STATE_OK;
 
 	cq->ib_cq.cqe	= entries;
 	cq->nr_cqe	= 0;
@@ -140,6 +141,12 @@ int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 	cq = to_pcq(ibcq);
 
 	spin_lock_irqsave(&cq->lock, flags);
+
+	if (cq->state != PIB_STATE_OK) {
+		ret = -EACCES;
+		goto done;
+	}
+
 	for (i=0 ; (i<num_entries) && !list_empty(&cq->cqe_head) ; i++) {
 		struct pib_cqe *cqe;
 
@@ -152,6 +159,8 @@ int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 		cq->nr_cqe--;
 		ret++;
 	}
+
+done:
 	spin_unlock_irqrestore(&cq->lock, flags);
 
 	return ret;
@@ -160,6 +169,7 @@ int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 
 int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
 {
+	pr_err("pib: pib_req_notify_cq\n");
 	return 0;
 }
 
@@ -223,16 +233,28 @@ int pib_util_insert_wc_error(struct pib_cq *cq, struct pib_qp *qp, u64 wr_id, en
 
 static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc)
 {
+	int ret;
 	unsigned long flags;
 	struct pib_cqe *cqe;
-#if 0
-	struct ib_event ev;
-#endif
 
 	spin_lock_irqsave(&cq->lock, flags);
 
+	if (cq->state != PIB_STATE_OK) {
+		ret = -EACCES;
+		goto done;
+	}
+
 	if (list_empty(&cq->free_cqe_head)) {
-		goto cq_overflow;
+		struct ib_event ev;
+		/* CQ overflow */
+		ev.event      = IB_EVENT_CQ_ERR;
+		ev.device     = cq->ib_cq.device;
+		ev.element.cq = &cq->ib_cq;
+
+		cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
+
+		ret = -ENOMEM;
+		goto done;
 	}
 
 	cqe = list_first_entry(&cq->free_cqe_head, struct pib_cqe, list);
@@ -252,22 +274,8 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc)
 
 	spin_unlock_irqrestore(&cq->lock, flags);
 
-	return 0;
+	ret = 0;
 
-cq_overflow:
-	/* CQ overflow */
-
-	/* @todo この実装を正せ */
-
-#if 0
-	ev.event      = IB_EVENT_CQ_ERR;
-	ev.device     = cq->ib_cq.device;
-	ev.element.cq = &cq->ib_cq;
-
-	cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
-#endif
-
-	spin_unlock_irqrestore(&cq->lock, flags);
-
-	return -ENOMEM;
+done:
+	return ret;
 }

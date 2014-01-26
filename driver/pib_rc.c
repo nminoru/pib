@@ -1,4 +1,6 @@
 /*
+ * pib_rc.c - Reliable Connection service processing
+ *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
@@ -17,7 +19,6 @@
 #include <linux/if_vlan.h>
 #include <linux/random.h>
 #include <linux/kthread.h>
-#include <net/sock.h> /* for struct sock */
 
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_pack.h>

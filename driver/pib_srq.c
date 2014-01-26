@@ -49,7 +49,8 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	if (srq_num == (u32)-1)
 		goto err_alloc_srq_num;
 
-	srq->srq_num = srq_num;
+	srq->srq_num	= srq_num;
+	srq->state	= PIB_STATE_OK;
 
 	srq->ib_srq_attr = init_attr->attr;
 	srq->ib_srq_attr.srq_limit = 0; /* srq_limit isn't set when ibv_craete_srq */
@@ -137,6 +138,11 @@ int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 
 	spin_lock_irqsave(&srq->lock, flags);
 
+	if (srq->state != PIB_STATE_OK) {
+		ret = -EACCES; 
+		goto done;
+	}
+
 	if (attr_mask & IB_SRQ_MAX_WR) {
 		struct ib_srq_attr new_attr;
 
@@ -176,16 +182,30 @@ done:
 
 int pib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 {
+	int ret;
 	struct pib_srq *srq;
+	unsigned long flags;
 
 	if (!ibsrq || !attr)
 		return -EINVAL;
-	
+
 	srq = to_psrq(ibsrq);
+
+	spin_lock_irqsave(&srq->lock, flags);
+
+	if (srq->state != PIB_STATE_OK) {
+		ret = -EACCES; 
+		goto done;
+	}
 
 	*attr = srq->ib_srq_attr;
 
-	return 0;
+	ret = 0;
+
+done:
+	spin_unlock_irqrestore(&srq->lock, flags);
+
+	return ret;
 }
 
 
@@ -207,6 +227,11 @@ int pib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
 	srq = to_psrq(ibsrq);
 
 	spin_lock_irqsave(&srq->lock, flags);
+
+	if (srq->state != PIB_STATE_OK) {
+		ret = -EACCES; 
+		goto err;
+	}
 
 next_wr:
 	if ((ibwr->num_sge < 1) || (srq->ib_srq_attr.max_sge < ibwr->num_sge)) {
@@ -276,6 +301,9 @@ pib_util_get_srq(struct pib_srq *srq)
 	struct pib_recv_wqe *recv_wqe = NULL;
 
 	spin_lock_irqsave(&srq->lock, flags);
+
+	if (srq->state != PIB_STATE_OK)
+		goto skip;
 
 	if (list_empty(&srq->recv_wqe_head))
 		goto skip;

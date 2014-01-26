@@ -226,6 +226,12 @@ enum pib_obj {
 };
 
 
+enum pib_state {
+	PIB_STATE_OK		= 0,
+	PIB_STATE_ERR
+};
+
+
 struct pib_mcast_link {
 	u16			lid;
 	u32			qp_num;
@@ -441,6 +447,8 @@ struct pib_cq {
 	
 	spinlock_t		lock;
 
+	enum pib_state		state;
+
 	int                     nr_cqe;
 	struct list_head        cqe_head;
 	struct list_head        free_cqe_head;
@@ -452,10 +460,10 @@ struct pib_srq {
 	struct ib_srq_attr      ib_srq_attr;
 
 	u32			srq_num;
-	
-	/* @todo ステータスが必要 IBA Spec. Vol.1 10.2.9.5 */
 
 	spinlock_t		lock;
+
+	enum pib_state		state;
 
 	/* list of WRs to be submitted in SRQ. */
 	int                     nr_recv_wqe;

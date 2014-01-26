@@ -1,4 +1,6 @@
 /*
+ * pib_uc.c - Unreliable Datagram service processing
+ *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
@@ -340,8 +342,15 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 
 	spin_unlock_irqrestore(&pd->lock, flags);
 
-	if (status != IB_WC_SUCCESS)
+	if (status != IB_WC_SUCCESS) {
+		if (status == IB_WC_LOC_LEN_ERR) {
+			if (qp->ib_qp_init_attr.srq)
+				goto abort_error;
+			else
+				goto silently_drop;
+		}
 		goto completion_error;
+	}
 
 	{
 		int ret;
@@ -384,9 +393,16 @@ completion_error:
 				 status, IB_WC_RECV);
 
 	pib_util_flush_qp(qp, 0);
-
 	qp->push_rcqe = 1;
-	/* qp->ib_qp_attr.rq_psn++; */ /* @todo エラー時も PSN をまわすのか？ */
-
 	pib_util_free_recv_wqe(qp, recv_wqe);
+
+	return;
+
+abort_error:
+	pib_util_insert_wc_error(qp->send_cq, qp, recv_wqe->wr_id,
+				 IB_WC_REM_ABORT_ERR, IB_WC_RECV);
+	qp->push_rcqe = 1;
+	pib_util_free_recv_wqe(qp, recv_wqe);
+
+	return; 
 }

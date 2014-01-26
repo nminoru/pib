@@ -60,20 +60,25 @@ int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 		    struct ib_wc *in_wc, struct ib_grh *in_grh,
 		    struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
+	int ret = IB_MAD_RESULT_SUCCESS;
 	struct pib_dev *dev;
+	unsigned long flags;
 
 	BUG_ON(!in_mad || !out_mad);
 
 	dev = to_pdev(ibdev);
 
+	spin_lock_irqsave(&dev->lock, flags);
+
 	if (in_mad->mad_hdr.method == IB_MGMT_METHOD_GET_RESP)
-		return IB_MAD_RESULT_SUCCESS;
+		goto done;
 
 	switch (in_mad->mad_hdr.mgmt_class) {
 
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
-		return process_subn(dev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
+		ret = process_subn(dev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
+		break;
 
 	case IB_MGMT_CLASS_PERF_MGMT: {
 		struct pib_node node = {
@@ -82,12 +87,16 @@ int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 			.ports      = dev->ports,
 		};
 
-		return pib_process_pma_mad(&node, in_port_num, in_mad, out_mad);
+		ret = pib_process_pma_mad(&node, in_port_num, in_mad, out_mad);
+		break;
 	}
 
 	default:
 		break;
 	}
+
+done:
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return IB_MAD_RESULT_SUCCESS;
 }
