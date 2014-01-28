@@ -27,6 +27,7 @@ pib_alloc_ucontext(struct ib_device *ibdev,
 	if (!ucontext)
 		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&ucontext->list);
 	getnstimeofday(&ucontext->creation_time);
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -36,9 +37,10 @@ pib_alloc_ucontext(struct ib_device *ibdev,
 		goto err_alloc_ucontext_num;
 	}
 	dev->nr_ucontext++;
+	list_add_tail(&ucontext->list, &dev->ucontext_head);
+	ucontext->ucontext_num = ucontext_num;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	ucontext->ucontext_num = ucontext_num;
 	memcpy(ucontext->comm, current->comm, sizeof(current->comm));
 	ucontext->pid	= current->pid;
 	ucontext->tgid	= current->tgid;
@@ -65,6 +67,7 @@ int pib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 	ucontext = to_pucontext(ibcontext);
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&ucontext->list);
 	dev->nr_ucontext--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_CONTEXT_START, ucontext->ucontext_num);
 	spin_unlock_irqrestore(&dev->lock, flags);

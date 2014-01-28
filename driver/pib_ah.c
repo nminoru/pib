@@ -26,6 +26,7 @@ pib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 	if (!ah)
 		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&ah->list);
 	getnstimeofday(&ah->creation_time);
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -35,9 +36,9 @@ pib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 		goto err_alloc_ah_num;
 	}
 	dev->nr_ah++;
-	spin_unlock_irqrestore(&dev->lock, flags);
-
+	list_add_tail(&ah->list, &dev->ah_head);
 	ah->ah_num = ah_num;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	ah->ib_ah_attr = *ah_attr;
 	
@@ -93,6 +94,7 @@ int pib_destroy_ah(struct ib_ah *ibah)
 	ah  = to_pah(ibah);
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&ah->list);
 	dev->nr_ah--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_AH_START, ah->ah_num);
 	spin_unlock_irqrestore(&dev->lock, flags);

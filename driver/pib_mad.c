@@ -204,19 +204,19 @@ static int process_subn_get_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 	case IB_SMP_ATTR_VL_ARB_TABLE:
 		return subn_get_vl_arb_table(smp, dev, in_port_num);
 
-	case IB_SMP_ATTR_SM_INFO:
-#if 0
-		if (ibdev->port_cap_flags & IB_PORT_SM_DISABLED) {
-			ret = IB_MAD_RESULT_SUCCESS |
-				IB_MAD_RESULT_CONSUMED;
-			goto bail;
-		}
-		if (ibdev->port_cap_flags & IB_PORT_SM) {
-			ret = IB_MAD_RESULT_SUCCESS;
-			goto bail;
-		}
-		/* FALLTHROUGH */
-#endif
+	case IB_SMP_ATTR_SM_INFO: {
+		u32 port_cap_flags;
+		
+		port_cap_flags = dev->ports[in_port_num - 1].ib_port_attr.port_cap_flags;
+
+		if (port_cap_flags & IB_PORT_SM_DISABLED)
+			return IB_MAD_RESULT_SUCCESS | IB_MAD_RESULT_CONSUMED;
+
+		if (port_cap_flags & IB_PORT_SM)
+			return IB_MAD_RESULT_SUCCESS;
+
+		/* pass through */
+	}
 
 	default:
 		pr_err("pib: process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
@@ -245,19 +245,20 @@ static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 	case IB_SMP_ATTR_VL_ARB_TABLE:
 		return subn_set_vl_arb_table(smp, dev, in_port_num);
 
-	case IB_SMP_ATTR_SM_INFO:
-#if 0
-		if (ibp->port_cap_flags & IB_PORT_SM_DISABLED) {
-			ret = IB_MAD_RESULT_SUCCESS |
-				IB_MAD_RESULT_CONSUMED;
-			goto bail;
-		}
-		if (ibp->port_cap_flags & IB_PORT_SM) {
-			ret = IB_MAD_RESULT_SUCCESS;
-			goto bail;
-		}
-		/* FALLTHROUGH */
-#endif
+	case IB_SMP_ATTR_SM_INFO: {
+		u32 port_cap_flags;
+		
+		port_cap_flags = dev->ports[in_port_num - 1].ib_port_attr.port_cap_flags;
+
+		if (port_cap_flags & IB_PORT_SM_DISABLED)
+			return IB_MAD_RESULT_SUCCESS | IB_MAD_RESULT_CONSUMED;
+
+		if (port_cap_flags & IB_PORT_SM)
+			return IB_MAD_RESULT_SUCCESS;
+
+		/* pass through */
+	}
+
 	default:
 		pr_err("pib: process_subn: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
 		smp->status |= PIB_SMP_UNSUP_METH_ATTR;

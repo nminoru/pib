@@ -26,6 +26,7 @@ obj-m := pib.o
 pib-y := pib_main.o pib_dma.o pib_lib.o \
 	pib_ucontext.o pib_pd.o pib_qp.o pib_multicast.o pib_cq.o pib_srq.o pib_ah.o pib_mr.o \
 	pib_mad.o pib_mad_pma.o pib_easy_sw.o \
-	pib_thread.o pib_ud.o pib_rc.o
+	pib_thread.o pib_ud.o pib_rc.o \
+	pib_debugfs.o
 
 endif

@@ -38,6 +38,9 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	if (!cq)
 		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&cq->list);
+	getnstimeofday(&cq->creation_time);
+
 	spin_lock_irqsave(&dev->lock, flags);
 	cq_num = pib_alloc_obj_num(dev, PIB_BITMAP_CQ_START, PIB_MAX_CQ, &dev->last_cq_num);
 	if (cq_num == (u32)-1) {
@@ -45,10 +48,9 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 		goto err_alloc_cq_num;
 	}
 	dev->nr_cq++;
+	list_add_tail(&cq->list, &dev->cq_head);
+	cq->cq_num = cq_num;
 	spin_unlock_irqrestore(&dev->lock, flags);
-
-	cq->cq_num      = cq_num;
-	getnstimeofday(&cq->creation_time);
 
 	cq->state	= PIB_STATE_OK;
 	cq->notify_flag = 0;
@@ -84,6 +86,7 @@ err_allloc_ceq:
 	}
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&cq->list);
 	dev->nr_cq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_CQ_START, cq_num);
 	spin_unlock_irqrestore(&dev->lock, flags);
@@ -121,6 +124,7 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 	spin_unlock_irqrestore(&cq->lock, flags);
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&cq->list);
 	dev->nr_cq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_CQ_START, cq->cq_num);
 	spin_unlock_irqrestore(&dev->lock, flags);

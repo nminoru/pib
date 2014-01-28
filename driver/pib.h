@@ -35,8 +35,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	5
-#define PIB_DRIVER_VERSION 	"0.2.5"
+#define PIB_VERSION_REVISION	6
+#define PIB_DRIVER_VERSION 	"0.2.6"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -235,6 +235,16 @@ enum pib_state {
 };
 
 
+enum pib_debugfs_type {
+	PIB_DEBUGFS_UCONTEXT	= 0,
+	PIB_DEBUGFS_PD,
+	PIB_DEBUGFS_MR,
+	PIB_DEBUGFS_SRQ,
+	PIB_DEBUGFS_CQ,
+	PIB_DEBUGFS_LAST
+}; 
+
+
 struct pib_mcast_link {
 	u16			lid;
 	u32			qp_num;
@@ -309,6 +319,13 @@ struct pib_node {
 };
 
 
+struct pib_debugfs_entry {
+	struct pib_dev	       *dev; 
+	struct dentry  	       *dentry;
+	enum pib_debugfs_type	type;
+};
+
+
 struct pib_dev {
 	struct ib_device	ib_dev;
 	struct ib_device_attr   ib_dev_attr;
@@ -319,17 +336,29 @@ struct pib_dev {
 
 	unsigned long	       *obj_num_bitmap;
 
-	int                     nr_pd;
-	int			nr_mr;
-	int			nr_ah;
-	int                     nr_srq;
-
 	u32			last_ucontext_num;
+	int                     nr_ucontext;
+	struct list_head        ucontext_head;
+
 	u32			last_pd_num;
-	u32			last_srq_num;
-	u32			last_cq_num;
+	int                     nr_pd;
+	struct list_head        pd_head;
+
 	u32			last_mr_num;
+	int			nr_mr;
+	struct list_head        mr_head;
+
+	u32			last_srq_num;
+	int                     nr_srq;
+	struct list_head        srq_head;
+
 	u32			last_ah_num;
+	int			nr_ah;
+	struct list_head        ah_head;
+
+	u32			last_cq_num;
+	int                     nr_cq;
+	struct list_head        cq_head;
 
 	u32                     last_qp_num;
 	int                     nr_qp; /* execept QP0, QP1 */
@@ -341,12 +370,6 @@ struct pib_dev {
 		unsigned long   master_tid;
 		struct rb_root  rb_root;
 	} schedule;
-
-	int                     nr_ucontext;
-	struct list_head        ucontext_head;
-
-	int                     nr_cq;
-	struct list_head        cq_head;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	u32                     imm_data_lkey;
@@ -374,7 +397,7 @@ struct pib_dev {
 
 	struct {
 		struct dentry  *dir;
-		struct dentry  *ucontext;
+		struct pib_debugfs_entry entries[PIB_DEBUGFS_LAST];
 	} debugfs;
 };
 
@@ -411,6 +434,7 @@ struct pib_easy_sw {
 
 struct pib_ucontext {
 	struct ib_ucontext      ib_ucontext;
+	struct list_head        list; /* link to dev->ucontext_head */
 
 	u32			ucontext_num;
 	struct timespec		creation_time;
@@ -422,6 +446,7 @@ struct pib_ucontext {
 
 struct pib_pd {
 	struct ib_pd            ib_pd;
+	struct list_head        list; /* link to dev->pd_head */
 
 	u32			pd_num;
 	struct timespec		creation_time;
@@ -436,6 +461,7 @@ struct pib_pd {
 struct pib_ah {
 	struct ib_ah            ib_ah;
 	struct ib_ah_attr       ib_ah_attr;
+	struct list_head        list; /* link to dev->ah_head */
 
 	u32			ah_num;
 	struct timespec		creation_time;
@@ -445,6 +471,7 @@ struct pib_ah {
 struct pib_mr {
 	struct ib_mr            ib_mr;
 	struct ib_umem         *ib_umem;
+	struct list_head        list; /* link to dev->mr_head */
 
 	u32			mr_num;
 	struct timespec		creation_time;
@@ -462,6 +489,7 @@ struct pib_mr {
 
 struct pib_cq {
 	struct ib_cq            ib_cq;
+	struct list_head        list; /* link to dev->cq_head */
 
 	u32			cq_num;
 	struct timespec		creation_time;
@@ -481,6 +509,7 @@ struct pib_cq {
 struct pib_srq {
 	struct ib_srq           ib_srq;
 	struct ib_srq_attr      ib_srq_attr;
+	struct list_head        list; /* link to dev->srq_head */
 
 	u32			srq_num;
 	struct timespec		creation_time;
@@ -943,6 +972,12 @@ extern int pib_process_pma_mad(struct pib_node *node, u8 port_num, struct ib_mad
  */
 extern int pib_create_switch(struct pib_easy_sw *sw);
 extern void pib_release_switch(struct pib_easy_sw *sw);
+
+/*
+ *  in pib_debugfs.c
+ */
+extern int pib_register_debugfs(void);
+extern void pib_unregister_debugfs(void);
 
 /*
  *  in pib_lib.c

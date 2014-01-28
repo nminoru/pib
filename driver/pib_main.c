@@ -473,11 +473,15 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 
 	spin_lock_init(&dev->lock);
 
+	INIT_LIST_HEAD(&dev->ucontext_head);
+	INIT_LIST_HEAD(&dev->pd_head);
+	INIT_LIST_HEAD(&dev->mr_head);
+	INIT_LIST_HEAD(&dev->srq_head);
+	INIT_LIST_HEAD(&dev->ah_head);
+	INIT_LIST_HEAD(&dev->cq_head);
+
 	dev->last_qp_num		= pib_random() & PIB_QPN_MASK;
 	dev->qp_table			= RB_ROOT;
-
-	INIT_LIST_HEAD(&dev->ucontext_head);
-	INIT_LIST_HEAD(&dev->cq_head);
 
 	spin_lock_init(&dev->schedule.lock);
 	dev->schedule.wakeup_time	= jiffies;
@@ -906,8 +910,12 @@ static int __init pib_init(void)
 		}
 	}
 
+	if (pib_register_debugfs())
+		goto err_create_debugfs;
+
 	return 0;
 
+err_create_debugfs:
 err_ib_add:
 	for (j=i - 1 ; 0 <= j ; j--)
 		if (pib_devs[j])
@@ -941,6 +949,8 @@ static void __exit pib_cleanup(void)
 	int i;
 
 	pr_info("pib: unload\n");
+
+	pib_unregister_debugfs();
 
 	for (i = pib_num_hca - 1 ; 0 <= i ; i--)
 		if (pib_devs[i])

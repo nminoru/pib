@@ -28,6 +28,7 @@ pib_alloc_pd(struct ib_device *ibdev,
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&pd->list);
 	getnstimeofday(&pd->creation_time);
 
 	spin_lock_init(&pd->lock);
@@ -39,9 +40,9 @@ pib_alloc_pd(struct ib_device *ibdev,
 		goto err_alloc_pd_num;
 	}
 	dev->nr_pd++;
-	spin_unlock_irqrestore(&dev->lock, flags);
-
+	list_add_tail(&pd->list, &dev->pd_head);
 	pd->pd_num = pd_num;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	pd->mr_table = vzalloc(sizeof(struct pib_mr*) * PIB_MAX_MR_PER_PD);
 	if (!pd->mr_table)
@@ -51,6 +52,7 @@ pib_alloc_pd(struct ib_device *ibdev,
 
 err_mr_table:
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&pd->list);
 	dev->nr_pd--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_PD_START, pd_num);
 	spin_unlock_irqrestore(&dev->lock, flags);
@@ -82,6 +84,7 @@ int pib_dealloc_pd(struct ib_pd *ibpd)
 	vfree(pd->mr_table);
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&pd->list);
 	dev->nr_pd--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_PD_START, pd->pd_num);
 	spin_unlock_irqrestore(&dev->lock, flags);

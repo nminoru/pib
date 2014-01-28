@@ -46,6 +46,9 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	if (!srq)
 		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&srq->list);
+	getnstimeofday(&srq->creation_time);
+
 	spin_lock_irqsave(&dev->lock, flags);
 	srq_num = pib_alloc_obj_num(dev, PIB_BITMAP_SRQ_START, PIB_MAX_SRQ, &dev->last_srq_num);
 	if (srq_num == (u32)-1) {
@@ -53,6 +56,7 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 		goto err_alloc_srq_num;
 	}
 	dev->nr_srq++;
+	list_add_tail(&srq->list, &dev->srq_head);
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	srq->srq_num	= srq_num;
@@ -87,6 +91,7 @@ err_alloc_wqe:
 	}
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&srq->list);
 	dev->nr_srq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_SRQ_START, srq_num);
 	spin_unlock_irqrestore(&dev->lock, flags);
@@ -124,6 +129,7 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 	spin_unlock_irqrestore(&srq->lock, flags);
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&srq->list);
 	dev->nr_srq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_SRQ_START, srq->srq_num);
 	spin_unlock_irqrestore(&dev->lock, flags);

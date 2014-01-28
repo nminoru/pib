@@ -11,6 +11,7 @@
 #include "pib.h"
 
 
+static struct pib_mr * create_mr(struct pib_dev *dev, struct pib_pd *pd, u64 start, u64 length, u64 virt_addr, int access_flags);
 static enum ib_wc_status copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only);
 static int mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction);
 
@@ -60,8 +61,6 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	struct pib_dev *dev;
 	struct pib_pd *pd;
 	struct pib_mr *mr;
-	unsigned long flags;
-	u32 mr_num;
 
 	if (!ibpd)
 		return ERR_PTR(-EINVAL);
@@ -69,43 +68,13 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	dev = to_pdev(ibpd->device);
 	pd = to_ppd(ibpd);
 
-	mr = kmem_cache_zalloc(pib_mr_cachep, GFP_KERNEL);
-	if (!mr)
-		return ERR_PTR(-ENOMEM);
+	mr = create_mr(dev, pd, 0, (u64)-1, 0, access_flags);
+	if (IS_ERR(mr))
+		return (struct ib_mr *)mr;
 
-	getnstimeofday(&mr->creation_time);
-
-	spin_lock_irqsave(&dev->lock, flags);
-	mr_num = pib_alloc_obj_num(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
-	if (mr_num == (u32)-1) {
-		spin_unlock_irqrestore(&dev->lock, flags);
-		goto err_alloc_mr_num;
-	}
-	dev->nr_mr++;
-	spin_unlock_irqrestore(&dev->lock, flags);
-
-	mr->mr_num = mr_num;
-
-	mr->start        = 0;
-	mr->length       = (u64)-1;
-	mr->virt_addr    = 0;
 	mr->is_dma = 1;
-	mr->access_flags = access_flags;
-
-	if (reg_mr(pd, mr))
-		goto err_reg_mr;
 
 	return &mr->ib_mr;
-
-err_reg_mr:
-	spin_lock_irqsave(&dev->lock, flags);
-	dev->nr_mr--;
-	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr_num);
-	spin_unlock_irqrestore(&dev->lock, flags);
-
-err_alloc_mr_num:
-	kmem_cache_free(pib_mr_cachep, mr);
-	return ERR_PTR(-ENOMEM);
 }
 
 
@@ -116,26 +85,48 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 {
 	struct pib_dev *dev;
 	struct pib_pd *pd;
-	struct pib_mr *mr;
 	struct ib_umem *umem;
-	unsigned long flags;
-	u32 mr_num;
+	struct pib_mr *mr;
 
 	if (!ibpd)
 		return ERR_PTR(-EINVAL);
 
-	dev = to_pdev(ibpd->device);
 	pd = to_ppd(ibpd);
+	dev = to_pdev(ibpd->device);
 
 	umem = ib_umem_get(ibpd->uobject->context, start, length,
 			   access_flags, 0);
 	if (IS_ERR(umem))
 		return (struct ib_mr *)umem;
+	
+	mr = create_mr(dev, pd, start, length, virt_addr, access_flags);
+	if (IS_ERR(mr))
+		goto err_alloc_mr;
+
+	mr->ib_umem = umem;
+
+	return &mr->ib_mr;
+
+err_alloc_mr:
+	ib_umem_release(umem);
+
+	return ERR_PTR(-ENOMEM);
+}
+
+
+static struct pib_mr *
+create_mr(struct pib_dev *dev, struct pib_pd *pd, u64 start, u64 length,
+	  u64 virt_addr, int access_flags)
+{
+	struct pib_mr *mr;
+	unsigned long flags;
+	u32 mr_num;
 
 	mr = kmem_cache_zalloc(pib_mr_cachep, GFP_KERNEL);
 	if (!mr)
-		goto err_alloc_mr;
+		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&mr->list);
 	getnstimeofday(&mr->creation_time);
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -145,32 +136,29 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		goto err_alloc_mr_num;
 	}
 	dev->nr_mr++;
-	spin_unlock_irqrestore(&dev->lock, flags);
-
+	list_add_tail(&mr->list, &dev->mr_head);
 	mr->mr_num = mr_num;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	mr->start        = start;
 	mr->length       = length;
 	mr->virt_addr    = virt_addr;
 	mr->access_flags = access_flags;
-	mr->ib_umem      = umem;
 
 	if (reg_mr(pd, mr))
 		goto err_reg_mr;
 
-	return &mr->ib_mr;
+	return mr;
 
 err_reg_mr:
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&mr->list);
 	dev->nr_mr--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr_num);
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 err_alloc_mr_num:
 	kmem_cache_free(pib_mr_cachep, mr);
-
-err_alloc_mr:
-	ib_umem_release(umem);
 
 	return ERR_PTR(-ENOMEM);
 }
@@ -209,6 +197,7 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 		ib_umem_release(mr->ib_umem);
 
 	spin_lock_irqsave(&dev->lock, flags);
+	list_del(&mr->list);
 	dev->nr_mr--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr->mr_num);
 	spin_unlock_irqrestore(&dev->lock, flags);
