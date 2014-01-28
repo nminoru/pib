@@ -13,6 +13,7 @@ struct ib_ucontext *
 pib_alloc_ucontext(struct ib_device *ibdev,
 		      struct ib_udata *udata)
 {
+	unsigned long flags;
 	struct pib_dev *dev;
 	struct pib_ucontext *ucontext;
 	u32 ucontext_num;
@@ -26,12 +27,22 @@ pib_alloc_ucontext(struct ib_device *ibdev,
 	if (!ucontext)
 		return ERR_PTR(-ENOMEM);
 
+	getnstimeofday(&ucontext->creation_time);
+
+	spin_lock_irqsave(&dev->lock, flags);
 	ucontext_num = pib_alloc_obj_num(dev, PIB_BITMAP_CONTEXT_START, PIB_MAX_CONTEXT, &dev->last_ucontext_num);
-	if (ucontext_num == (u32)-1)
+	if (ucontext_num == (u32)-1) {
+		spin_unlock_irqrestore(&dev->lock, flags);
 		goto err_alloc_ucontext_num;
+	}
+	dev->nr_ucontext++;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	ucontext->ucontext_num = ucontext_num;
-	
+	memcpy(ucontext->comm, current->comm, sizeof(current->comm));
+	ucontext->pid	= current->pid;
+	ucontext->tgid	= current->tgid;
+
 	return &ucontext->ib_ucontext;
 
 err_alloc_ucontext_num:
@@ -43,6 +54,7 @@ err_alloc_ucontext_num:
 
 int pib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 {
+	unsigned long flags;
 	struct pib_dev *dev;
 	struct pib_ucontext *ucontext;
 
@@ -52,7 +64,10 @@ int pib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 	dev      = to_pdev(ibcontext->device);
 	ucontext = to_pucontext(ibcontext);
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_ucontext--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_CONTEXT_START, ucontext->ucontext_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kfree(ucontext);
 

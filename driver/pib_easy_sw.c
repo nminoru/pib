@@ -117,8 +117,6 @@ int pib_create_switch(struct pib_easy_sw *sw)
 
 		port = &sw->ports[port_num];
 
-		spin_lock_init(&port->lock);
-		
 		port->port_num	 = port_num;
 		port->ib_port_attr = ib_port_attr;
 		port->gid[0].global.subnet_prefix =
@@ -721,7 +719,7 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_easy_sw *sw, 
 	if (smp->attr_mod)
 		smp->status |= PIB_SMP_INVALID_FIELD;
 
-	strncpy(smp->data, PIB_DRIVER_DESCRIPTION, 64);
+	strncpy(smp->data, PIB_EASYSW_DESCRIPTION, 64);
 
 	return reply(smp);
 }

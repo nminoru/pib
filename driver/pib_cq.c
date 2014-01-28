@@ -9,7 +9,7 @@
 #include "pib.h"
 
 
-static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc);
+static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited);
 
 
 struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
@@ -20,6 +20,7 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	struct pib_dev *dev;
 	struct pib_cq *cq;
 	struct pib_cqe *cqe, *cqe_next;
+	unsigned long flags;
 	u32 cq_num;
 
 	if (!ibdev)
@@ -37,12 +38,21 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 	if (!cq)
 		return ERR_PTR(-ENOMEM);
 
+	spin_lock_irqsave(&dev->lock, flags);
 	cq_num = pib_alloc_obj_num(dev, PIB_BITMAP_CQ_START, PIB_MAX_CQ, &dev->last_cq_num);
-	if (cq_num == (u32)-1)
+	if (cq_num == (u32)-1) {
+		spin_unlock_irqrestore(&dev->lock, flags);
 		goto err_alloc_cq_num;
+	}
+	dev->nr_cq++;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	cq->cq_num      = cq_num;
+	getnstimeofday(&cq->creation_time);
+
 	cq->state	= PIB_STATE_OK;
+	cq->notify_flag = 0;
+	cq->notified	= 1; /* assume CQ has been notified when initial */
 
 	cq->ib_cq.cqe	= entries;
 	cq->nr_cqe	= 0;
@@ -73,7 +83,10 @@ err_allloc_ceq:
 		kmem_cache_free(pib_cqe_cachep, cqe);
 	}
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_cq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_CQ_START, cq_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 err_alloc_cq_num:
 	kmem_cache_free(pib_cq_cachep, cq);
@@ -107,7 +120,10 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 	cq->nr_cqe = 0;
 	spin_unlock_irqrestore(&cq->lock, flags);
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_cq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_CQ_START, cq->cq_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kmem_cache_free(pib_cq_cachep, cq);
 
@@ -167,10 +183,35 @@ done:
 }
 
 
-int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
+int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags notify_flags)
 {
-	pr_err("pib: pib_req_notify_cq\n");
-	return 0;
+	struct pib_cq *cq;
+	unsigned long flags;
+	int ret = 0;
+
+	cq = to_pcq(ibcq);
+
+	spin_lock_irqsave(&cq->lock, flags);
+
+	if (cq->state != PIB_STATE_OK)
+		ret = -1;
+	else {
+		if (notify_flags & IB_CQ_SOLICITED)
+			cq->notify_flag = IB_CQ_SOLICITED;
+		else if (notify_flags & IB_CQ_NEXT_COMP)
+			cq->notify_flag = IB_CQ_NEXT_COMP;
+		
+		if ((notify_flags & IB_CQ_REPORT_MISSED_EVENTS) &&
+			 !list_empty(&cq->cqe_head))
+			ret = 1;
+
+		/* @note CQE が溜まっている時に req_notify_cq を呼び出したらどうなるかは実装依存 */
+		cq->notified = 0;
+	}
+
+	spin_unlock_irqrestore(&cq->lock, flags);
+
+	return ret;
 }
 
 
@@ -201,9 +242,9 @@ int pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp)
 }
 
 
-int pib_util_insert_wc_success(struct pib_cq *cq, const struct ib_wc *wc)
+int pib_util_insert_wc_success(struct pib_cq *cq, const struct ib_wc *wc, int solicited)
 {
-	return insert_wc(cq, wc);
+	return insert_wc(cq, wc, solicited);
 }
 
 
@@ -227,11 +268,11 @@ int pib_util_insert_wc_error(struct pib_cq *cq, struct pib_qp *qp, u64 wr_id, en
 		wc.dlid_path_bits = pib_random();
 	}
 
-	return insert_wc(cq, &wc);
+	return insert_wc(cq, &wc, 1);
 }
 
 
-static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc)
+static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited)
 {
 	int ret;
 	unsigned long flags;
@@ -270,7 +311,13 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc)
 	list_add_tail(&cqe->list, &cq->cqe_head);
 
 	/* tell completion channel */
-	cq->ib_cq.comp_handler(&cq->ib_cq, cq->ib_cq.cq_context);
+	if ((cq->notify_flag == IB_CQ_NEXT_COMP) ||
+	    ((cq->notify_flag == IB_CQ_SOLICITED) && solicited)) {
+		if (!cq->notified) {
+			cq->ib_cq.comp_handler(&cq->ib_cq, cq->ib_cq.cq_context);
+			cq->notified = 1;
+		}
+	}
 
 	spin_unlock_irqrestore(&cq->lock, flags);
 

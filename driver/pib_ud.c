@@ -191,6 +191,7 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
+	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
 	dev->thread.port_num	= port_num;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
@@ -215,7 +216,7 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 			.qp       = &qp->ib_qp,
 		};
 
-		ret = pib_util_insert_wc_success(qp->send_cq, &wc);
+		ret = pib_util_insert_wc_success(qp->send_cq, &wc, 0);
 		/* @todo チェック */
 	}
 
@@ -371,7 +372,7 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 		if (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE)
 			wc.wc_flags |= IB_WC_WITH_IMM;
 
-		ret = pib_util_insert_wc_success(qp->recv_cq, &wc); /* @todo */
+		ret = pib_util_insert_wc_success(qp->recv_cq, &wc, pib_packet_bth_get_padcnt(bth));
 	}
 
 	qp->push_rcqe = 1;

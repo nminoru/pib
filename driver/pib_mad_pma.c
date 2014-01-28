@@ -146,6 +146,7 @@ int pib_process_pma_mad(struct pib_node *node, u8 port_num,
 		pr_err("pib: *** %s subn: %u ***", __func__, method);
 		pmp->mad_hdr.status = PIB_PMA_STATUS_UNSUPPORTED_METHOD;
 		ret = reply(&pmp->mad_hdr);
+		break;
 	}
 
 	return ret;

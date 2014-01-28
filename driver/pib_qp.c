@@ -251,6 +251,8 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 	if (!qp)
 		return ERR_PTR(-ENOMEM);
 
+	getnstimeofday(&qp->creation_time);
+
 	qp->ib_qp_init_attr = *init_attr;
 	qp->ib_qp_attr.cap  = init_attr->cap;
 
@@ -302,11 +304,13 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 		if (pib_get_behavior(PIB_BEHAVIOR_QPN_REALLOCATION))
 			dev->last_qp_num = PIB_QP1 + 1;
 
-		qp_num = pib_alloc_obj_num(dev, PIB_BITMAP_QP_START, PIB_MAX_QP, &dev->last_qp_num);
-		if (qp_num == (u32)-1)
-			goto err_alloc_qp_num;
-
 		spin_lock_irqsave(&dev->lock, flags);
+		qp_num = pib_alloc_obj_num(dev, PIB_BITMAP_QP_START, PIB_MAX_QP, &dev->last_qp_num);
+		if (qp_num == (u32)-1) {
+			spin_unlock_irqrestore(&dev->lock, flags);
+			goto err_alloc_qp_num;
+		}
+		dev->nr_qp++;
 		pib_util_find_qp(dev, qp_num);
 		qp->ib_qp.qp_num = qp_num;
 		dev->last_qp_num = qp_num;
@@ -373,7 +377,12 @@ err_alloc_inlin_data_buffer:
 		spin_unlock_irqrestore(&dev->lock, flags);
 	}
 
-	pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
+	if ((qp_num != PIB_QP0) && (qp_num != PIB_QP1)) {
+		spin_lock_irqsave(&dev->lock, flags);
+		dev->nr_qp--;
+		pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
+		spin_unlock_irqrestore(&dev->lock, flags);
+	}
 
 err_alloc_qp_num:
 	kmem_cache_free(pib_qp_cachep, qp);
@@ -484,9 +493,12 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 	else
 		rb_erase(&qp->rb_node, &dev->qp_table);
 
-	spin_unlock_irqrestore(&dev->lock, flags);
+	if ((qp_num != PIB_QP0) && (qp_num != PIB_QP1)) {
+		dev->nr_qp--;
+		pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
+	}
 
-	pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kmem_cache_free(pib_qp_cachep, qp);
 

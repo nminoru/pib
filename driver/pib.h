@@ -19,6 +19,7 @@
 #include <linux/semaphore.h>
 #include <linux/net.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_umem.h>
@@ -29,12 +30,14 @@
 #include "pib_packet.h"
 
 
+#define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
+#define PIB_EASYSW_DESCRIPTION	"Pseudo InfiniBand HCA switch"
+
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
 #define PIB_VERSION_REVISION	5
 #define PIB_DRIVER_VERSION 	"0.2.5"
 
-#define PIB_DRIVER_DESCRIPTION	"Pseudo InfiniBand HCA driver"
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
 
@@ -273,8 +276,6 @@ struct pib_port_perf {
 
 
 struct pib_port {
-	spinlock_t		lock;
-
 	u8                      port_num;
 	struct ib_port_attr     ib_port_attr;
 
@@ -319,6 +320,8 @@ struct pib_dev {
 	unsigned long	       *obj_num_bitmap;
 
 	int                     nr_pd;
+	int			nr_mr;
+	int			nr_ah;
 	int                     nr_srq;
 
 	u32			last_ucontext_num;
@@ -329,7 +332,7 @@ struct pib_dev {
 	u32			last_ah_num;
 
 	u32                     last_qp_num;
-	int                     nr_qp;
+	int                     nr_qp; /* execept QP0, QP1 */
 	struct rb_root          qp_table;
 
 	struct {
@@ -368,6 +371,11 @@ struct pib_dev {
 
 	struct list_head       *mcast_table;
 	struct pib_port	       *ports;
+
+	struct {
+		struct dentry  *dir;
+		struct dentry  *ucontext;
+	} debugfs;
 };
 
 
@@ -403,13 +411,20 @@ struct pib_easy_sw {
 
 struct pib_ucontext {
 	struct ib_ucontext      ib_ucontext;
+
 	u32			ucontext_num;
+	struct timespec		creation_time;
+	pid_t			pid;
+	pid_t			tgid;	
+	char			comm[TASK_COMM_LEN];
 };
 
 
 struct pib_pd {
 	struct ib_pd            ib_pd;
+
 	u32			pd_num;
+	struct timespec		creation_time;
 
 	spinlock_t		lock;
 
@@ -421,14 +436,18 @@ struct pib_pd {
 struct pib_ah {
 	struct ib_ah            ib_ah;
 	struct ib_ah_attr       ib_ah_attr;
+
 	u32			ah_num;
+	struct timespec		creation_time;
 };
 
 
 struct pib_mr {
 	struct ib_mr            ib_mr;
 	struct ib_umem         *ib_umem;
+
 	u32			mr_num;
+	struct timespec		creation_time;
 
 	u32                     lkey_prefix;
 	u32                     rkey_prefix;
@@ -443,11 +462,15 @@ struct pib_mr {
 
 struct pib_cq {
 	struct ib_cq            ib_cq;
+
 	u32			cq_num;
+	struct timespec		creation_time;
 	
 	spinlock_t		lock;
 
 	enum pib_state		state;
+	int			notify_flag;
+	int			notified;
 
 	int                     nr_cqe;
 	struct list_head        cqe_head;
@@ -460,6 +483,7 @@ struct pib_srq {
 	struct ib_srq_attr      ib_srq_attr;
 
 	u32			srq_num;
+	struct timespec		creation_time;
 
 	spinlock_t		lock;
 
@@ -534,6 +558,8 @@ struct pib_qp {
 
 	enum ib_qp_type         qp_type;
 	enum ib_qp_state        state;
+
+	struct timespec		creation_time;
 
 	struct pib_cq	       *send_cq;
 	struct pib_cq	       *recv_cq;
@@ -833,7 +859,7 @@ extern int pib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata
 extern int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
 extern int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
 extern int pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp);
-extern int pib_util_insert_wc_success(struct pib_cq *cq, const struct ib_wc *wc);
+extern int pib_util_insert_wc_success(struct pib_cq *cq, const struct ib_wc *wc, int solicited);
 extern int pib_util_insert_wc_error(struct pib_cq *cq, struct pib_qp *qp, u64 wr_id, enum ib_wc_status status, enum ib_wc_opcode opcode);
 
 /*

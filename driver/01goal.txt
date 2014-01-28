@@ -1,26 +1,29 @@
-○ Verfication
-
-- Receiver の平行動作
-- Delayed WC
-- CQ オーバーフローの動作を選択可能に(IBV_EVENT_CQ_ERR か mellanox 準拠か)
-- QP が RESET、INIT 時の送信
-- QP が RESET 時の受信
-- ユーザープログラムはで UD 通信で指定する Q_Key の最上位ビットに1を立てないこと。
-
 ○ Behavior
 
-- QP 番号のランダム性の制御
+- Delayed WC
+
+- QP 番号の割り当てルールを返る。
+  - 普通はランダム位置から連番
+  - 2 から見て空いている番号を。
+
 - タイマー精度の制御
+
 - RC 通信で意図しない相手からの QPN をチェック？
-- エラー時の WC に opcode を含めるか？
-- SRQ のシャッフル
+
+- エラー時の WC に opcode を含めるか？適当にシャッフルした値を入れるか？
+
 - QP に WR を登録できないステートでも、mlx は登録できる。
   実際に送受信可能になるのは RTR / RTS 以降。
 - WQE も CQE も設定以上に存在数することがある。
 
-○ Violation check
+
+○ Manner check
 
 - RESET 時に ibv_post_send または ibv_post_recv を実行した。
 - RC 通信で dest_qp 以外の QP からパケットを受信した。
 - ibv_modify_qp で RESET へ遷移する際に WQE/CQE が失われた。
-- UD 通信で WR の q_key の最上位ビットが指定された。
+- ユーザからの UD 通信で WR の q_key の最上位ビットが指定された。
+- QP が RESET、INIT 時の送信
+- QP が RESET 時の受信
+- QP Reset、CQ error 時などに WQE や CQE が WC 失われていないことのチェック
+- CQ に CQE が残っている状態で ibv_req_notify を入れた場合

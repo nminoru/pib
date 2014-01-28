@@ -58,7 +58,7 @@ static int pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int O
  */
 static int receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 static int receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn);
-static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn);
+static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 ps);
 static void set_send_wqe_to_error(struct pib_qp *qp, u32 psn, enum ib_wc_status status);
 static int receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
 static int receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
@@ -334,6 +334,7 @@ process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struc
 
 	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
+	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
 	return IB_WC_SUCCESS;
 }
@@ -390,6 +391,7 @@ process_RDMA_READ_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_sen
 
 	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
+	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
 	return IB_WC_SUCCESS;
 }
@@ -415,6 +417,7 @@ process_Atomic_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_w
 
 	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
+	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
 	return IB_WC_SUCCESS;
 }
@@ -689,7 +692,7 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 			.wc_flags    = with_imm ? IB_WC_WITH_IMM : 0,
 		};
 
-		ret = pib_util_insert_wc_success(qp->recv_cq, &wc); /* @todo */
+		ret = pib_util_insert_wc_success(qp->recv_cq, &wc, pib_packet_bth_get_padcnt(bth));
 
 		qp->push_rcqe = 1;
 		
@@ -893,7 +896,7 @@ receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode
 			.wc_flags    = IB_WC_WITH_IMM,
 		};
 
-		ret = pib_util_insert_wc_success(qp->recv_cq, &wc); /* @todo */
+		ret = pib_util_insert_wc_success(qp->recv_cq, &wc, pib_packet_bth_get_padcnt(bth));
 
 		qp->push_rcqe = 1;
 		
@@ -1736,7 +1739,7 @@ process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe 
 			.qp       = &qp->ib_qp,
 		};
 
-		ret = pib_util_insert_wc_success(qp->send_cq, &wc);
+		ret = pib_util_insert_wc_success(qp->send_cq, &wc, 0);
 	}
 
 	qp->requester.psn = send_wqe->processing.expected_psn;
@@ -1817,7 +1820,7 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 			.qp       = &qp->ib_qp,
 		};
 
-		ret = pib_util_insert_wc_success(qp->send_cq, &wc);
+		ret = pib_util_insert_wc_success(qp->send_cq, &wc, 0);
 	}
 
 	qp->requester.nr_rd_atomic--;
@@ -1898,7 +1901,7 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 			.qp       = &qp->ib_qp,
 		};
 
-		ret = pib_util_insert_wc_success(qp->send_cq, &wc);
+		ret = pib_util_insert_wc_success(qp->send_cq, &wc, 0);
 	}
 
 	qp->requester.nr_rd_atomic--;

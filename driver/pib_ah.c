@@ -14,6 +14,7 @@ pib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 {
 	struct pib_dev *dev;
 	struct pib_ah *ah;
+	unsigned long flags;
 	u32 ah_num;
 
 	if (!ah_attr)
@@ -25,12 +26,19 @@ pib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 	if (!ah)
 		return ERR_PTR(-ENOMEM);
 
+	getnstimeofday(&ah->creation_time);
+
+	spin_lock_irqsave(&dev->lock, flags);
 	ah_num = pib_alloc_obj_num(dev, PIB_BITMAP_AH_START, PIB_MAX_AH, &dev->last_ah_num);
-	if (ah_num == (u32)-1)
+	if (ah_num == (u32)-1) {
+		spin_unlock_irqrestore(&dev->lock, flags);
 		goto err_alloc_ah_num;
+	}
+	dev->nr_ah++;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	ah->ah_num = ah_num;
-	
+
 	ah->ib_ah_attr = *ah_attr;
 	
 	return &ah->ib_ah;
@@ -76,6 +84,7 @@ int pib_destroy_ah(struct ib_ah *ibah)
 {
 	struct pib_dev *dev;
 	struct pib_ah *ah;
+	unsigned long flags;
 
 	if (!ibah)
 		return 0;
@@ -83,7 +92,10 @@ int pib_destroy_ah(struct ib_ah *ibah)
 	dev = to_pdev(ibah->device);
 	ah  = to_pah(ibah);
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_ah--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_AH_START, ah->ah_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kmem_cache_free(pib_ah_cachep, ah);
 

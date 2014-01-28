@@ -60,6 +60,7 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	struct pib_dev *dev;
 	struct pib_pd *pd;
 	struct pib_mr *mr;
+	unsigned long flags;
 	u32 mr_num;
 
 	if (!ibpd)
@@ -72,9 +73,16 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
+	getnstimeofday(&mr->creation_time);
+
+	spin_lock_irqsave(&dev->lock, flags);
 	mr_num = pib_alloc_obj_num(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
-	if (mr_num == (u32)-1)
+	if (mr_num == (u32)-1) {
+		spin_unlock_irqrestore(&dev->lock, flags);
 		goto err_alloc_mr_num;
+	}
+	dev->nr_mr++;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	mr->mr_num = mr_num;
 
@@ -90,7 +98,10 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	return &mr->ib_mr;
 
 err_reg_mr:
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_mr--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 err_alloc_mr_num:
 	kmem_cache_free(pib_mr_cachep, mr);
@@ -107,6 +118,7 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	struct pib_pd *pd;
 	struct pib_mr *mr;
 	struct ib_umem *umem;
+	unsigned long flags;
 	u32 mr_num;
 
 	if (!ibpd)
@@ -124,9 +136,16 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	if (!mr)
 		goto err_alloc_mr;
 
+	getnstimeofday(&mr->creation_time);
+
+	spin_lock_irqsave(&dev->lock, flags);
 	mr_num = pib_alloc_obj_num(dev, PIB_BITMAP_MR_START, PIB_MAX_MR, &dev->last_mr_num);
-	if (mr_num == (u32)-1)
+	if (mr_num == (u32)-1) {
+		spin_unlock_irqrestore(&dev->lock, flags);
 		goto err_alloc_mr_num;
+	}
+	dev->nr_mr++;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	mr->mr_num = mr_num;
 
@@ -142,7 +161,10 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	return &mr->ib_mr;
 
 err_reg_mr:
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_mr--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 err_alloc_mr_num:
 	kmem_cache_free(pib_mr_cachep, mr);
@@ -186,7 +208,10 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_mr--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_MR_START, mr->mr_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kmem_cache_free(pib_mr_cachep, mr);
 

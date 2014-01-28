@@ -96,6 +96,19 @@ static inline void pib_packet_bth_set_padcnt(struct pib_packet_bth *bth, u8 padc
 }
 
 
+static inline u8 pib_packet_bth_get_solicited(const struct pib_packet_bth *bth)
+{
+	return (bth->se_m_padcnt_tver >> 7) & 0x1;
+}
+
+
+static inline void pib_packet_bth_set_solicited(struct pib_packet_bth *bth, int solicited)
+{
+	bth->se_m_padcnt_tver &= ~0x80;
+	bth->se_m_padcnt_tver |= ((!!solicited) << 7);
+}
+
+
 /* Datagram Extended Transport Header */
 struct pib_packet_deth {
 	__be32	qkey;	/* Queue Key */

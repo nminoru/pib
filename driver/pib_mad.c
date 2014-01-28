@@ -60,25 +60,20 @@ int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 		    struct ib_wc *in_wc, struct ib_grh *in_grh,
 		    struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
-	int ret = IB_MAD_RESULT_SUCCESS;
 	struct pib_dev *dev;
-	unsigned long flags;
 
 	BUG_ON(!in_mad || !out_mad);
 
 	dev = to_pdev(ibdev);
 
-	spin_lock_irqsave(&dev->lock, flags);
-
 	if (in_mad->mad_hdr.method == IB_MGMT_METHOD_GET_RESP)
-		goto done;
+		return IB_MAD_RESULT_SUCCESS;
 
 	switch (in_mad->mad_hdr.mgmt_class) {
 
 	case IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE:
 	case IB_MGMT_CLASS_SUBN_LID_ROUTED:
-		ret = process_subn(dev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
-		break;
+		return process_subn(dev, mad_flags, in_port_num, in_wc, in_grh, in_mad, out_mad);
 
 	case IB_MGMT_CLASS_PERF_MGMT: {
 		struct pib_node node = {
@@ -87,18 +82,12 @@ int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 			.ports      = dev->ports,
 		};
 
-		ret = pib_process_pma_mad(&node, in_port_num, in_mad, out_mad);
-		break;
+		return pib_process_pma_mad(&node, in_port_num, in_mad, out_mad);
 	}
 
 	default:
-		break;
+		return IB_MAD_RESULT_SUCCESS;
 	}
-
-done:
-	spin_unlock_irqrestore(&dev->lock, flags);
-
-	return IB_MAD_RESULT_SUCCESS;
 }
 
 
@@ -279,12 +268,15 @@ static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
+	unsigned long flags;
+
 	if (smp->attr_mod)
 		smp->status |= PIB_SMP_INVALID_FIELD;
 
+ 	spin_lock_irqsave(&dev->lock, flags);
 	memset(smp->data, 0, sizeof(smp->data));
-
 	strncpy(smp->data, dev->ib_dev.node_desc, 64);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return reply(smp);
 }
@@ -292,12 +284,14 @@ static int subn_get_nodedescription(struct ib_smp *smp, struct pib_dev *dev, u8 
 
 static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
+	unsigned long flags;
 	struct pib_smp_node_info *node_info = (struct pib_smp_node_info *)&smp->data;
 
 	/* smp->status |= IB_SMP_INVALID_FIELD; */
 
 	memset(smp->data, 0, sizeof(smp->data));
 
+ 	spin_lock_irqsave(&dev->lock, flags);
 	node_info->base_version		= IB_MGMT_BASE_VERSION;
 	node_info->class_version	= PIB_MGMT_CLASS_VERSION;
 	node_info->node_type		= RDMA_NODE_IB_CA;
@@ -312,6 +306,7 @@ static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	node_info->vendor_id[0]		= 0; /* OUI */
 	node_info->vendor_id[1]		= 0; /* OUI */
 	node_info->vendor_id[2]		= 0; /* OUI */
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return reply(smp);
 }
@@ -337,11 +332,14 @@ static int subn_set_guidinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 
 static int subn_get_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
+	unsigned long flags;
 	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
-	u32 port_num = be32_to_cpu(smp->attr_mod);
+	u32 port_num;
 	struct pib_port *port;
 
 	memset(smp->data, 0, sizeof(smp->data));
+
+	port_num = be32_to_cpu(smp->attr_mod);
 
 	if (port_num == 0)
 		port_num = in_port_num;
@@ -352,10 +350,11 @@ static int subn_get_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	}
 
 	port = &dev->ports[port_num - 1];
-
 	port_info->local_port_num = port_num;
 
+ 	spin_lock_irqsave(&dev->lock, flags);
 	pib_subn_get_portinfo(smp, port, port_num, PIB_PORT_CA);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 bail:
 	return reply(smp);
@@ -364,15 +363,16 @@ bail:
 
 void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type)
 {
-	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
+	struct ib_port_info *port_info;
 
 	memset(smp->data, 0, sizeof(smp->data));
+
+	port_info = (struct ib_port_info *)&smp->data;
 
 	/*
 	 * m-key check
 	 * 失敗したら IB_MAD_RESULT_FAILURE を
 	 */
-
 #if 0
 	pib_debug("pib: pib_subn_get_portinfo: type=%u, port_num=%u, tid=%llx, lid=%u, state=%u phy_state=%u\n",
 		  type, port_num, (unsigned long long)cpu_to_be16(smp->tid), port->ib_port_attr.lid,
@@ -484,14 +484,18 @@ void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_nu
 
 static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
+	unsigned long flags;
 	int port_index;
-	struct ib_port_info *port_info = (struct ib_port_info *)&smp->data;
-	u32 port_num = be32_to_cpu(smp->attr_mod);
+	struct ib_port_info *port_info;
+	u32 port_num;
 	struct pib_port *port;
 	struct ib_event event;
 	u16 old_lid, new_lid;
 	u16 old_sm_lid, new_sm_lid;
 	enum ib_port_state old_state;
+
+	port_info = (struct ib_port_info *)&smp->data;
+	port_num = be32_to_cpu(smp->attr_mod);
 
 	if (port_num == 0)
 		port_num = in_port_num;
@@ -504,6 +508,8 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	port_index = port_num - 1;
 
 	port = &dev->ports[port_index];
+
+ 	spin_lock_irqsave(&dev->lock, flags);
 
 	old_lid    = port->ib_port_attr.lid;
 	new_lid    = be16_to_cpu(port_info->lid);
@@ -524,6 +530,16 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	old_state = port->ib_port_attr.state;
 	
 	pib_subn_set_portinfo(smp, port, port_num, PIB_PORT_CA);
+
+	if (port->ib_port_attr.phys_state != PIB_PHYS_PORT_LINK_UP)
+		port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
+
+	if (port->ib_port_attr.state < IB_PORT_INIT)
+		port->ib_port_attr.state = IB_PORT_INIT;
+
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	memset(&event, 0, sizeof(event));
 
 	event.device           = &dev->ib_dev;
 	event.element.port_num = port_num;
@@ -547,12 +563,6 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 		event.event = IB_EVENT_LID_CHANGE;
 		ib_dispatch_event(&event);
 	}
-
-	if (port->ib_port_attr.phys_state != PIB_PHYS_PORT_LINK_UP)
-		port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
-
-	if (port->ib_port_attr.state < IB_PORT_INIT)
-		port->ib_port_attr.state = IB_PORT_INIT;
 
 #if 0
 	pr_debug("pib: ib_dev(set_portinfo) in_port_num=%u, port_num=%u, lid=%u, state=%u, phys_state=%u\n",
@@ -701,13 +711,15 @@ void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_nu
 static int subn_get_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	int i;
+	unsigned long flags;
 	u32 attr_mod, block_index, sw_port_index;
-	__be16 *pkey_table = (__be16 *)&smp->data[0];
+	__be16 *pkey_table;
 
 	memset(smp->data, 0, sizeof(smp->data));
 
-	attr_mod      = be32_to_cpu(smp->attr_mod);
+	pkey_table    = (__be16 *)&smp->data[0];
 
+	attr_mod      = be32_to_cpu(smp->attr_mod);
 	block_index   = attr_mod         & 0xFFFF;
 	sw_port_index = (attr_mod >> 16) & 0xFFFF;
 
@@ -717,8 +729,10 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 		goto bail;
 	}
 
+ 	spin_lock_irqsave(&dev->lock, flags);
 	for (i=0; i<PIB_PKEY_PER_BLOCK; i++)
 		pkey_table[i] = cpu_to_be16(dev->ports[in_port_num - 1].pkey_table[i]);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 bail:
 	return reply(smp);
@@ -728,6 +742,7 @@ bail:
 static int subn_set_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num)
 {
 	int i;
+	unsigned long flags;
 	int changed = 0;
 	u32 attr_mod, block_index, sw_port_index;
 	__be16 *pkey_table = (__be16 *)&smp->data[0];
@@ -743,6 +758,7 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 		goto bail;
 	}
 
+ 	spin_lock_irqsave(&dev->lock, flags);
 	for (i=0; i<PIB_PKEY_PER_BLOCK; i++) {
 		u16 key  = be16_to_cpu(pkey_table[i]);
 		u16 okey = dev->ports[in_port_num - 1].pkey_table[i];
@@ -758,6 +774,7 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 
 		dev->ports[in_port_num - 1].pkey_table[i] = key;
 	}
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	if (changed) {
 		struct ib_event event;

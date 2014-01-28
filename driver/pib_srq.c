@@ -31,6 +31,7 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	int i;
 	struct pib_dev *dev;
 	struct pib_srq *srq;
+	unsigned long flags;
 	u32 srq_num;
 
 	if (!ibpd || !init_attr)
@@ -45,9 +46,14 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	if (!srq)
 		return ERR_PTR(-ENOMEM);
 
+	spin_lock_irqsave(&dev->lock, flags);
 	srq_num = pib_alloc_obj_num(dev, PIB_BITMAP_SRQ_START, PIB_MAX_SRQ, &dev->last_srq_num);
-	if (srq_num == (u32)-1)
+	if (srq_num == (u32)-1) {
+		spin_unlock_irqrestore(&dev->lock, flags);
 		goto err_alloc_srq_num;
+	}
+	dev->nr_srq++;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	srq->srq_num	= srq_num;
 	srq->state	= PIB_STATE_OK;
@@ -80,7 +86,10 @@ err_alloc_wqe:
 		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_srq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_SRQ_START, srq_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 err_alloc_srq_num:
 	kmem_cache_free(pib_srq_cachep, srq);
@@ -114,8 +123,11 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 	srq->nr_recv_wqe = 0;
 	spin_unlock_irqrestore(&srq->lock, flags);
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_srq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_SRQ_START, srq->srq_num);
-	
+	spin_unlock_irqrestore(&dev->lock, flags);
+
 	kmem_cache_free(pib_srq_cachep, srq);
 
 	return 0;

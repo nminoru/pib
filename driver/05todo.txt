@@ -1,16 +1,19 @@
+- LOCAL_DMA_LKEY 対応を
+
+- Debugfs 対応
+
 - ポートが ACTIVE でない場合、MAD 以外のパケットは破棄する処理。
 
-- ロックの正常化
+- GRH を使用時は -EPERM を返す。
 
-- IBV_SEND_SOLICITED 対応
+- Performance Management MAD 対応
 
-- RNR タイマーを見直せ
+- IBV_SEND_SOLICITED 対応。BTH の solicited event も含めて。 
 
-- recevie_acknowledge を見直す。
+- RNR タイマーの見直し。
+
+- recevie_acknowledge の見直し。
   - 勝手に破棄するのはダメ
-
-- マルチキャスト対応
-  - ibv_attach_mcast、ibv_detach_mcast
 
 - 非同期エラー・イベント
   - QP event 
@@ -26,26 +29,13 @@
   - CA event
     - IBV_EVENT_DEVICE_FATAL
 
-- process_mad 
-  - IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE
-  - IB_MGMT_CLASS_SUBN_LID_ROUTED
-  - IB_MGMT_CLASS_PERF_MGMT
+- UC/RC
 
-- Context、CQ、SRQ にも 24 ビットの ID を振る。
-  - 表示・制御用
-
-- UD/UC/RD/RC/XRC
-
-- ソケットのバッファサイズを変更可能に。
+- ソケットのバッファサイズを変更可能に
 
 - RESET 時に送信した場合の挙動
 
 - RESET 時に受信した場合の挙動
-
-- CQ overflow
-  - CQ がエラーすると CQE は失われる。
-
-- IBV_WC_RESP_TIMEOUT_ERR
 
 - pib_util_get_srq のロック条件を見直せ
 
@@ -57,15 +47,12 @@
 
 - MSN
 
-- BTH の solicited event 
-  - only or last packet
-
 - WC をインサートした時の失敗のチェック
 
-- LMC 
+- LMC
 
 - req_notify_cq のコールバックは ib_req_notify_cq() の関数ヘッダーに合わせろ
 
 - Protection domain のチェック(QP、SRQ、MR、AH)
-  - QP と SRQ のチェック
-  - UD-QP と AH のチェック
+  - QP と SRQ のチェック ← ibv_post_send 内でやっている
+  - UD-QP と AH のチェック ← ibv_post_send 内でやっている

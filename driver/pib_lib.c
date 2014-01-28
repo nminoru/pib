@@ -603,8 +603,8 @@ void pib_print_header(const char *direct, void *buffer)
 	pr_info("%s: lid            0x%04x -> 0x%04x\n", direct,
 		be16_to_cpu(lrh->slid), be16_to_cpu(lrh->dlid));
 	pr_info("%s: pktlen         %u - %u\n",direct,
-		(be16_to_cpu(lrh->pktlen) & 0x7FF) * 4,
-		(bth->se_m_padcnt_tver >> 4) & 0x3);
+		pib_packet_lrh_get_pktlen(lrh) * 4,
+		pib_packet_bth_get_padcnt(bth));
 
 	if (grh) {
 		pr_info("%s: SGID           %016llx:%016llx\n", direct,

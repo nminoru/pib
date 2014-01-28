@@ -1,6 +1,6 @@
 ・ロックの優先順位
 
-  dev(main) → qp → dev(schedule) → srq → pd → cq
+  dev(lock) → qp → dev(schedule) → srq → pd → cq
 
   mad.c の中で ib_post_send の外側で spin_lock_irqsave している。
   セマフォではなく spin_lock を使う必要がある。

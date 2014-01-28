@@ -16,6 +16,7 @@ pib_alloc_pd(struct ib_device *ibdev,
 {
 	struct pib_dev *dev;
 	struct pib_pd *pd;
+	unsigned long flags;
 	u32 pd_num;
 
 	if (!ibdev)
@@ -27,11 +28,18 @@ pib_alloc_pd(struct ib_device *ibdev,
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
+	getnstimeofday(&pd->creation_time);
+
 	spin_lock_init(&pd->lock);
 
+	spin_lock_irqsave(&dev->lock, flags);
 	pd_num = pib_alloc_obj_num(dev, PIB_BITMAP_PD_START, PIB_MAX_PD, &dev->last_pd_num);
-	if (pd_num == (u32)-1)
+	if (pd_num == (u32)-1) {
+		spin_unlock_irqrestore(&dev->lock, flags);
 		goto err_alloc_pd_num;
+	}
+	dev->nr_pd++;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	pd->pd_num = pd_num;
 
@@ -42,7 +50,10 @@ pib_alloc_pd(struct ib_device *ibdev,
 	return &pd->ib_pd;
 
 err_mr_table:
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_pd--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_PD_START, pd_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 err_alloc_pd_num:
 	kfree(pd);
@@ -70,7 +81,10 @@ int pib_dealloc_pd(struct ib_pd *ibpd)
 
 	vfree(pd->mr_table);
 
+	spin_lock_irqsave(&dev->lock, flags);
+	dev->nr_pd--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_PD_START, pd->pd_num);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kfree(pd);
 

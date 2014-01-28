@@ -73,9 +73,17 @@ static struct sockaddr **lid_table;
 static int pib_query_device(struct ib_device *ibdev,
 			    struct ib_device_attr *props)
 {
-	struct pib_dev *dev = to_pdev(ibdev);
+	struct pib_dev *dev;
+	unsigned long flags;
 
+	if (!ibdev)
+		return -EINVAL;
+
+	dev = to_pdev(ibdev);
+	
+	spin_lock_irqsave(&dev->lock, flags);
 	*props = dev->ib_dev_attr;
+	spin_unlock_irqrestore(&dev->lock, flags);
 	
 	return 0;
 }
@@ -84,12 +92,20 @@ static int pib_query_device(struct ib_device *ibdev,
 static int pib_query_port(struct ib_device *ibdev, u8 port_num,
 			  struct ib_port_attr *props)
 {
-	struct pib_dev *dev = to_pdev(ibdev);
+	struct pib_dev *dev ;
+	unsigned long flags;
+
+	if (!ibdev)
+		return -EINVAL;
+
+	dev = to_pdev(ibdev);
 
 	if (port_num < 1 || ibdev->phys_port_cnt < port_num)
 		return -EINVAL;
 
+	spin_lock_irqsave(&dev->lock, flags);
 	*props = dev->ports[port_num - 1].ib_port_attr;
+	spin_unlock_irqrestore(&dev->lock, flags);
 	
 	return 0;
 }
@@ -110,6 +126,7 @@ static int pib_query_gid(struct ib_device *ibdev, u8 port_num, int index,
 			 union ib_gid *gid)
 {
 	struct pib_dev *dev;
+	unsigned long flags;
 
 	if (!ibdev)
 		return -EINVAL;
@@ -125,7 +142,9 @@ static int pib_query_gid(struct ib_device *ibdev, u8 port_num, int index,
 	if (!gid)
 		return -ENOMEM;
 
+	spin_lock_irqsave(&dev->lock, flags);
 	*gid = dev->ports[port_num - 1].gid[index];
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
 }
@@ -149,13 +168,19 @@ void pib_fill_grh(struct pib_dev *dev, u8 port_num, struct ib_grh *dest, const s
 static int pib_query_pkey(struct ib_device *ibdev, u8 port_num, u16 index, u16 *pkey)
 {
 	struct pib_dev *dev;
+	unsigned long flags;
+
+	if (!ibdev)
+		return -EINVAL;
 
 	dev = to_pdev(ibdev);
 
+	spin_lock_irqsave(&dev->lock, flags);
 	if (index < PIB_PKEY_PER_BLOCK)
 		*pkey = be16_to_cpu(dev->ports[port_num - 1].pkey_table[index]);
 	else
 		*pkey = 0;
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
 }
@@ -169,13 +194,15 @@ static int pib_modify_device(struct ib_device *ibdev, int mask,
 
 	pib_debug("pib: pib_modify_device: mask=%x\n", mask);
 
+	if (!ibdev)
+		return -EINVAL;
+
 	if (mask & ~(IB_DEVICE_MODIFY_SYS_IMAGE_GUID|IB_DEVICE_MODIFY_NODE_DESC))
 		return -EOPNOTSUPP;
 
 	dev = to_pdev(ibdev);
 
 	spin_lock_irqsave(&dev->lock, flags);
-
 	if (mask & IB_DEVICE_MODIFY_NODE_DESC)
 		/* @todo ポート毎の処理 (c.f. qib_node_desc_chg) */
 		memcpy(dev->ib_dev.node_desc, props->node_desc, sizeof(props->node_desc));
@@ -183,7 +210,6 @@ static int pib_modify_device(struct ib_device *ibdev, int mask,
 	if (mask & IB_DEVICE_MODIFY_SYS_IMAGE_GUID)
 		/* @todo ポート毎の処理 (c.f. qib_sys_guid_chg) */
 		dev->ib_dev_attr.sys_image_guid = props->sys_image_guid;
-
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
@@ -199,13 +225,15 @@ static int pib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 	pib_debug("pib: pib_modify_port: port=%u, mask=%x,%x,%x\n",
 		  port_num, mask, props->set_port_cap_mask, props->clr_port_cap_mask);
 
+	if (!ibdev)
+		return -EINVAL;
+
 	if (mask & ~(IB_PORT_SHUTDOWN|IB_PORT_INIT_TYPE|IB_PORT_RESET_QKEY_CNTR))
 		return -EOPNOTSUPP;
 
 	dev = to_pdev(ibdev);
 
 	spin_lock_irqsave(&dev->lock, flags);
-
 	if (mask & IB_PORT_INIT_TYPE)
 		pr_err("pib: pib_modify_port: init type\n");
 
@@ -219,7 +247,6 @@ static int pib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 	dev->ports[port_num - 1].ib_port_attr.port_cap_flags &= ~props->clr_port_cap_mask;
 
 	/* @todo port_cap_flags 変化を伝達 */
-
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
@@ -580,8 +607,6 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 
 	port = &dev->ports[port_num - 1];
 
-	spin_lock_init(&port->lock);
-
 	port->port_num	   = port_num;
 	port->ib_port_attr = ib_port_attr;
 
@@ -614,11 +639,12 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 
 u32 pib_alloc_obj_num(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p)
 {
-	u32 n = *last_num_p;
+	u32 n;
 	unsigned long *bitmap = dev->obj_num_bitmap + start / BITS_PER_LONG;
-	unsigned long flags;
+	
+	BUG_ON(!spin_is_locked(&dev->lock));
 
-	spin_lock_irqsave(&dev->lock, flags);
+	n = *last_num_p + 1;
 
 	n = find_next_zero_bit(bitmap, size, n);
 	if (n != size)
@@ -628,14 +654,12 @@ u32 pib_alloc_obj_num(struct pib_dev *dev, u32 start, u32 size, u32 *last_num_p)
 	if (n != size)
 		goto found;
 
-	spin_unlock_irqrestore(&dev->lock, flags);
-
 	return (u32)-1;
 
 found:
 	bitmap_set(bitmap, n, 1);
 
-	spin_unlock_irqrestore(&dev->lock, flags);
+	*last_num_p = n;
 
 	return n;
 }
@@ -644,11 +668,10 @@ found:
 void pib_dealloc_obj_num(struct pib_dev *dev, u32 start, u32 index)
 {
 	unsigned long *bitmap = dev->obj_num_bitmap + start / BITS_PER_LONG;
-	unsigned long flags;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	BUG_ON(!spin_is_locked(&dev->lock));
+
 	bitmap_clear(bitmap, index, 1);
-	spin_unlock_irqrestore(&dev->lock, flags);
 }
 
 
