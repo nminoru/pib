@@ -479,6 +479,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	INIT_LIST_HEAD(&dev->srq_head);
 	INIT_LIST_HEAD(&dev->ah_head);
 	INIT_LIST_HEAD(&dev->cq_head);
+	INIT_LIST_HEAD(&dev->qp_head);
 
 	dev->last_qp_num		= pib_random() & PIB_QPN_MASK;
 	dev->qp_table			= RB_ROOT;

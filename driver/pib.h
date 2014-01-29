@@ -240,7 +240,9 @@ enum pib_debugfs_type {
 	PIB_DEBUGFS_PD,
 	PIB_DEBUGFS_MR,
 	PIB_DEBUGFS_SRQ,
+	PIB_DEBUGFS_AH,
 	PIB_DEBUGFS_CQ,
+	PIB_DEBUGFS_QP,
 	PIB_DEBUGFS_LAST
 }; 
 
@@ -362,6 +364,7 @@ struct pib_dev {
 
 	u32                     last_qp_num;
 	int                     nr_qp; /* execept QP0, QP1 */
+	struct list_head        qp_head;
 	struct rb_root          qp_table;
 
 	struct {
@@ -587,7 +590,7 @@ struct pib_qp {
 
 	enum ib_qp_type         qp_type;
 	enum ib_qp_state        state;
-
+	struct list_head        list; /* link to dev->qp_head */
 	struct timespec		creation_time;
 
 	struct pib_cq	       *send_cq;

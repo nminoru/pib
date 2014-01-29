@@ -24,7 +24,9 @@ static const char *debug_file_symbols[] = {
 	[PIB_DEBUGFS_PD]       = "pd",
 	[PIB_DEBUGFS_MR]       = "mr",
 	[PIB_DEBUGFS_SRQ]      = "srq",
+	[PIB_DEBUGFS_AH]       = "ah",
 	[PIB_DEBUGFS_CQ]       = "cq",
+	[PIB_DEBUGFS_QP]       = "qp",
 };
 
 
@@ -49,26 +51,54 @@ struct pib_pd_record {
 
 struct pib_mr_record {
 	struct pib_base_record	base;
-	u32 pd_num;
-	u64 start;
-	u64 length;
-	u32 lkey;
-	u32 rkey;
-	int access_flags;
+	u32	pd_num;
+	u8	access_flags;
+	u8	is_dma;
+	u64	start;
+	u64	length;
+	u32	lkey;
+	u32	rkey;
 };
 
 
 struct pib_srq_record {
 	struct pib_base_record	base;
-	u32 pd_num;
-	int state;
-	int max_wqe;
-	int nr_wqe;
+	u32	pd_num;
+	int	state;
+	int	max_wqe;
+	int	nr_wqe;
+};
+
+
+struct pib_ah_record {
+	struct pib_base_record	base;
+	u32	pd_num;
+	u16	dlid;
+	u8	ah_flags;
+	u8	port_num;
 };
 
 
 struct pib_cq_record {
 	struct pib_base_record	base;
+	int	state;
+	int	max_cqe;
+	int	nr_cqe;
+	u8	flag;	
+	u8	notified;
+};
+
+
+struct pib_qp_record {
+	struct pib_base_record	base;
+	u32	pd_num;
+	u32	srq_num;
+	int	max_swqe;
+	int	nr_swqe;
+	int	max_rwqe;
+	int	nr_rwqe;
+	u8	qp_type;
+	u8	state;
 };
 
 
@@ -89,19 +119,31 @@ static void *pib_debugfs_seq_start(struct seq_file *file, loff_t *pos)
 	if (*pos != 0)
 		goto next;
 
-	seq_puts(file, "OID  CREATIONTIME                               ");
+	seq_puts(file, "OID    CREATIONTIME                               ");
 
 	switch (control->type) {
 	case PIB_DEBUGFS_UCONTEXT:
-		seq_puts(file, "\n");
+		seq_puts(file, "PID   TIG   COMM\n");
 		break;
 
 	case PIB_DEBUGFS_MR:
-		seq_puts(file, "PD   START            LENGTH           LKEY     RKEY     AC\n");
+		seq_puts(file, "PD   START            LENGTH           LKEY     RKEY     DMA AC\n");
 		break;
 
 	case PIB_DEBUGFS_SRQ:
 		seq_puts(file, "PD   S   MAX   CUR\n");
+		break;
+
+	case PIB_DEBUGFS_AH:
+		seq_puts(file, "PD   DLID AC PORT\n");
+		break;
+
+	case PIB_DEBUGFS_CQ:
+		seq_puts(file, "S  MAX    CUR   TYPE NOTIFY\n");
+		break;
+
+	case PIB_DEBUGFS_QP:
+		seq_puts(file, "PD   QT  STATE SRQ  MAX-S CUR-S MAX-R CUR-R\n");
 		break;
 
 	default:
@@ -155,7 +197,7 @@ static int pib_debugfs_seq_show(struct seq_file *file, void *iter)
 	time = record->creation_time;
 	time_to_tm(time.tv_sec, 0, &tm);
 
-	seq_printf(file, "%04x %10llu.%09lu (%04ld-%02d-%02d %02d:%02d:%02d)",
+	seq_printf(file, "%06x %10llu.%09lu (%04ld-%02d-%02d %02d:%02d:%02d)",
 		   record->obj_num,
 		   (unsigned long long)time.tv_sec, time.tv_nsec,
 		   tm.tm_year + 1900, tm.tm_mon  + 1, tm.tm_mday,
@@ -175,9 +217,11 @@ static int pib_debugfs_seq_show(struct seq_file *file, void *iter)
 
 	case PIB_DEBUGFS_MR: {
 		struct pib_mr_record *mr_rec = (struct pib_mr_record *)record;
-		seq_printf(file, " %04x %016llx %016llx %08x %08x %x",
+		seq_printf(file, " %04x %016llx %016llx %08x %08x %s %x",
 			   mr_rec->pd_num, mr_rec->start, mr_rec->length,
-			   mr_rec->lkey, mr_rec->rkey, mr_rec->access_flags);
+			   mr_rec->lkey, mr_rec->rkey,
+			   (mr_rec->is_dma ? "DMA" : "USR"),
+			   mr_rec->access_flags);
 		break;
 	}
 
@@ -190,8 +234,40 @@ static int pib_debugfs_seq_show(struct seq_file *file, void *iter)
 		break;
 	}
 
-	case PIB_DEBUGFS_CQ:
+	case PIB_DEBUGFS_AH: {
+		struct pib_ah_record *ah_rec = (struct pib_ah_record *)record;
+		seq_printf(file, " %04x %04x %2u %x",
+			   ah_rec->pd_num,
+			   ah_rec->dlid,
+			   ah_rec->ah_flags,
+			   ah_rec->port_num);
 		break;
+	}
+
+	case PIB_DEBUGFS_CQ: {
+		const char *channel_type;
+		struct pib_cq_record *cq_rec = (struct pib_cq_record *)record;
+		channel_type = (cq_rec->flag == 0) ? "NONE" :
+			((cq_rec->flag == IB_CQ_SOLICITED) ? "SOLI" : "COMP");
+		
+		seq_printf(file, " %s %5u %5u %s %s",
+			   ((cq_rec->state == PIB_STATE_OK) ? "OK " : "ERR"),
+			   cq_rec->max_cqe, cq_rec->nr_cqe,
+			   channel_type,
+			   (cq_rec->notified ? "NOTIFY" : "WAIT"));
+		break;
+	}
+
+	case PIB_DEBUGFS_QP: {
+		struct pib_qp_record *qp_rec = (struct pib_qp_record *)record;
+		seq_printf(file, " %04x %-3s %-5s %04x %5u %5u %5u %5u",
+			   qp_rec->pd_num,
+			   pib_get_qp_type(qp_rec->qp_type), pib_get_qp_state(qp_rec->state),
+			   qp_rec->srq_num,
+			   qp_rec->max_swqe, qp_rec->nr_swqe,
+			   qp_rec->max_rwqe, qp_rec->nr_rwqe);
+		break;
+	}
 
 	default:
 		BUG();
@@ -295,11 +371,12 @@ static int pib_debugfs_open(struct inode *inode, struct file *file)
 			records[i].base.obj_num       = mr->mr_num;
 			records[i].base.creation_time = mr->creation_time;
 			records[i].pd_num	      = to_ppd(mr->ib_mr.pd)->pd_num,
+			records[i].is_dma             = mr->is_dma;
+			records[i].access_flags       = mr->access_flags;
 			records[i].start	      = mr->start;
 			records[i].length             = mr->length;
 			records[i].lkey	 	      = mr->ib_mr.lkey;
 			records[i].rkey     	      = mr->ib_mr.rkey;
-			records[i].access_flags       = mr->access_flags;
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -338,6 +415,35 @@ static int pib_debugfs_open(struct inode *inode, struct file *file)
 		break;
 	}
 
+	case PIB_DEBUGFS_AH: {
+		struct pib_ah *ah;
+		struct pib_ah_record *records;
+
+		control = vzalloc(sizeof(struct pib_record_control) +
+				  dev->nr_ucontext * sizeof(struct pib_ah_record));
+		if (!control)
+			return -ENOMEM;
+
+		records  = (struct pib_ah_record *)control->records;
+
+		i=0;
+		spin_lock_irqsave(&dev->lock, flags);
+		list_for_each_entry(ah, &dev->ah_head, list) {
+			records[i].base.obj_num       = ah->ah_num;
+			records[i].base.creation_time = ah->creation_time;
+			records[i].pd_num	      = to_ppd(ah->ib_ah.pd)->pd_num;
+			records[i].dlid		      = ah->ib_ah_attr.dlid;
+			records[i].ah_flags	      = ah->ib_ah_attr.ah_flags;
+			records[i].port_num	      = ah->ib_ah_attr.port_num;
+			i++;
+		}
+		spin_unlock_irqrestore(&dev->lock, flags);
+		
+		control->count = i;
+		control->record_size = sizeof(struct pib_ah_record);
+		break;
+	}
+
 	case PIB_DEBUGFS_CQ: {
 		struct pib_cq *cq;
 		struct pib_cq_record *records;
@@ -354,12 +460,50 @@ static int pib_debugfs_open(struct inode *inode, struct file *file)
 		list_for_each_entry(cq, &dev->cq_head, list) {
 			records[i].base.obj_num       = cq->cq_num;
 			records[i].base.creation_time = cq->creation_time;
+			records[i].state              = cq->state;
+			records[i].max_cqe            = cq->ib_cq.cqe;
+			records[i].nr_cqe             = cq->nr_cqe;
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
 		
 		control->count = i;
 		control->record_size = sizeof(struct pib_cq_record);
+		break;
+	}
+
+	case PIB_DEBUGFS_QP: {
+		struct pib_qp *qp;
+		struct pib_qp_record *records;
+
+		control = vzalloc(sizeof(struct pib_record_control) +
+				  dev->nr_ucontext * sizeof(struct pib_qp_record));
+		if (!control)
+			return -ENOMEM;
+
+		records  = (struct pib_qp_record *)control->records;
+
+		i=0;
+		spin_lock_irqsave(&dev->lock, flags);
+		list_for_each_entry(qp, &dev->qp_head, list) {
+			records[i].base.obj_num       = qp->ib_qp.qp_num;
+			records[i].base.creation_time = qp->creation_time;
+			records[i].pd_num	      = to_ppd(qp->ib_qp.pd)->pd_num;
+			if (qp->ib_qp_init_attr.srq)
+				records[i].srq_num    = to_psrq(qp->ib_qp_init_attr.srq)->srq_num;
+			records[i].max_swqe	      = qp->ib_qp_init_attr.cap.max_send_wr;
+			records[i].nr_swqe	      = qp->requester.nr_submitted_swqe +
+				qp->requester.nr_sending_swqe + qp->requester.nr_waiting_swqe;
+			records[i].max_rwqe	      = qp->ib_qp_init_attr.cap.max_recv_wr;
+			records[i].nr_rwqe	      = qp->responder.nr_recv_wqe;
+			records[i].qp_type	      = qp->qp_type;
+			records[i].state	      = qp->state;
+			i++;
+		}
+		spin_unlock_irqrestore(&dev->lock, flags);
+		
+		control->count = i;
+		control->record_size = sizeof(struct pib_qp_record);
 		break;
 	}
 

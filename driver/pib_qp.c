@@ -251,6 +251,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 	if (!qp)
 		return ERR_PTR(-ENOMEM);
 
+	INIT_LIST_HEAD(&qp->list);
 	getnstimeofday(&qp->creation_time);
 
 	qp->ib_qp_init_attr = *init_attr;
@@ -311,6 +312,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 			goto err_alloc_qp_num;
 		}
 		dev->nr_qp++;
+		list_add_tail(&qp->list, &dev->qp_head);
 		pib_util_find_qp(dev, qp_num);
 		qp->ib_qp.qp_num = qp_num;
 		dev->last_qp_num = qp_num;
@@ -379,6 +381,7 @@ err_alloc_inlin_data_buffer:
 
 	if ((qp_num != PIB_QP0) && (qp_num != PIB_QP1)) {
 		spin_lock_irqsave(&dev->lock, flags);
+		list_del(&qp->list);
 		dev->nr_qp--;
 		pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -494,6 +497,7 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 		rb_erase(&qp->rb_node, &dev->qp_table);
 
 	if ((qp_num != PIB_QP0) && (qp_num != PIB_QP1)) {
+		list_del(&qp->list);
 		dev->nr_qp--;
 		pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
 	}
