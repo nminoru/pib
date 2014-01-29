@@ -1,25 +1,57 @@
 pib - Pseudo InfiniBand HCA driver
 ==================================
 
-pib is a software-based InfiniBand HCA driver. It provides uVerbs functions without real IB HCA & fabric.
+pib is a software-based InfiniBand HCA driver.
+It provides InfiniBand functions without real IB HCA & fabric.
 
-pib has the two components.
+pib contains the two components.
 
-- pib.ko  Linux kernel module
-- libpib  Userspace plug-in module for libibverbs
-
+- pib.ko - Linux kernel module
+- libpib - Userspace plug-in module for libibverbs
 
 Features
 ========
 
-* Almost uVerbs functions
-* Subnet Manager support (opensm)
-* IPoIB
+In single-host-mode, pib enables to create up to 4 InfiniBand HCA (The default is 2).
+These IB devices are pib_0, pib_1, pib_2 and pib_3.
+Each HCA contains up to 32 ports (The default is 2).
+
+In addition, pib creates single internal InfiniBand switch too.
+All ports of pib's HCA are connected to this switch.
+
+The current version of pib enables to drive the following interface:
+
+* kernel-level Verbs (in-linux kernel)
+* kernel-level MAD (in-linux kernel)
+* uVerbs (libibverbs)
+* uMAD (libibmad & libibumad)
+* Subnet Manager (opensm)
+* IPoIB (in-linux kernel)
+* RDMA Connection Manager (librdmacm)
+* IB diagnostic utilities (infiniband-diags)
+
+Debugging support features:
+
+* Inspect IB objects (ucontext, protection domain, MR, SRQ, CQ, AH, QP)
+* Select some implementation dependent behaviours and enforce error checking.
+* Show a warning of pithalls that programs should avoid. 
+
+Other features:
+
+* The maximum size of inline data is 2048 bytes.
 
 Limitation
 ==========
 
-The current version is EXPERIMETNAL.
+The current version is EXPERIMETNAL and not supported multi host mode.
+
+The follwing features are not supported:
+
+- Unreliable Datagram (UD)
+- Fast Memory Region (FMR)
+- Memory Windows (MR)
+- SEND Invalidate operation
+- Virtual Lane (VL)
 
 Supported OS
 ============
@@ -32,11 +64,10 @@ pib supports the following Linux:
 pib conflicts with Mellanox OFED.
 Mustn't install an environment to deploy Mellanox OFED.
 
-
 Preparation
 ===========
 
-Rquired packages:
+The following software packeages are required for building pib:
 
 * rdma
 * libibverbs
@@ -44,16 +75,14 @@ Rquired packages:
 * opensm
 * opensm-libs
 
-Recommended packages:
+The following packages are recommended:
 
-* libibverbs-devel
+* libibverbs-devel (for developing Verbs API programs)
 * libibverbs-utils
-
 * librdmacm
 * librdmacm-utils
-* librdmacm-devel
-
-* perftest
+* librdmacm-devel (for developing RDMA API programs)
+* infiniband-diags (IB diagnostic tools)
 
 Building
 ========
@@ -72,32 +101,39 @@ Source and binary packages for RHEL6 or CentOS6 are avaiable on this link http:/
 To build source packages from source code
 
     $ cd pib
-    $ cp -r libpib libpib-0.2.0
-    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.2.0.tar.gz libpib-0.2.0/
+    $ cp -r libpib libpib-0.2.6
+    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.2.0.tar.gz libpib-0.2.6/
     $ cp libpib/libpib.spec $(HOME)/rpmbuild/SPECS/
     $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/libpib.spec
+
+Loading
+=======
+
+First, load some modules which pib.ko is depenent on.
+
+    # /etc/rc.d/init.d/rdma start
+
+Next, load pib.ko.
+
+    # insmod ./pib.ko
+
+Finally, run opensm
+
+    # /etc/rc.d/init.d/opensm start
+
+pib.ko options
+--------------
+
+* debug_level
+* num_hca
+* phys_port_cnt
+* behavior
+* manner_warn
+* manner_err
 
 Running
 =======
 
-First load some modules which pib.ko is depenent on.
-
-    # modprobe ib_core
-    # modprobe ib_uverbs
-    # modprobe ib_addr
-    # modprobe ib_umad
-    # modprobe ib_cm
-    # modprobe ib_mad
-
-Next load pib.ko.
-
-    # insmod ./pib.ko
-
-run opensm
-
-    # /etc/rc.d/init.d/opensm start
-
-On success, you can use uVerbs.
 For instance, ibv_devinfo (includes libibverbs-utils package) show such an result.
 
     $ ibv_devinfo
@@ -111,28 +147,49 @@ For instance, ibv_devinfo (includes libibverbs-utils package) show such an resul
             hw_ver:                         0x0
             phys_port_cnt:                  2
 
+Performance counter
+-------------------
+
+    # perfquery
+
+IB Objection inspection
+-----------------------
+
+    # mount -t debugfs nodev /sys/kernel/debug
 
 Future work
 ===========
 
-My goal is to work the following software components.
+Multi host support
+------------------
+For multi host mode, I'm planning to develop an InfiniBand fabric simulater like ibsim.
 
-* RDMA Communictor Manager
-* MPI
-* iSER
-
-Therefore I will implement the following IB functions.
+IB functions
+------------
 
 * Unreliable Connection(UC)
 * Extended Reliable Connected (XRC)
 * Memory Window
 * Alternate path
 
-Other
+Debugging support
+-----------------
 
-* GRH support
-* Debugfs support (object inspection for QP, SRQ, CQ, et al)
+* Execution trace (API invocation, packet sending/receiving, async event)
 * Error injection (QP/CQ/SRQ Error)
+* Packet filtering
+
+Software components
+-------------------
+
+* MPI
+* User Direct Access Programming Library (uDAPL)
+* iSCSI Extensions for RDMA (iSER)
+* SCSI RDMA Protocol (SRP)
+
+Other
+-----
+
 * Other Linux distributions support
 * Kernel update package
 * IPv6 support
