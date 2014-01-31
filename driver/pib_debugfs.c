@@ -1,5 +1,5 @@
 /*
- * pib_debugfs.c - Debugfs
+ * pib_debugfs.c - Object inspection & Error injection
  *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
@@ -18,6 +18,11 @@ static struct dentry *pib_debugfs_root;
 
 static int register_dev(struct dentry *root, struct pib_dev *dev);
 static void unregister_dev(struct pib_dev *dev);
+
+
+/******************************************************************************/
+/* Objection Inspection                                                       */
+/******************************************************************************/
 
 static const char *debug_file_symbols[] = {
 	[PIB_DEBUGFS_UCONTEXT] = "ucontext",
@@ -112,7 +117,7 @@ struct pib_record_control {
 };
 
 
-static void *pib_debugfs_seq_start(struct seq_file *file, loff_t *pos)
+static void *inspection_seq_start(struct seq_file *file, loff_t *pos)
 {
 	struct pib_record_control *control = file->private;
 
@@ -161,7 +166,7 @@ next:
 }
 
 
-static void *pib_debugfs_seq_next(struct seq_file *file, void *iter, loff_t *pos)
+static void *inspection_seq_next(struct seq_file *file, void *iter, loff_t *pos)
 {
 	struct pib_record_control *control = file->private;
 
@@ -176,12 +181,12 @@ static void *pib_debugfs_seq_next(struct seq_file *file, void *iter, loff_t *pos
 }
 
 
-static void pib_debugfs_seq_stop(struct seq_file *file, void *iter_ptr)
+static void inspection_seq_stop(struct seq_file *file, void *iter_ptr)
 {
 }
 
 
-static int pib_debugfs_seq_show(struct seq_file *file, void *iter)
+static int inspection_seq_show(struct seq_file *file, void *iter)
 {
 	struct pib_record_control *control = file->private;
 	struct pib_base_record *record;
@@ -279,15 +284,15 @@ static int pib_debugfs_seq_show(struct seq_file *file, void *iter)
 }
 
 
-static const struct seq_operations pib_debugfs_seq_ops = {
-	.start = pib_debugfs_seq_start,
-	.next  = pib_debugfs_seq_next,
-	.stop  = pib_debugfs_seq_stop,
-	.show  = pib_debugfs_seq_show,
+static const struct seq_operations inspection_seq_ops = {
+	.start = inspection_seq_start,
+	.next  = inspection_seq_next,
+	.stop  = inspection_seq_stop,
+	.show  = inspection_seq_show,
 };
 
 
-static int pib_debugfs_open(struct inode *inode, struct file *file)
+static int inspection_open(struct inode *inode, struct file *file)
 {
 	int i, ret;
 	struct pib_dev *dev;
@@ -514,7 +519,7 @@ static int pib_debugfs_open(struct inode *inode, struct file *file)
 	control->dev   = dev;
 	control->type  = entry->type;
 
-	ret = seq_open(file, &pib_debugfs_seq_ops);
+	ret = seq_open(file, &inspection_seq_ops);
 	if (ret)
 		goto err_seq_open;
 
@@ -530,7 +535,7 @@ err_seq_open:
 }
 
 
-static int pib_debugfs_release(struct inode *inode, struct file *file)
+static int inspection_release(struct inode *inode, struct file *file)
 {
 	struct seq_file *seq;
 
@@ -541,17 +546,163 @@ static int pib_debugfs_release(struct inode *inode, struct file *file)
 }
 
 
-static const struct file_operations pib_debugfs_fops = {
+static const struct file_operations inspection_fops = {
 	.owner   = THIS_MODULE,
-	.open    = pib_debugfs_open,
+	.open    = inspection_open,
 	.read    = seq_read,
 	.llseek  = seq_lseek,
-	.release = pib_debugfs_release,
+	.release = inspection_release,
 };
 
 
 /******************************************************************************/
-/*                                                                            */
+/* Error Injection                                                            */
+/******************************************************************************/
+
+static int inject_err_open(struct inode *inode, struct file *file)
+{
+	if (!try_module_get(THIS_MODULE))
+		return -EBUSY;
+
+	nonseekable_open(inode, file);
+
+	file->private_data = inode->i_private;
+
+	return 0;
+}
+
+
+static ssize_t
+inject_err_write(struct file *file, const char __user *buf,
+		 size_t len, loff_t *ppos)
+{
+	int ret = 0;
+	u32 oid = 0;
+	enum ib_event_type type;
+	struct pib_dev *dev;
+	unsigned long flags;
+	
+	dev = file->private_data;
+
+	if (*ppos != 0)
+		return 0;
+
+	if (strncmp(buf, "CQ", 2) == 0) {
+		type = IB_EVENT_CQ_ERR;
+		buf += 2;
+	} else if (strncmp(buf, "QP", 2) == 0) {
+		type = IB_EVENT_QP_FATAL;
+		buf += 2;
+	} else if (strncmp(buf, "SRQ", 3) == 0) {
+		type = IB_EVENT_SRQ_ERR;
+		buf += 3;
+	} else
+		return -EINVAL;
+
+	if (sscanf(buf, "%x", &oid) != 1)
+		return -EINVAL;
+
+	spin_lock_irqsave(&dev->lock, flags);
+	if (list_empty(&dev->debugfs.inject_err_work.entry)) {
+		dev->debugfs.inject_err_type = type;
+		dev->debugfs.inject_err_oid  = oid;
+		pib_queue_work(dev, &dev->debugfs.inject_err_work);
+	} else {
+		ret = -EBUSY;
+	}
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	*ppos = len;
+
+	return len;
+}
+
+
+static ssize_t inject_err_read(struct file *file, char __user *buf,
+			       size_t count, loff_t *ppos)
+{
+	if (*ppos != 0)
+		return 0;
+
+	return snprintf(buf, count, "[CQ|QP|SRQ|] OID\n");
+}
+
+
+static int inject_err_release(struct inode *inode, struct file *file)
+{
+	module_put(THIS_MODULE);
+	return 0;
+}
+
+
+static const struct file_operations inject_err_fops = {
+	.owner   = THIS_MODULE,
+	.open    = inject_err_open,
+	.read    = inject_err_read,
+	.write   = inject_err_write,
+	.llseek  = no_llseek,
+	.release = inject_err_release,
+};
+
+
+void pib_inject_err_handler(struct pib_work_struct *work)
+{
+	struct pib_dev *dev = work->data;
+	u32 oid;
+
+	oid = dev->debugfs.inject_err_oid;
+
+	BUG_ON(!spin_is_locked(&dev->lock));
+
+	switch (dev->debugfs.inject_err_type) {
+
+	case IB_EVENT_CQ_ERR: {
+		struct pib_cq *cq;
+		list_for_each_entry(cq, &dev->cq_head, list) {
+			if (cq->cq_num == oid) {
+				/* cq をロックしない */
+				pib_util_insert_async_cq_error(dev, cq);
+				break;
+			}
+		}
+		break;
+	}
+
+	case IB_EVENT_QP_FATAL: {
+		struct pib_qp *qp;
+		list_for_each_entry(qp, &dev->qp_head, list) {
+			if (qp->ib_qp.qp_num == oid) {
+				spin_lock(&qp->lock);
+				qp->state = IB_QPS_ERR;
+				pib_util_flush_qp(qp, 0);
+				pib_util_insert_async_qp_error(qp, IB_EVENT_QP_FATAL);
+				spin_unlock(&qp->lock);
+				break;
+			}
+		}
+		break;
+	}
+
+	case IB_EVENT_SRQ_ERR: {
+		struct pib_srq *srq;
+		list_for_each_entry(srq, &dev->srq_head, list) {
+			if (srq->srq_num == oid) {
+				/* srq をロックしない */
+				pib_util_insert_async_srq_error(dev, srq);
+				break;
+			}
+		}
+		break;
+	}
+
+	default:
+		BUG();
+	}
+}
+
+
+/******************************************************************************/
+/* Driver looad/unload                                                        */
 /******************************************************************************/
 
 int pib_register_debugfs(void)
@@ -608,12 +759,21 @@ static int register_dev(struct dentry *root, struct pib_dev *dev)
 		goto err;
 	}
 
+	dev->debugfs.inject_err = debugfs_create_file("inject_err", S_IFREG | S_IRWXUGO,
+						      dev->debugfs.dir,
+						      dev,
+						      &inject_err_fops);
+	if (!dev->debugfs.inject_err) {
+		pr_err("pib: failed to create debugfs \"pib/%s/inject_err\"\n", dev->ib_dev.name);
+		goto err;
+	}
+
 	for (i=0 ; i<PIB_DEBUGFS_LAST ; i++) {
 		struct dentry *dentry;
 		dentry = debugfs_create_file(debug_file_symbols[i], S_IFREG | S_IRUGO,
 					     dev->debugfs.dir,
 					     &dev->debugfs.entries[i],
-					     &pib_debugfs_fops);
+					     &inspection_fops);
 		if (!dentry) {
 			pr_err("pib: failed to create debugfs \"pib/%s/%s\"\n",
 			       dev->ib_dev.name, debug_file_symbols[i]);
@@ -644,6 +804,11 @@ static void unregister_dev(struct pib_dev *dev)
 		dev->debugfs.entries[i].dentry = NULL;
 		if (dentry)
 			debugfs_remove(dentry);
+	}
+
+	if (dev->debugfs.inject_err) {
+		debugfs_remove(dev->debugfs.inject_err);
+		dev->debugfs.inject_err = NULL;
 	}
 
 	if (dev->debugfs.dir) {

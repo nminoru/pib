@@ -106,15 +106,6 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	u32 psn;
 	enum ib_wc_status status;
 
-	/*
-	 *  A work request with the fence attribute set shall block
-	 *  until all prior RDMA READ and Atomic WRs have completed.
-	 *  
-	 */
-	if (send_wqe->send_flags & IB_SEND_FENCE)
-		if (0 < qp->requester.nr_rd_atomic)
-			return -1;
-
 	if (send_wqe->processing.retry_cnt < 0) {
 		status = IB_WC_RETRY_EXC_ERR;
 		goto completion_error;

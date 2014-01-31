@@ -100,14 +100,6 @@ static int reply(struct ib_mad_hdr *mad_hdr)
 }
 
 
-static int reply_failure(struct ib_mad_hdr *mad_hdr)
-{
-	mad_hdr->method = IB_MGMT_METHOD_GET_RESP;
-
-	return IB_MAD_RESULT_FAILURE | IB_MAD_RESULT_REPLY;
-}
-
-
 int pib_process_pma_mad(struct pib_node *node, u8 port_num,
 			struct ib_mad *in_mad, struct ib_mad *out_mad)
 {

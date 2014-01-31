@@ -1,16 +1,26 @@
-- LOCAL_DMA_LKEY 対応を
+- pib.ko のアンロードの高速化
 
-- Debugfs 対応
+- ソケットのバッファサイズを変更可能に
+
+    static unsigned int sendbuf_size;
+    module_param_named(send_queue_size, sendbuf_size, uint, 0444);
+    MODULE_PARM_DESC(send_queue_size, "Number of descriptors in send queue");
+
+    static unsigned int recvbuf_size;
+    module_param_named(recv_queue_size, recvbuf_size, uint, 0444);
+    MODULE_PARM_DESC(recv_queue_size, "Number of descriptors in send queue");
+
+- MSN
+
+- infiniband-diags のコマンドで落ちないようにする。
+
+- LOCAL_DMA_LKEY 対応を
 
 - ポートが ACTIVE でない場合、MAD 以外のパケットは破棄する処理。
 
-- GRH を使用時は -EPERM を返す。
-
-- Performance Management MAD 対応
-
-- IBV_SEND_SOLICITED 対応。BTH の solicited event も含めて。 
-
 - RNR タイマーの見直し。
+
+- UC 対応のために pib_rc.c の見直しを。
 
 - recevie_acknowledge の見直し。
   - 勝手に破棄するのはダメ
@@ -29,29 +39,11 @@
   - CA event
     - IBV_EVENT_DEVICE_FATAL
 
-- UC/RC
-
-- ソケットのバッファサイズを変更可能に
-
 - RESET 時に送信した場合の挙動
 
 - RESET 時に受信した場合の挙動
 
-- pib_util_get_srq のロック条件を見直せ
-
-- 11.4.2.2 Request Completion Notification
-  - SEND
-  - RDMA WRITE w/Immediate Data
-  - BTH の solicited event が立っているもの
-  - Unsuccessful WC
-
-- MSN
-
-- WC をインサートした時の失敗のチェック
-
 - LMC
-
-- req_notify_cq のコールバックは ib_req_notify_cq() の関数ヘッダーに合わせろ
 
 - Protection domain のチェック(QP、SRQ、MR、AH)
   - QP と SRQ のチェック ← ibv_post_send 内でやっている

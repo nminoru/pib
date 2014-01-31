@@ -4,6 +4,8 @@ pib - Pseudo InfiniBand HCA driver
 pib is a software-based InfiniBand HCA driver.
 It provides InfiniBand functions without real IB HCA & fabric.
 
+pib aims to be accurate IB simulator to assist developers
+
 pib contains the two components.
 
 - pib.ko - Linux kernel module
@@ -12,7 +14,7 @@ pib contains the two components.
 Features
 ========
 
-In single-host-mode, pib enables to create up to 4 InfiniBand HCA (The default is 2).
+In single-host-mode, pib creates up to 4 InfiniBand HCA (The default is 2).
 These IB devices are pib_0, pib_1, pib_2 and pib_3.
 Each HCA contains up to 32 ports (The default is 2).
 
@@ -33,6 +35,7 @@ The current version of pib enables to drive the following interface:
 Debugging support features:
 
 * Inspect IB objects (ucontext, protection domain, MR, SRQ, CQ, AH, QP)
+* Error injection (QP/CQ/SRQ Error)
 * Select some implementation dependent behaviours and enforce error checking.
 * Show a warning of pithalls that programs should avoid. 
 
@@ -176,7 +179,6 @@ Debugging support
 -----------------
 
 * Execution trace (API invocation, packet sending/receiving, async event)
-* Error injection (QP/CQ/SRQ Error)
 * Packet filtering
 
 Software components

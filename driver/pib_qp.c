@@ -531,7 +531,7 @@ static void dealloc_free_wqe(struct pib_qp *qp)
 int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		  int attr_mask, struct ib_udata *udata)
 {
-	int ret;
+	int ret = 0;
 	int pending_send_wr = 0;
 	int issue_sq_drained = 0;
 	struct pib_qp *qp;
@@ -550,12 +550,26 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	cur_state = (attr_mask & IB_QP_CUR_STATE) ? attr->cur_qp_state : qp->state;
 	new_state = (attr_mask & IB_QP_STATE) ? attr->qp_state : cur_state;
 
-	/* @todo IB_QP_CAP は常にエラーになる */
-	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask))
-		goto err_inval;
+	issue_sq_drained = list_empty(&qp->requester.sending_swqe_head) &&
+		list_empty(&qp->requester.waiting_swqe_head);
 
-	if (!modify_qp_is_ok(dev, qp, cur_state, attr, attr_mask))
-		goto err_inval;
+	if ((cur_state == IB_QPS_SQD) &&
+	    ((new_state == IB_QPS_SQD) || (new_state == IB_QPS_RTS)))
+		if (!issue_sq_drained) {
+			ret = -EBUSY;
+			goto done;
+		}
+
+	/* @todo IB_QP_CAP は常にエラーになる */
+	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask)) {
+		ret = -EINVAL;
+		goto done;
+	}
+
+	if (!modify_qp_is_ok(dev, qp, cur_state, attr, attr_mask)) {
+		ret = -EINVAL;
+		goto done;
+	}
 
 	if (attr_mask & IB_QP_PATH_MTU)
 		qp->ib_qp_attr.path_mtu    = attr->path_mtu;
@@ -648,12 +662,16 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 	if (attr_mask & IB_QP_STATE) {
 
-		if ((new_state == IB_QPS_SQE) && (qp->qp_type == IB_QPT_RC))
-			goto err_inval;
+		if ((new_state == IB_QPS_SQE) && (qp->qp_type == IB_QPT_RC)) {
+			ret = -EINVAL;
+			goto done;
+		}
 
 		if ((cur_state == IB_QPS_SQD) && !qp->issue_sq_drained &&
-		    ((new_state == IB_QPS_RTS) || (new_state == IB_QPS_SQD)))
-			goto err_inval;
+		    ((new_state == IB_QPS_RTS) || (new_state == IB_QPS_SQD))) {
+			ret = -EINVAL;
+			goto done;
+		}
 
 		qp->state = new_state;
 
@@ -673,13 +691,6 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 		case IB_QPS_RTS:
 			pending_send_wr = get_send_wr_num(qp);
-			break;
-
-		case IB_QPS_SQD:
-			/* @todo */
-			/* en_sqd_async_notify */
-			issue_sq_drained = list_empty(&qp->requester.sending_swqe_head) &&
-				list_empty(&qp->requester.waiting_swqe_head);
 			break;
 
 		case IB_QPS_SQE:
@@ -708,14 +719,8 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 	if (pending_send_wr)
 		get_ready_to_send(dev, qp);
 
+done:
 	spin_unlock_irqrestore(&qp->lock, flags);
-
-	return 0;
-
-err_inval:
-	spin_unlock_irqrestore(&qp->lock, flags);
-
-	ret = -EINVAL;
 
 	return ret;
 }
@@ -789,17 +794,17 @@ static int modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, e
 			return 0;
 		}
 
-	if ((attr_mask & IB_QP_RQ_PSN) && pib_warn_manner(PIB_MANNER_RQ_PSN))
+	if ((attr_mask & IB_QP_RQ_PSN) && pib_warn_manner(PIB_MANNER_PSN))
 		if (attr->rq_psn & ~PIB_PSN_MASK) {
 			pr_info("pib: MANNER Wrong rq_psn=0x%08x in modify_qp\n", attr->rq_psn);
-			if (pib_error_manner(PIB_MANNER_RQ_PSN))
+			if (pib_error_manner(PIB_MANNER_PSN))
 				return 0;
 		}
 
-	if ((attr_mask & IB_QP_SQ_PSN) && pib_warn_manner(PIB_MANNER_SQ_PSN))
+	if ((attr_mask & IB_QP_SQ_PSN) && pib_warn_manner(PIB_MANNER_PSN))
 		if (attr->sq_psn & ~PIB_PSN_MASK) {
 			pr_info("pib: MANNER Wrong sq_psn=0x%08x in modify_qp\n", attr->sq_psn);
-			if (pib_error_manner(PIB_MANNER_SQ_PSN))
+			if (pib_error_manner(PIB_MANNER_PSN))
 				return 0;
 		}
 

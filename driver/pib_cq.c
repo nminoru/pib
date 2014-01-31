@@ -10,6 +10,7 @@
 
 
 static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited);
+static void cq_overflow_handler(struct pib_work_struct *work);
 
 
 struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
@@ -63,6 +64,7 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 
 	INIT_LIST_HEAD(&cq->cqe_head);
 	INIT_LIST_HEAD(&cq->free_cqe_head);
+	PIB_INIT_WORK(&cq->work, cq, cq_overflow_handler);
 
 	/* allocate CQE internally */
 
@@ -127,6 +129,8 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 	list_del(&cq->list);
 	dev->nr_cq--;
 	pib_dealloc_obj_num(dev, PIB_BITMAP_CQ_START, cq->cq_num);
+
+	pib_cancel_work(dev, &cq->work);
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	kmem_cache_free(pib_cq_cachep, cq);
@@ -290,13 +294,9 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited)
 	}
 
 	if (list_empty(&cq->free_cqe_head)) {
-		struct ib_event ev;
 		/* CQ overflow */
-		ev.event      = IB_EVENT_CQ_ERR;
-		ev.device     = cq->ib_cq.device;
-		ev.element.cq = &cq->ib_cq;
-
-		cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
+		cq->state     = PIB_STATE_ERR;
+		pib_queue_work(to_pdev(cq->ib_cq.device), &cq->work);
 
 		ret = -ENOMEM;
 		goto done;
@@ -323,10 +323,54 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited)
 		}
 	}
 
-	spin_unlock_irqrestore(&cq->lock, flags);
-
 	ret = 0;
 
 done:
+	spin_unlock_irqrestore(&cq->lock, flags);
+
 	return ret;
+}
+
+
+void pib_util_insert_async_cq_error(struct pib_dev *dev, struct pib_cq *cq)
+{
+	struct ib_event ev;
+	struct pib_qp *qp;
+	unsigned long flags;
+
+	BUG_ON(spin_is_locked(&cq->lock));
+
+	spin_lock_irqsave(&cq->lock, flags);
+
+	cq->state     = PIB_STATE_ERR;
+
+	ev.event      = IB_EVENT_CQ_ERR;
+	ev.device     = cq->ib_cq.device;
+	ev.element.cq = &cq->ib_cq;
+	cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
+
+	spin_unlock_irqrestore(&cq->lock, flags);
+
+	/* ここでは cq はロックしない */
+
+	list_for_each_entry(qp, &dev->qp_head, list) {
+		spin_lock(&qp->lock);
+		if ((cq == qp->send_cq) || (cq == qp->recv_cq)) {
+			qp->state = IB_QPS_ERR;
+			pib_util_flush_qp(qp, 0);
+			pib_util_insert_async_qp_error(qp, IB_EVENT_QP_FATAL);
+		}
+		spin_unlock(&qp->lock);
+	}
+}
+
+
+static void cq_overflow_handler(struct pib_work_struct *work)
+{
+	struct pib_cq *cq = work->data;
+	struct pib_dev *dev = to_pdev(cq->ib_cq.device);
+
+	BUG_ON(!spin_is_locked(&dev->lock));
+
+	pib_util_insert_async_cq_error(dev, cq);
 }

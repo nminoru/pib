@@ -29,11 +29,12 @@
 static int kthread_routine(void *data);
 static int create_socket(struct pib_dev *dev, int port_index);
 static void release_socket(struct pib_dev *dev, int port_index);
-static void process_on_scheduler(struct pib_dev *dev);
+static void process_on_qp_scheduler(struct pib_dev *dev);
 static int process_new_send_wr(struct pib_qp *qp);
 static int process_send_wr(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
 static int process_incoming_message(struct pib_dev *dev, int port_index);
 static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
+static void process_on_wq_scheduler(struct pib_dev *dev);
 static void process_sendmsg(struct pib_dev *dev);
 static struct sockaddr *get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dlid);
 static void sock_data_ready_callback(struct sock *sk, int bytes);
@@ -231,14 +232,14 @@ static int kthread_routine(void *data)
 		unsigned long timeout = HZ;
 
 		/* 停止時間を計算。ただし1 秒以上は停止させない */
-		spin_lock_irqsave(&dev->schedule.lock, flags);
-		if (time_after(dev->schedule.wakeup_time, jiffies))
-			timeout = dev->schedule.wakeup_time - jiffies;
+		spin_lock_irqsave(&dev->qp_sched.lock, flags);
+		if (time_after(dev->qp_sched.wakeup_time, jiffies))
+			timeout = dev->qp_sched.wakeup_time - jiffies;
 		else
-			dev->schedule.wakeup_time = jiffies;
+			dev->qp_sched.wakeup_time = jiffies;
 		if (HZ < timeout)
 			timeout = HZ;
-		spin_unlock_irqrestore(&dev->schedule.lock, flags);
+		spin_unlock_irqrestore(&dev->qp_sched.lock, flags);
 
 		wait_for_completion_interruptible_timeout(&dev->thread.completion, timeout);
 		init_completion(&dev->thread.completion);
@@ -258,11 +259,14 @@ static int kthread_routine(void *data)
 				}
 			}
 
-			if (test_and_clear_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags))
-				process_on_scheduler(dev);
+			if (test_and_clear_bit(PIB_THREAD_WQ_SCHEDULE, &dev->thread.flags))
+				process_on_wq_scheduler(dev);
+
+			if (test_and_clear_bit(PIB_THREAD_QP_SCHEDULE, &dev->thread.flags))
+				process_on_qp_scheduler(dev);
 		}
 
-		process_on_scheduler(dev);
+		process_on_qp_scheduler(dev);
 	}
 
 done:
@@ -270,7 +274,7 @@ done:
 }
 
 
-static void process_on_scheduler(struct pib_dev *dev)
+static void process_on_qp_scheduler(struct pib_dev *dev)
 {
 	int ret;
 	unsigned long now;
@@ -351,14 +355,6 @@ first_sending_wsqe:
 			goto done;
 
 	/*
-	 *  IB_SEND_FENCE フラグがある場合、先行する RDMA READ & Atomic 操作の
-	 *  完了を待つ。
-	 */
-	if (send_wqe->send_flags & IB_SEND_FENCE)
-		if (0 < qp->requester.nr_rd_atomic)
-			goto done;
-
-	/*
 	 *  RNR NAK タイムアウト時刻の判定
 	 */
 	if (time_after(send_wqe->processing.schedule_time, now))
@@ -403,12 +399,12 @@ done:
 	if (dev->thread.flags & PIB_THREAD_READY_TO_RECV)
 		return;
 
-	spin_lock_irqsave(&dev->schedule.lock, flags);
-	if (time_after(dev->schedule.wakeup_time, jiffies)) {
-		spin_unlock_irqrestore(&dev->schedule.lock, flags);
+	spin_lock_irqsave(&dev->qp_sched.lock, flags);
+	if (time_after(dev->qp_sched.wakeup_time, jiffies)) {
+		spin_unlock_irqrestore(&dev->qp_sched.lock, flags);
 		return;
 	}
-	spin_unlock_irqrestore(&dev->schedule.lock, flags);
+	spin_unlock_irqrestore(&dev->qp_sched.lock, flags);
 
 	cond_resched();
 
@@ -429,6 +425,15 @@ static int process_new_send_wr(struct pib_qp *qp)
 		return 0;
 
 	send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_send_wqe, list);
+
+	/*
+	 *  A work request with the fence attribute set shall block
+	 *  until all prior RDMA READ and Atomic WRs have completed.
+	 *  
+	 */
+	if (send_wqe->send_flags & IB_SEND_FENCE)
+		if (0 < qp->requester.nr_rd_atomic)
+			return 0;
 
 	if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode)) {
 		if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic)
@@ -810,12 +815,12 @@ void pib_util_reschedule_qp(struct pib_qp *qp)
 	/* Red/Black tree からの取り外し                            */
 	/************************************************************/
 
-	spin_lock_irqsave(&dev->schedule.lock, flags);
-	if (qp->schedule.on) {
-		qp->schedule.on = 0;
-		rb_erase(&qp->schedule.rb_node, &dev->schedule.rb_root);
+	spin_lock_irqsave(&dev->qp_sched.lock, flags);
+	if (qp->sched.on) {
+		qp->sched.on = 0;
+		rb_erase(&qp->sched.rb_node, &dev->qp_sched.rb_root);
 	}
-	spin_unlock_irqrestore(&dev->schedule.lock, flags);
+	spin_unlock_irqrestore(&dev->qp_sched.lock, flags);
 
 	/************************************************************/
 	/* 再計算                                                   */
@@ -846,10 +851,6 @@ void pib_util_reschedule_qp(struct pib_qp *qp)
 			if (!list_empty(&qp->requester.waiting_swqe_head))
 				goto skip;
 
-		if (send_wqe->send_flags & IB_SEND_FENCE)
-			if (0 < qp->requester.nr_rd_atomic)
-				goto skip;
-
 		if (time_before(send_wqe->processing.schedule_time, schedule_time))
 			schedule_time = send_wqe->processing.schedule_time;
 	}
@@ -868,45 +869,45 @@ skip:
 	if (schedule_time == now + PIB_SCHED_TIMEOUT)
 		return;
 
-	qp->schedule.time = schedule_time;
-	qp->schedule.tid  = dev->schedule.master_tid;
+	qp->sched.time = schedule_time;
+	qp->sched.tid  = dev->qp_sched.master_tid;
 
 	/************************************************************/
 	/* Red/Black tree への登録                                  */
 	/************************************************************/
-	spin_lock_irqsave(&dev->schedule.lock, flags);
-	link = &dev->schedule.rb_root.rb_node;
+	spin_lock_irqsave(&dev->qp_sched.lock, flags);
+	link = &dev->qp_sched.rb_root.rb_node;
 	while (*link) {
 		int cond;
 		struct pib_qp *qp_tmp;
 
 		parent = *link;
-		qp_tmp = rb_entry(parent, struct pib_qp, schedule.rb_node);
+		qp_tmp = rb_entry(parent, struct pib_qp, sched.rb_node);
 
-		if (qp_tmp->schedule.time != schedule_time)
-			cond = time_after(qp_tmp->schedule.time, schedule_time);
+		if (qp_tmp->sched.time != schedule_time)
+			cond = time_after(qp_tmp->sched.time, schedule_time);
 		else
-			cond = ((long)(qp_tmp->schedule.tid - qp->schedule.tid) > 0);
+			cond = ((long)(qp_tmp->sched.tid - qp->sched.tid) > 0);
 
 		if (cond)
 			link = &parent->rb_left;
 		else
 			link = &parent->rb_right;
 	}
-	rb_link_node(&qp->schedule.rb_node, parent, link);
-	rb_insert_color(&qp->schedule.rb_node, &dev->schedule.rb_root);
-	qp->schedule.on = 1;
+	rb_link_node(&qp->sched.rb_node, parent, link);
+	rb_insert_color(&qp->sched.rb_node, &dev->qp_sched.rb_root);
+	qp->sched.on = 1;
 
 	/* calculate the most early time  */
-	rb_node = rb_first(&dev->schedule.rb_root);
+	rb_node = rb_first(&dev->qp_sched.rb_root);
 	BUG_ON(rb_node == NULL);
-	qp = rb_entry(rb_node, struct pib_qp, schedule.rb_node);
-	dev->schedule.wakeup_time = qp->schedule.time;
+	qp = rb_entry(rb_node, struct pib_qp, sched.rb_node);
+	dev->qp_sched.wakeup_time = qp->sched.time;
 
-	spin_unlock_irqrestore(&dev->schedule.lock, flags);
+	spin_unlock_irqrestore(&dev->qp_sched.lock, flags);
 
-	if (time_before_eq(dev->schedule.wakeup_time, now))
-		set_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags);
+	if (time_before_eq(dev->qp_sched.wakeup_time, now))
+		set_bit(PIB_THREAD_QP_SCHEDULE, &dev->thread.flags);
 }
 
 
@@ -916,19 +917,73 @@ struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev)
 	struct rb_node *rb_node;
 	struct pib_qp *qp = NULL;
 
-	spin_lock_irqsave(&dev->schedule.lock, flags);
+	spin_lock_irqsave(&dev->qp_sched.lock, flags);
 
-	rb_node = rb_first(&dev->schedule.rb_root);
+	rb_node = rb_first(&dev->qp_sched.rb_root);
 
 	if (rb_node == NULL)
 		goto done;
 
-	qp = rb_entry(rb_node, struct pib_qp, schedule.rb_node);
+	qp = rb_entry(rb_node, struct pib_qp, sched.rb_node);
 done:
 
-	spin_unlock_irqrestore(&dev->schedule.lock, flags);
+	spin_unlock_irqrestore(&dev->qp_sched.lock, flags);
 
 	return qp;
+}
+
+
+/******************************************************************************/
+/*                                                                            */
+/******************************************************************************/
+
+static void process_on_wq_scheduler(struct pib_dev *dev)
+{
+	unsigned long flags;
+	struct pib_work_struct *work;
+
+retry:
+	spin_lock_irqsave(&dev->lock, flags);
+	spin_lock(&dev->wq_sched.lock);
+
+	if (list_empty(&dev->wq_sched.head)) {
+		spin_unlock(&dev->wq_sched.lock);
+		spin_unlock_irqrestore(&dev->lock, flags);
+		return;
+	}
+	spin_unlock(&dev->wq_sched.lock);
+	
+	work = list_first_entry(&dev->wq_sched.head, struct pib_work_struct, entry);
+	list_del_init(&work->entry);
+
+	work->func(work);
+
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	goto retry;
+}
+
+
+void pib_queue_work(struct pib_dev *dev, struct pib_work_struct *work)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->wq_sched.lock, flags);
+	list_add_tail(&work->entry, &dev->wq_sched.head);
+	spin_unlock_irqrestore(&dev->wq_sched.lock, flags);
+
+	set_bit(PIB_THREAD_WQ_SCHEDULE, &dev->thread.flags);
+	complete(&dev->thread.completion);
+}
+
+
+void pib_cancel_work(struct pib_dev *dev, struct pib_work_struct *work)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->wq_sched.lock, flags);
+	list_del_init(&work->entry);
+	spin_unlock_irqrestore(&dev->wq_sched.lock, flags);
 }
 
 
@@ -1049,6 +1104,6 @@ static void timer_timeout_callback(unsigned long opaque)
 {
 	struct pib_dev* dev  = (struct pib_dev*)opaque;
 	
-	set_bit(PIB_THREAD_SCHEDULE, &dev->thread.flags);
+	set_bit(PIB_THREAD_QP_SCHEDULE, &dev->thread.flags);
 	complete(&dev->thread.completion);
 }

@@ -35,8 +35,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	6
-#define PIB_DRIVER_VERSION 	"0.2.6"
+#define PIB_VERSION_REVISION	7
+#define PIB_DRIVER_VERSION 	"0.2.7"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -152,9 +152,8 @@ enum pib_behavior {
 
 
 enum pib_manner {
-	PIB_MANNER_SQ_PSN				= 0,
-	PIB_MANNER_RQ_PSN				= 1,
-	PIB_MANNER_LOST_WC_WHEN_QP_RESET		= 2,
+	PIB_MANNER_PSN					= 0,
+	PIB_MANNER_LOST_WC_WHEN_QP_RESET		= 1,
 };
 
 
@@ -195,7 +194,8 @@ enum pib_swqe_list {
 enum pib_thread_flag {
 	PIB_THREAD_STOP,
 	PIB_THREAD_READY_TO_RECV,
-	PIB_THREAD_SCHEDULE
+	PIB_THREAD_WQ_SCHEDULE,
+	PIB_THREAD_QP_SCHEDULE
 };
 
 
@@ -245,6 +245,21 @@ enum pib_debugfs_type {
 	PIB_DEBUGFS_QP,
 	PIB_DEBUGFS_LAST
 }; 
+
+
+struct pib_work_struct {
+	void		       *data;
+	struct list_head	entry;
+	void		      (*func)(struct pib_work_struct *);
+};
+
+
+#define PIB_INIT_WORK(_work, _data, _func)				\
+	do {								\
+		INIT_LIST_HEAD(&(_work)->entry);			\
+		(_work)->data = (_data);				\
+		(_work)->func = (_func);				\
+	} while (0)
 
 
 struct pib_mcast_link {
@@ -372,7 +387,12 @@ struct pib_dev {
 		unsigned long   wakeup_time; /* in jiffies */
 		unsigned long   master_tid;
 		struct rb_root  rb_root;
-	} schedule;
+	} qp_sched;
+
+	struct {
+		spinlock_t	lock;
+		struct list_head	head;
+	} wq_sched;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	u32                     imm_data_lkey;
@@ -400,7 +420,12 @@ struct pib_dev {
 
 	struct {
 		struct dentry  *dir;
+		struct dentry  *inject_err;
 		struct pib_debugfs_entry entries[PIB_DEBUGFS_LAST];
+
+		struct pib_work_struct	inject_err_work;
+		enum ib_event_type	inject_err_type;
+		u32			inject_err_oid;
 	} debugfs;
 };
 
@@ -506,6 +531,8 @@ struct pib_cq {
 	int                     nr_cqe;
 	struct list_head        cqe_head;
 	struct list_head        free_cqe_head;
+
+	struct pib_work_struct	work; 
 };
 
 
@@ -527,6 +554,8 @@ struct pib_srq {
 	struct list_head        free_recv_wqe_head;
 
 	int                     issue_srq_limit; /* set 1 when the async event of SRQ_LIMIT_REACHED is issue */
+
+	struct pib_work_struct	work; 
 };
 
 
@@ -610,7 +639,7 @@ struct pib_qp {
 		unsigned long   time;
 		unsigned long   tid;     /* order by inserting into scheduler */
 		struct rb_node  rb_node;
-	} schedule;
+	} sched;
 
 	/* requester side */
 	struct {
@@ -851,6 +880,8 @@ extern struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev);
 extern int pib_create_kthread(struct pib_dev *dev);
 extern void pib_release_kthread(struct pib_dev *dev);
 extern int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_p, struct ib_grh **grh_p, struct pib_packet_bth **bth_p);
+extern void pib_queue_work(struct pib_dev *dev, struct pib_work_struct *work);
+extern void pib_cancel_work(struct pib_dev *dev, struct pib_work_struct *work);
 
 /*
  *  in pib_ah.c
@@ -893,6 +924,7 @@ extern int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
 extern int pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp);
 extern int pib_util_insert_wc_success(struct pib_cq *cq, const struct ib_wc *wc, int solicited);
 extern int pib_util_insert_wc_error(struct pib_cq *cq, struct pib_qp *qp, u64 wr_id, enum ib_wc_status status, enum ib_wc_opcode opcode);
+extern void pib_util_insert_async_cq_error(struct pib_dev *dev, struct pib_cq *cq);
 
 /*
  *  in pib_srq.c
@@ -906,8 +938,8 @@ extern int pib_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr);
 extern int pib_destroy_srq(struct ib_srq *srq);
 extern int pib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
 				 struct ib_recv_wr **bad_wr);
-
 extern struct pib_recv_wqe *pib_util_get_srq(struct pib_srq *srq);
+extern void pib_util_insert_async_srq_error(struct pib_dev *dev, struct pib_srq *srq);
 
 /*
  *  in pib_qp.c
@@ -981,6 +1013,7 @@ extern void pib_release_switch(struct pib_easy_sw *sw);
  */
 extern int pib_register_debugfs(void);
 extern void pib_unregister_debugfs(void);
+extern void pib_inject_err_handler(struct pib_work_struct *work);
 
 /*
  *  in pib_lib.c

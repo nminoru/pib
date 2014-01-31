@@ -12,6 +12,9 @@
 static volatile int post_srq_recv_counter; /* これは厳密でなくてもよい */
 
 
+static void srq_error_handler(struct pib_work_struct *work);
+
+
 static int pib_srq_attr_is_ok(const struct pib_dev *dev, const struct ib_srq_attr *attr)
 {
 	if ((attr->max_wr < 1)  || (dev->ib_dev_attr.max_srq_wr  < attr->max_wr))
@@ -68,6 +71,7 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	spin_lock_init(&srq->lock);
 	INIT_LIST_HEAD(&srq->recv_wqe_head);
 	INIT_LIST_HEAD(&srq->free_recv_wqe_head);
+	PIB_INIT_WORK(&srq->work, srq, srq_error_handler);
 
 	for (i=0 ; i<srq->ib_srq_attr.max_wr ; i++) {
 		struct pib_recv_wqe *recv_wqe;
@@ -348,4 +352,50 @@ skip:
 	spin_unlock_irqrestore(&srq->lock, flags);
 
 	return recv_wqe;
+}
+
+
+void pib_util_insert_async_srq_error(struct pib_dev *dev, struct pib_srq *srq)
+{
+	struct ib_event ev;
+	struct pib_qp *qp;
+	unsigned long flags;
+
+	BUG_ON(spin_is_locked(&srq->lock));
+
+	spin_lock_irqsave(&srq->lock, flags);
+
+	srq->state     = PIB_STATE_ERR;
+
+	ev.event       = IB_EVENT_SRQ_ERR;
+	ev.device      = srq->ib_srq.device;
+	ev.element.srq = &srq->ib_srq;
+	srq->ib_srq.event_handler(&ev, srq->ib_srq.srq_context);
+
+	spin_unlock_irqrestore(&srq->lock, flags);
+
+	/* ここでは srq はロックしない */
+
+	list_for_each_entry(qp, &dev->qp_head, list) {
+		spin_lock(&qp->lock);
+		if (srq == to_psrq(qp->ib_qp_init_attr.srq)) {
+			qp->state = IB_QPS_ERR;
+			pib_util_flush_qp(qp, 0);
+			pib_util_insert_async_qp_error(qp, IB_EVENT_QP_FATAL);
+		}
+		spin_unlock(&qp->lock);
+	}
+}
+
+
+static void srq_error_handler(struct pib_work_struct *work)
+{
+	struct pib_srq *srq = work->data;
+	struct pib_dev *dev = to_pdev(srq->ib_srq.device);
+
+	BUG_ON(!spin_is_locked(&dev->lock));
+
+	/* srq はロックしない */
+
+	pib_util_insert_async_srq_error(dev, srq);
 }

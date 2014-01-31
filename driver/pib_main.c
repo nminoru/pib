@@ -484,9 +484,13 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	dev->last_qp_num		= pib_random() & PIB_QPN_MASK;
 	dev->qp_table			= RB_ROOT;
 
-	spin_lock_init(&dev->schedule.lock);
-	dev->schedule.wakeup_time	= jiffies;
-	dev->schedule.rb_root		= RB_ROOT;
+	spin_lock_init(&dev->qp_sched.lock);
+	dev->qp_sched.wakeup_time	= jiffies;
+	dev->qp_sched.rb_root		= RB_ROOT;
+
+	spin_lock_init(&dev->wq_sched.lock);
+	INIT_LIST_HEAD(&dev->wq_sched.head);
+	PIB_INIT_WORK(&dev->debugfs.inject_err_work, dev, pib_inject_err_handler);
 
 	dev->ib_dev_attr		= ib_dev_attr;
 
@@ -863,12 +867,17 @@ static int __init pib_init(void)
 	pr_info("pib: " PIB_DRIVER_DESCRIPTION " v" PIB_DRIVER_VERSION "\n");
 
 	if ((pib_num_hca < 1) || (PIB_MAX_HCA < pib_num_hca)) {
-		pr_err("pib: pib_num_hca: %u\n", pib_num_hca);
+		pr_err("pib: pib_num_hca(%u) out of range [1, %u]\n", pib_num_hca, PIB_MAX_HCA);
 		return -EINVAL;
 	}
 
 	if ((pib_phys_port_cnt < 1) || (PIB_MAX_PORTS < pib_phys_port_cnt)) {
-		pr_err("pib: phys_port_cnt: %u\n", pib_phys_port_cnt);
+		pr_err("pib: phys_port_cnt(%u) out of range [1, %u]\n", pib_phys_port_cnt, PIB_MAX_PORTS);
+		return -EINVAL;
+	}
+
+	if (pib_num_hca * pib_phys_port_cnt < 2) {
+		pr_err("pib: In single-host-mode, the value of num_hca * phys_port_cn must be 2 or more.\n");
 		return -EINVAL;
 	}
 
