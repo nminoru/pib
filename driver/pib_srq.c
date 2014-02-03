@@ -250,10 +250,13 @@ int pib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
 
 	spin_lock_irqsave(&srq->lock, flags);
 
-	if (srq->state != PIB_STATE_OK) {
-		ret = -EACCES; 
-		goto err;
-	}
+	/*
+	 *  No state checking
+	 * 
+	 *  IBA Spec. Vol.1 10.2.9.5 SRQ STATES
+	 *  Even if a SRQ is in the error state, the consumer may be able to
+	 *  post WR to the SRQ.
+	 */
 
 next_wr:
 	if ((ibwr->num_sge < 1) || (srq->ib_srq_attr.max_sge < ibwr->num_sge)) {
@@ -289,16 +292,7 @@ next_wr:
 
 	recv_wqe->total_length = (u32)total_length;
 
-	if (pib_get_behavior(PIB_BEHAVIOR_SRQ_SHUFFLE)) {
-		/* shuffle WRs */
-		if ((post_srq_recv_counter++ % 2) == 0)
-			list_add_tail(&recv_wqe->list, &srq->recv_wqe_head);
-		else
-			list_add(&recv_wqe->list, &srq->recv_wqe_head);
-	} else {
-		/* in order */
-		list_add_tail(&recv_wqe->list, &srq->recv_wqe_head);
-	}
+	list_add_tail(&recv_wqe->list, &srq->recv_wqe_head);
 
 	srq->nr_recv_wqe++;
 

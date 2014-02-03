@@ -129,6 +129,8 @@ enum pib_behavior {
 
 	/*
 	 *  SRQ の登録順と取り出し順をシャッフルする
+	 *
+	 *  IBA Spec. Vol.1 10.8.3.2 SHARED RECEIVE QUEUE ORDERING RULES
 	 */
 	PIB_BEHAVIOR_SRQ_SHUFFLE                          =  3,
 
@@ -780,6 +782,7 @@ struct pib_cqe {
 };
 
 
+extern bool pib_multi_host_mode;
 extern int pib_debug_level;
 extern u64 hca_guid_base;
 extern struct pib_dev *pib_devs[];
@@ -789,6 +792,8 @@ extern unsigned int pib_phys_port_cnt;
 extern unsigned int pib_behavior;
 extern unsigned int pib_manner_warn;
 extern unsigned int pib_manner_err;
+extern char *pib_server_addr;
+extern u16 pib_server_port;
 extern struct kmem_cache *pib_ah_cachep;
 extern struct kmem_cache *pib_mr_cachep;
 extern struct kmem_cache *pib_qp_cachep;
@@ -904,7 +909,6 @@ extern struct ib_mr *pib_alloc_fast_reg_mr(struct ib_pd *pd,
 extern struct ib_fast_reg_page_list *pib_alloc_fast_reg_page_list(struct ib_device *ibdev,
 								  int page_list_len);
 extern void pib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
-
 enum ib_wc_status pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction);
 enum ib_wc_status pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
 enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
@@ -1023,16 +1027,16 @@ extern const char *pib_get_qp_type(enum ib_qp_type type);
 extern const char *pib_get_qp_state(enum ib_qp_state state);
 extern const char *pib_get_wc_status(enum ib_wc_status status);
 extern u32 pib_get_maxium_packet_length(enum ib_mtu mtu);
-extern int pib_is_recv_ok(enum ib_qp_state state);
-extern int pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode);
-extern int pib_opcode_is_acknowledge(int OpCode);
-extern int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode);
+extern bool pib_is_recv_ok(enum ib_qp_state state);
+extern bool pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode);
+extern bool pib_opcode_is_acknowledge(int OpCode);
+extern bool pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode);
 enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode);
 extern u32 pib_get_num_of_packets(struct pib_qp *qp, u32 length);
 extern u32 pib_get_rnr_nak_time(int timeout);
 extern unsigned long pib_get_local_ack_time(int timeout);
 extern u8 pib_get_local_ca_ack_delay(void);
-extern int pib_is_unicast_lid(u16 lid);
+extern bool pib_is_unicast_lid(u16 lid);
 extern const char *pib_get_mgmt_method(u8 method);
 extern const char *pib_get_smp_attr(__be16 attr_id);
 extern const char *pib_get_sa_attr(__be16 attr_id);

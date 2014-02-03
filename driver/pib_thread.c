@@ -41,6 +41,15 @@ static void sock_data_ready_callback(struct sock *sk, int bytes);
 static void timer_timeout_callback(unsigned long opaque);
 
 
+static int send_buffer_size;
+module_param_named(send_buffer_size, send_buffer_size, int, S_IRUGO);
+MODULE_PARM_DESC(send_buffer_size, "Bytes of send buffer");
+
+static int recv_buffer_size;
+module_param_named(recv_buffer_size, recv_buffer_size, int, S_IRUGO);
+MODULE_PARM_DESC(recv_buffer_size, "Bytes of recv buffer");
+
+
 int pib_create_kthread(struct pib_dev *dev)
 {
 	int i, j, ret;
@@ -115,6 +124,7 @@ void pib_release_kthread(struct pib_dev *dev)
 static int create_socket(struct pib_dev *dev, int port_index)
 {
 	int ret, addrlen;
+	int rcvbuf_size, sndbuf_size;
 	struct socket *socket;
 	struct sockaddr_in sockaddr_in;
 	struct sockaddr_in *sockaddr_in_p;
@@ -128,12 +138,14 @@ static int create_socket(struct pib_dev *dev, int port_index)
 	lock_sock(socket->sk);
 	socket->sk->sk_user_data  = dev;
 	socket->sk->sk_data_ready = sock_data_ready_callback;
-#if 0
-	/* @todo set socet buffer size */
+
 	socket->sk->sk_userlocks |= (SOCK_RCVBUF_LOCK | SOCK_SNDBUF_LOCK);
-	socket->sk->sk_rcvbuf     = max_t(u32, val * 2, SOCK_MIN_RCVBUF);
-	socket->sk->sk_sndbuf     = max_t(u32, val * 2, SOCK_MIN_SNDBUF);
-#endif
+
+	sndbuf_size = max_t(u32, send_buffer_size, SOCK_MIN_SNDBUF);
+	rcvbuf_size = max_t(u32, recv_buffer_size, SOCK_MIN_RCVBUF);
+	socket->sk->sk_sndbuf     = max_t(u32, socket->sk->sk_sndbuf, sndbuf_size);
+	socket->sk->sk_rcvbuf     = max_t(u32, socket->sk->sk_rcvbuf, rcvbuf_size);
+
 	release_sock(socket->sk);
 
 	memset(&sockaddr_in, 0, sizeof(sockaddr_in));

@@ -36,6 +36,7 @@ struct kmem_cache *pib_cqe_cachep;
 struct kmem_cache *pib_mcast_link_cachep;
 
 
+bool pib_multi_host_mode;
 u64 hca_guid_base;
 struct pib_dev *pib_devs[PIB_MAX_HCA];
 struct pib_easy_sw  pib_easy_sw;
@@ -63,6 +64,14 @@ MODULE_PARM_DESC(manner_warn, "manner");
 unsigned int pib_manner_err;
 module_param_named(manner_err, pib_manner_warn, uint, 0644);
 MODULE_PARM_DESC(manner_err, "Number of physical ports");
+
+char *pib_server_addr;
+module_param_named(addr, pib_server_addr, charp, S_IRUGO);
+MODULE_PARM_DESC(addr, "IP address");
+
+u16 pib_server_port;
+module_param_named(port, pib_server_port, ushort, S_IRUGO);
+MODULE_PARM_DESC(port, "Port number");
 
 static struct class *dummy_parent_class; /* /sys/class/pib */
 static struct device *dummy_parent_device;
@@ -881,6 +890,8 @@ static int __init pib_init(void)
 		return -EINVAL;
 	}
 
+	/* @todo */
+
 	dummy_parent_class = class_create(THIS_MODULE, "pib");
 	if (IS_ERR(dummy_parent_class)) {
 		err = PTR_ERR(dummy_parent_class);
@@ -909,8 +920,15 @@ static int __init pib_init(void)
 		goto err_kmem_cache_destroy;
 	}
 
-	if (pib_create_switch(&pib_easy_sw))
-		goto err_create_switch;
+	if (pib_multi_host_mode)
+		pr_info("pib: multi-host-mode\n");
+	else
+		pr_info("pib: single-host-mode\n");
+	
+	if (!pib_multi_host_mode) {
+		if (pib_create_switch(&pib_easy_sw))
+			goto err_create_switch;
+	}
 
 	for (i=0 ; i<pib_num_hca ; i++) {
 		pib_devs[i] = pib_dev_add(dummy_parent_device, i);
@@ -966,7 +984,8 @@ static void __exit pib_cleanup(void)
 		if (pib_devs[i])
 			pib_dev_remove(pib_devs[i]);
 
-	pib_release_switch(&pib_easy_sw);
+	if (!pib_multi_host_mode)
+		pib_release_switch(&pib_easy_sw);
 
 	pib_kmem_cache_destroy();
 

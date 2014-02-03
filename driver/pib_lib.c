@@ -225,7 +225,7 @@ u32 pib_get_maxium_packet_length(enum ib_mtu mtu)
 }
 
 
-int pib_is_recv_ok(enum ib_qp_state state)
+bool pib_is_recv_ok(enum ib_qp_state state)
 {
 	switch (state) {
 
@@ -233,31 +233,32 @@ int pib_is_recv_ok(enum ib_qp_state state)
 	case IB_QPS_RTS:
 	case IB_QPS_SQD:
 	case IB_QPS_SQE:
-		return 1;
+		return true;
 
 	default:
-		return 0;
+		return false;
 	}
 }
 
 
-int pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode)
+bool pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode)
 {
 	switch (opcode) {
 	case IB_WR_RDMA_READ:
 	case IB_WR_ATOMIC_CMP_AND_SWP:
 	case IB_WR_ATOMIC_FETCH_AND_ADD:
-		return 1;
+		return true;
 	default:
-		return 0;
+		return false;
 	}
 }
 
 
-int pib_opcode_is_acknowledge(int OpCode)
+bool pib_opcode_is_acknowledge(int OpCode)
 {
 	return (attr_OpCode[OpCode & 0xFF] & PIB_ACKNOWLEDGE_OPCODE) == PIB_ACKNOWLEDGE_OPCODE;
 }
+
 
 enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode opcode)
 {
@@ -297,7 +298,7 @@ enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode opcode)
 }
 
 
-int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
+bool pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 {
 	int cur_OpCode_attr;
 
@@ -307,7 +308,7 @@ int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 	cur_OpCode_attr = attr_OpCode[OpCode] ;
 
 	if ((cur_OpCode_attr & (PIB_STARTING_OPCODE | PIB_MIDDLE_OPCODE |PIB_ENDING_OPCODE)) == 0)
-		return 0;
+		return false;
 
 	if (cur_OpCode_attr & PIB_STARTING_OPCODE)
 		return (attr_OpCode[last_OpCode] & PIB_ENDING_OPCODE);
@@ -319,7 +320,7 @@ int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 	case IB_OPCODE_SEND_LAST_WITH_IMMEDIATE:
 		if ((last_OpCode == IB_OPCODE_SEND_FIRST) ||
 		    (last_OpCode == IB_OPCODE_SEND_MIDDLE))
-			return 1;
+			return true;
 		break;
 
 	case IB_OPCODE_RDMA_WRITE_MIDDLE:
@@ -327,14 +328,14 @@ int pib_opcode_is_in_order_sequence(int OpCode, int last_OpCode)
 	case IB_OPCODE_RDMA_WRITE_LAST_WITH_IMMEDIATE:
 		if ((last_OpCode == IB_OPCODE_RDMA_WRITE_FIRST) || 
 		    (last_OpCode == IB_OPCODE_RDMA_WRITE_MIDDLE))
-			return 1;
+			return true;
 		break;
 
 	default:
 		break;
 	}
 
-	return 0;
+	return false;
 }
 
 
@@ -404,9 +405,9 @@ u8 pib_get_local_ca_ack_delay(void)
 }
 
 
-int pib_is_unicast_lid(u16 lid)
+bool pib_is_unicast_lid(u16 lid)
 {
-	return (lid < PIB_MCAST_LID_BASE)|| (lid == PIB_LID_PERMISSIVE);
+	return (lid < PIB_MCAST_LID_BASE) || (lid == PIB_LID_PERMISSIVE);
 }
 
 
