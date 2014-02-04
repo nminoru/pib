@@ -11,7 +11,6 @@
 #include <linux/vmalloc.h>
 #include <linux/kthread.h>
 #include <net/sock.h> /* for struct sock */
-
 #include <rdma/ib_mad.h>
 #include <rdma/ib_smi.h>
 #include <rdma/ib_sa.h>

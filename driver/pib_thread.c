@@ -18,12 +18,12 @@
 #include <linux/random.h>
 #include <linux/kthread.h>
 #include <net/sock.h> /* for struct sock */
-
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
 #include "pib_packet.h"
+#include "pib_trace.h"
 
 
 static int kthread_routine(void *data);
@@ -565,7 +565,7 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 	struct ib_grh         *grh;
 	struct pib_packet_bth *bth;
 	u32 dest_qp_num;
-	u16 dlid;
+	u16 slid, dlid;
 
 	buffer = dev->thread.buffer;
 
@@ -603,8 +603,13 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 		goto silently_drop;
 	}
 
+	slid	    = be16_to_cpu(lrh->slid);	
 	dlid        = be16_to_cpu(lrh->dlid);
 	dest_qp_num = be32_to_cpu(bth->destQP) & PIB_QPN_MASK;
+
+	pib_trace_recv(dev, port_index + 1,
+		       bth->OpCode, be32_to_cpu(bth->psn) & PIB_PSN_MASK, ret,
+		       slid, dlid, dest_qp_num);
 
 	if ((dest_qp_num == PIB_QP0) || (dlid < PIB_MCAST_LID_BASE)) {
 		/* Unicast */
@@ -1031,6 +1036,8 @@ static void process_sendmsg(struct pib_dev *dev)
 	if (src_qp_num != PIB_QP0)
 		if ((slid == 0) || (dlid == 0))
 			goto done;
+
+	pib_trace_send(dev, port_num, dev->thread.msg_size);
 
 	memset(&msghdr, 0, sizeof(msghdr));
 

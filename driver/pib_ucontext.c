@@ -7,6 +7,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 struct ib_ucontext *
@@ -26,6 +27,8 @@ pib_alloc_ucontext(struct ib_device *ibdev,
 	ucontext = kzalloc(sizeof *ucontext, GFP_KERNEL);
 	if (!ucontext)
 		return ERR_PTR(-ENOMEM);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_GET_CONTEXT, 0);
 
 	INIT_LIST_HEAD(&ucontext->list);
 	getnstimeofday(&ucontext->creation_time);
@@ -65,6 +68,8 @@ int pib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 
 	dev      = to_pdev(ibcontext->device);
 	ucontext = to_pucontext(ibcontext);
+
+	pib_trace_api(dev, PIB_USER_VERBS_CMD_DEALLOC_CONTEXT, 0);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	list_del(&ucontext->list);

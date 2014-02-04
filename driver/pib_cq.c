@@ -7,6 +7,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited);
@@ -79,6 +80,8 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 		list_add_tail(&cqe->list, &cq->free_cqe_head);
 	}
 
+	pib_trace_api(dev, IB_USER_VERBS_CMD_CREATE_CQ, cq_num);
+
 	return &cq->ib_cq;
 
 err_allloc_ceq:
@@ -113,6 +116,8 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 	dev = to_pdev(ibcq->device);
 	cq = to_pcq(ibcq);
 
+	pib_trace_api(dev, IB_USER_VERBS_CMD_DESTROY_CQ, cq->cq_num);
+
 	spin_lock_irqsave(&cq->lock, flags);
 	list_for_each_entry_safe(cqe, cqe_next, &cq->cqe_head, list) {
 		list_del_init(&cqe->list);
@@ -141,14 +146,38 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 
 int pib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period)
 {
+	struct pib_dev *dev;
+	struct pib_cq *cq;
+
 	pr_err("pib: pib_modify_cq\n");
+
+	if (!ibcq)
+		return -EINVAL;
+
+	dev = to_pdev(ibcq->device);
+	cq = to_pcq(ibcq);
+
+	pib_trace_api(dev, PIB_USER_VERBS_CMD_MODIFY_CQ, cq->cq_num);
+
 	return 0;
 }
 
 
 int pib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 {
+	struct pib_dev *dev;
+	struct pib_cq *cq;
+
 	pr_err("pib: pib_resize_cq\n");
+
+	if (!ibcq)
+		return -EINVAL;
+
+	dev = to_pdev(ibcq->device);
+	cq = to_pcq(ibcq);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_RESIZE_CQ, cq->cq_num);
+
 	return 0;
 }
 
@@ -156,13 +185,17 @@ int pib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 {
 	int i, ret = 0;
+	struct pib_dev *dev;
 	struct pib_cq *cq;
 	unsigned long flags;
 
 	if (!ibcq)
 		return -EINVAL;
 
+	dev = to_pdev(ibcq->device);
 	cq = to_pcq(ibcq);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_POLL_CQ, cq->cq_num);
 
 	spin_lock_irqsave(&cq->lock, flags);
 
@@ -193,11 +226,18 @@ done:
 
 int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags notify_flags)
 {
+	struct pib_dev *dev;
 	struct pib_cq *cq;
 	unsigned long flags;
 	int ret = 0;
 
+	if (!ibcq)
+		return -EINVAL;
+
+	dev = to_pdev(ibcq->device);
 	cq = to_pcq(ibcq);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_REQ_NOTIFY_CQ, cq->cq_num);
 
 	spin_lock_irqsave(&cq->lock, flags);
 
@@ -339,6 +379,8 @@ void pib_util_insert_async_cq_error(struct pib_dev *dev, struct pib_cq *cq)
 	unsigned long flags;
 
 	BUG_ON(spin_is_locked(&cq->lock));
+
+	pib_trace_async(dev, IB_EVENT_CQ_ERR, cq->cq_num);
 
 	spin_lock_irqsave(&cq->lock, flags);
 

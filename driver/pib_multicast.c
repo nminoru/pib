@@ -5,10 +5,10 @@
  */
 #include <linux/module.h>
 #include <linux/init.h>
-
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 int pib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
@@ -30,8 +30,10 @@ int pib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 
 	ret = 0;
 
-	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
+	qp = to_pqp(ibqp);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_ATTACH_MCAST, qp->ib_qp.qp_num);
 
 	spin_lock_irqsave(&dev->lock, flags);
 
@@ -89,8 +91,10 @@ int pib_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 
 	ret = 0;
 
-	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
+	qp = to_pqp(ibqp);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_DETACH_MCAST, qp->ib_qp.qp_num);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	list_for_each_entry(mcast_link, &qp->mcast_head, qp_list) {

@@ -9,6 +9,7 @@
 
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 static struct pib_mr * create_mr(struct pib_dev *dev, struct pib_pd *pd, u64 start, u64 length, u64 virt_addr, int access_flags);
@@ -74,6 +75,8 @@ pib_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 
 	mr->is_dma = 1;
 
+	pib_trace_api(dev, IB_USER_VERBS_CMD_REG_MR, mr->mr_num);
+
 	return &mr->ib_mr;
 }
 
@@ -104,6 +107,8 @@ pib_reg_user_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		goto err_alloc_mr;
 
 	mr->ib_umem = umem;
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_REG_MR, mr->mr_num);
 
 	return &mr->ib_mr;
 
@@ -179,6 +184,8 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 	dev = to_pdev(ibmr->device);
 	mr  = to_pmr(ibmr);
 	pd  = to_ppd(ibmr->pd);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_DEREG_MR, mr->mr_num);
 
 	spin_lock_irqsave(&pd->lock, flags);
 	lkey = (mr->ib_mr.lkey & PIB_MR_INDEX_MASK);

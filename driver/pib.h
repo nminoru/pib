@@ -20,7 +20,6 @@
 #include <linux/net.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
-
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_umem.h>
 #include <rdma/ib_mad.h> /* for ib_mad_hdr */
@@ -35,8 +34,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	7
-#define PIB_DRIVER_VERSION 	"0.2.7"
+#define PIB_VERSION_REVISION	8
+#define PIB_DRIVER_VERSION 	"0.2.8"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -422,12 +421,17 @@ struct pib_dev {
 
 	struct {
 		struct dentry  *dir;
-		struct dentry  *inject_err;
+
 		struct pib_debugfs_entry entries[PIB_DEBUGFS_LAST];
 
+		struct dentry  *inject_err;
 		struct pib_work_struct	inject_err_work;
 		enum ib_event_type	inject_err_type;
 		u32			inject_err_oid;
+
+		struct dentry  *trace;
+		void	       *trace_data;
+		atomic_t	trace_index;
 	} debugfs;
 };
 
@@ -970,8 +974,8 @@ extern void pib_util_insert_async_qp_event(struct pib_qp *qp, enum ib_event_type
 /*
  *  in pib_multicast.c
  */
-extern int pib_attach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
-extern int pib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
+extern int pib_attach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid);
+extern int pib_detach_mcast(struct ib_qp *ibqp, union ib_gid *gid, u16 lid);
 extern void pib_detach_all_mcast(struct pib_dev *dev, struct pib_qp *qp);
 
 /*
@@ -1026,6 +1030,10 @@ extern u32 pib_random(void);
 extern const char *pib_get_qp_type(enum ib_qp_type type);
 extern const char *pib_get_qp_state(enum ib_qp_state state);
 extern const char *pib_get_wc_status(enum ib_wc_status status);
+extern const char *pib_get_async_event(enum ib_event_type type);
+extern const char *pib_get_uverbs_cmd(int uverbs_cmd);
+extern const char *pib_get_trans_op(int op);
+extern const char *pib_get_service_type(int op);
 extern u32 pib_get_maxium_packet_length(enum ib_mtu mtu);
 extern bool pib_is_recv_ok(enum ib_qp_state state);
 extern bool pib_is_wr_opcode_rd_atomic(enum ib_wr_opcode opcode);

@@ -7,6 +7,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 struct ib_pd *
@@ -48,6 +49,8 @@ pib_alloc_pd(struct ib_device *ibdev,
 	if (!pd->mr_table)
 		goto err_mr_table;
 
+	pib_trace_api(dev, IB_USER_VERBS_CMD_ALLOC_PD, pd_num);
+
 	return &pd->ib_pd;
 
 err_mr_table:
@@ -75,6 +78,8 @@ int pib_dealloc_pd(struct ib_pd *ibpd)
 
 	dev = to_pdev(ibpd->device);
 	pd  = to_ppd(ibpd);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_DEALLOC_PD, pd->pd_num);
 
 	spin_lock_irqsave(&pd->lock, flags);
 	if (pd->nr_mr > 0)

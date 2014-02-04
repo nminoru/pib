@@ -12,10 +12,10 @@
 #include <linux/netdevice.h>
 #include <linux/inetdevice.h>
 #include <linux/rtnetlink.h>
-
 #include <rdma/ib_user_verbs.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 MODULE_AUTHOR("Minoru NAKAMURA");
@@ -89,6 +89,8 @@ static int pib_query_device(struct ib_device *ibdev,
 		return -EINVAL;
 
 	dev = to_pdev(ibdev);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_QUERY_DEVICE, 0);
 	
 	spin_lock_irqsave(&dev->lock, flags);
 	*props = dev->ib_dev_attr;
@@ -108,6 +110,8 @@ static int pib_query_port(struct ib_device *ibdev, u8 port_num,
 		return -EINVAL;
 
 	dev = to_pdev(ibdev);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_QUERY_PORT, port_num);
 
 	if (port_num < 1 || ibdev->phys_port_cnt < port_num)
 		return -EINVAL;
@@ -206,10 +210,12 @@ static int pib_modify_device(struct ib_device *ibdev, int mask,
 	if (!ibdev)
 		return -EINVAL;
 
+	dev = to_pdev(ibdev);
+
+	pib_trace_api(dev, PIB_USER_VERBS_CMD_MODIFY_DEVICE, 0);
+
 	if (mask & ~(IB_DEVICE_MODIFY_SYS_IMAGE_GUID|IB_DEVICE_MODIFY_NODE_DESC))
 		return -EOPNOTSUPP;
-
-	dev = to_pdev(ibdev);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	if (mask & IB_DEVICE_MODIFY_NODE_DESC)
@@ -237,10 +243,12 @@ static int pib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 	if (!ibdev)
 		return -EINVAL;
 
+	dev = to_pdev(ibdev);
+
+	pib_trace_api(dev, PIB_USER_VERBS_CMD_MODIFY_PORT, port_num);
+
 	if (mask & ~(IB_PORT_SHUTDOWN|IB_PORT_INIT_TYPE|IB_PORT_RESET_QKEY_CNTR))
 		return -EOPNOTSUPP;
-
-	dev = to_pdev(ibdev);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	if (mask & IB_PORT_INIT_TYPE)

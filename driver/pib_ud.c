@@ -20,12 +20,12 @@
 #include <linux/random.h>
 #include <linux/kthread.h>
 #include <net/sock.h> /* for struct sock */
-
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
 #include "pib_packet.h"
+#include "pib_trace.h"
 
 
 /*
@@ -296,6 +296,8 @@ void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 			goto silently_drop;
 		break;
 	}
+
+	pib_trace_recv_ok(dev, port_num, bth->OpCode, be32_to_cpu(bth->psn), qp->ib_qp.qp_num, size);
 
 	/* Analyze Immediate Extended Transport Header */
 	if (bth->OpCode == IB_OPCODE_UD_SEND_ONLY_WITH_IMMEDIATE) {

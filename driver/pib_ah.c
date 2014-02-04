@@ -7,6 +7,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 struct ib_ah *
@@ -41,7 +42,9 @@ pib_create_ah(struct ib_pd *ibpd, struct ib_ah_attr *ah_attr)
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	ah->ib_ah_attr = *ah_attr;
-	
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_CREATE_AH, ah_num);
+
 	return &ah->ib_ah;
 
 err_alloc_ah_num:
@@ -53,12 +56,16 @@ err_alloc_ah_num:
 
 int pib_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
 {
+	struct pib_dev *dev;
 	struct pib_ah *ah;
 
 	if (!ibah || !ah_attr)
 		return -EINVAL;
 
+	dev = to_pdev(ibah->device);
 	ah = to_pah(ibah);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_MODIFY_AH, ah->ah_num);
 
 	ah->ib_ah_attr = *ah_attr;
 
@@ -68,13 +75,17 @@ int pib_modify_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
 
 int pib_query_ah(struct ib_ah *ibah, struct ib_ah_attr *ah_attr)
 {
+	struct pib_dev *dev;
 	struct pib_ah *ah;
 
 	if (!ibah || !ah_attr)
 		return -EINVAL;
 
+	dev = to_pdev(ibah->device);
 	ah = to_pah(ibah);
-	
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_QUERY_AH, ah->ah_num);
+
 	*ah_attr = ah->ib_ah_attr;
 
 	return 0;
@@ -92,6 +103,8 @@ int pib_destroy_ah(struct ib_ah *ibah)
 
 	dev = to_pdev(ibah->device);
 	ah  = to_pah(ibah);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_DESTROY_AH, ah->ah_num);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	list_del(&ah->list);

@@ -1,5 +1,5 @@
 /*
- * pib_debugfs.c - Object inspection & Error injection
+ * pib_debugfs.c - Object inspection & Error injection & Execution trace
  *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
@@ -12,6 +12,8 @@
 #include <linux/export.h>
 
 #include "pib.h"
+#include "pib_packet.h"
+#include "pib_trace.h"
 
 
 static struct dentry *pib_debugfs_root;
@@ -702,6 +704,302 @@ void pib_inject_err_handler(struct pib_work_struct *work)
 
 
 /******************************************************************************/
+/* Execution trace                                                            */
+/******************************************************************************/
+
+static const char *str_act[] = {
+	[PIB_TRACE_ACT_API]     = "API ",
+	[PIB_TRACE_ACT_SEND]    = "SEND",
+	[PIB_TRACE_ACT_RECV]    = "RCV1",
+	[PIB_TRACE_ACT_RECV_OK] = "RCV2",
+	[PIB_TRACE_ACT_ASYNC]   = "ASYC",
+};
+
+
+struct pib_trace_info {
+	struct pib_trace_entry *entry;
+	u32		start;
+	u32		index;
+};
+
+
+static void *trace_seq_start(struct seq_file *file, loff_t *ppos)
+{
+	struct pib_dev *dev = file->private;
+	struct pib_trace_info *info;
+
+	if (!dev->debugfs.trace_data)
+		return NULL;
+
+	if ((*ppos < 0) || (PIB_TRACE_MAX_ENTRIES <= *ppos))
+		return NULL;
+
+	info = kzalloc(sizeof(struct pib_trace_info), GFP_KERNEL);
+	if (!info)
+		return NULL;
+
+	info->entry = dev->debugfs.trace_data;
+	info->start = atomic_read(&dev->debugfs.trace_index) % PIB_TRACE_MAX_ENTRIES;
+	info->index = *ppos;
+
+	return info;
+}
+
+
+static void *trace_seq_next(struct seq_file *file, void *iter_ptr,
+			    loff_t *ppos)
+{
+	struct pib_trace_info *info = iter_ptr;
+
+	++*ppos;
+
+	if ((*ppos < 0) || (PIB_TRACE_MAX_ENTRIES <= *ppos))
+		return NULL;
+
+	info->index = *ppos;
+
+	return iter_ptr;
+}
+
+
+static void trace_seq_stop(struct seq_file *file, void *iter_ptr)
+{
+	/* nothing for now */
+	kfree(iter_ptr);
+}
+
+
+static int trace_seq_show(struct seq_file *file, void *iter_ptr)
+{
+	struct pib_trace_info *info = iter_ptr;
+	struct pib_trace_entry *entry;
+	char buffer[20];
+
+	entry = &info->entry[(info->start + info->index) % PIB_TRACE_MAX_ENTRIES];
+
+	if (entry->act == PIB_TRACE_ACT_NONE)
+		return 0;
+
+	seq_printf(file, "%012llu %s ", (unsigned long long)entry->timestamp, str_act[entry->act]);
+	
+	switch (entry->act) {
+	case PIB_TRACE_ACT_API:
+		if (pib_get_uverbs_cmd(entry->op))
+			snprintf(buffer, sizeof(buffer), "%s", pib_get_uverbs_cmd(entry->op));
+		else
+			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
+
+		seq_printf(file, "%-18s OID:%06x\n", buffer, entry->oid);
+		break;
+
+	case PIB_TRACE_ACT_SEND:
+		if (pib_get_trans_op(entry->op))
+			snprintf(buffer, sizeof(buffer), "%s/%s",
+				 pib_get_service_type(entry->op), pib_get_trans_op(entry->op));
+		else
+			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
+
+		seq_printf(file, "%-18s PORT:%2u PSN:%06x LEN:%4u SLID:%04x SQPN:%06x DLID:%04x DQPN:%06x\n",
+			   buffer,
+			   entry->port, entry->psn, entry->data,
+			   entry->slid, entry->oid, entry->dlid, entry->dqpn);
+		break;
+
+	case PIB_TRACE_ACT_RECV:
+		if (pib_get_trans_op(entry->op))
+			snprintf(buffer, sizeof(buffer), "%s/%s",
+				 pib_get_service_type(entry->op), pib_get_trans_op(entry->op));
+		else
+			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
+
+		seq_printf(file, "%-18s PORT:%2u PSN:%06x LEN:%4u SLID:%04x DLID:%04x DQPN:%06x\n",
+			   buffer,
+			   entry->port, entry->psn, entry->data,
+			   entry->slid, entry->dlid, entry->dqpn);
+		break;
+
+	case PIB_TRACE_ACT_RECV_OK:
+		if (pib_get_trans_op(entry->op))
+			snprintf(buffer, sizeof(buffer), "%s/%s",
+				 pib_get_service_type(entry->op), pib_get_trans_op(entry->op));
+		else
+			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
+
+		seq_printf(file, "%-18s PORT:%2u PSN:%06x LEN:%4u SQPN:%06x\n",
+			   buffer,
+			   entry->port, entry->psn, entry->data, entry->oid);
+		break
+;
+	case PIB_TRACE_ACT_ASYNC:
+		if (pib_get_async_event(entry->op))
+			snprintf(buffer, sizeof(buffer), "%s", pib_get_async_event(entry->op));
+		else
+			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
+
+		seq_printf(file, "%-18s OID:%06x\n", buffer, entry->oid);
+		break;
+	}
+
+	return 0;
+}
+
+
+static const struct seq_operations trace_seq_ops = {
+	.start = trace_seq_start,
+	.next  = trace_seq_next,
+	.stop  = trace_seq_stop,
+	.show  = trace_seq_show,
+};
+
+
+static int trace_open(struct inode *inode, struct file *file)
+{
+	struct seq_file *seq;
+	int ret;
+
+	ret = seq_open(file, &trace_seq_ops);
+	if (ret)
+		return ret;
+
+	seq = file->private_data;
+	seq->private = inode->i_private;
+
+	return 0;
+}
+
+
+static const struct file_operations trace_fops = {
+	.owner   = THIS_MODULE,
+	.open    = trace_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release,
+};
+
+
+static struct pib_trace_entry *alloc_new_trace(struct pib_dev *dev)
+{
+	int index;
+	struct pib_trace_entry *table;
+
+	table = dev->debugfs.trace_data;
+
+	if (!table)
+		return NULL;
+
+	index = atomic_add_return(1, &dev->debugfs.trace_index);
+	index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
+
+	return &table[index];
+}
+
+
+void pib_trace_api(struct pib_dev *dev, u8 op, u32 oid)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->act = PIB_TRACE_ACT_API;
+	entry->op  = op;
+	entry->oid = oid;
+}
+
+
+void pib_trace_send(struct pib_dev *dev, u8 port_num, int size)
+{
+	struct pib_trace_entry *entry;
+	void *buffer;
+	struct pib_packet_lrh *lrh;
+	struct pib_packet_bth *bth;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+	
+	entry->act  = PIB_TRACE_ACT_SEND;
+	entry->port = port_num;
+	entry->data = size;
+
+	entry->slid = dev->thread.slid;
+	entry->dlid = dev->thread.dlid;
+	entry->oid  = dev->thread.src_qp_num;
+
+	buffer = dev->thread.buffer;
+	
+	lrh = buffer;
+	buffer += sizeof(*lrh);
+
+	if ((lrh->sl_rsv_lnh & 0x3) == 0x3)
+		buffer += sizeof(struct ib_grh);
+
+	bth = buffer;
+
+	entry->dqpn = be32_to_cpu(bth->destQP);
+	entry->psn  = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
+	entry->op   = bth->OpCode;
+}
+
+
+void pib_trace_recv(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, int size, u16 slid, u16 dlid, u32 dqpn)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->act  = PIB_TRACE_ACT_RECV;
+	entry->op   = opcode;
+	entry->port = port_num;
+	entry->data = size;
+	entry->slid = slid;
+	entry->dlid = dlid;
+	entry->oid  = 0;
+	entry->dqpn = dqpn;
+	entry->psn  = psn;
+}
+
+
+void pib_trace_recv_ok(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, u32 sqpn, u32 data)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->act  = PIB_TRACE_ACT_RECV_OK;
+	entry->op   = opcode;
+	entry->port = port_num;
+	entry->data = data;
+	entry->oid  = sqpn;
+	entry->psn  = psn;
+}
+
+
+void pib_trace_async(struct pib_dev *dev, u8 op, u32 id)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->act  = PIB_TRACE_ACT_ASYNC;
+	entry->op   = op;
+	entry->oid  = id;
+}
+
+
+/******************************************************************************/
 /* Driver looad/unload                                                        */
 /******************************************************************************/
 
@@ -759,6 +1057,7 @@ static int register_dev(struct dentry *root, struct pib_dev *dev)
 		goto err;
 	}
 
+	/* Error injection */
 	dev->debugfs.inject_err = debugfs_create_file("inject_err", S_IFREG | S_IRWXUGO,
 						      dev->debugfs.dir,
 						      dev,
@@ -768,6 +1067,23 @@ static int register_dev(struct dentry *root, struct pib_dev *dev)
 		goto err;
 	}
 
+	/* Execution trace */
+	dev->debugfs.trace = debugfs_create_file("trace", S_IFREG | S_IRUGO,
+						      dev->debugfs.dir,
+						      dev,
+						      &trace_fops);
+	if (!dev->debugfs.trace) {
+		pr_err("pib: failed to create debugfs \"pib/%s/trace\"\n", dev->ib_dev.name);
+		goto err;
+	}
+
+	dev->debugfs.trace_data = vzalloc(sizeof(struct pib_trace_entry) * PIB_TRACE_MAX_ENTRIES);
+	if (!dev->debugfs.trace_data) {
+		pr_err("pib: failed to allocate memory of debugfs \"pib/%s/trace\"\n", dev->ib_dev.name);
+		goto err;
+	}
+
+	/* Object inspection */
 	for (i=0 ; i<PIB_DEBUGFS_LAST ; i++) {
 		struct dentry *dentry;
 		dentry = debugfs_create_file(debug_file_symbols[i], S_IFREG | S_IRUGO,
@@ -809,6 +1125,16 @@ static void unregister_dev(struct pib_dev *dev)
 	if (dev->debugfs.inject_err) {
 		debugfs_remove(dev->debugfs.inject_err);
 		dev->debugfs.inject_err = NULL;
+	}
+
+	if (dev->debugfs.trace_data) {
+		vfree(dev->debugfs.trace_data);
+		dev->debugfs.trace_data = NULL;
+	}
+
+	if (dev->debugfs.trace) {
+		debugfs_remove(dev->debugfs.trace);
+		dev->debugfs.trace = NULL;
 	}
 
 	if (dev->debugfs.dir) {

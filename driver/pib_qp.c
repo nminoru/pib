@@ -5,10 +5,10 @@
  */
 #include <linux/module.h>
 #include <linux/init.h>
-
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 static bool qp_init_attr_is_ok(const struct pib_dev *dev, const struct ib_qp_init_attr *init_attr);
@@ -364,6 +364,8 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 		list_add_tail(&recv_wqe->list, &qp->responder.free_rwqe_head);
 	}
 
+	pib_trace_api(dev, IB_USER_VERBS_CMD_CREATE_QP, qp->ib_qp.qp_num);
+
 	return &qp->ib_qp;
 
 err_alloc_wqe:
@@ -478,6 +480,8 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
 
+	pib_trace_api(dev, IB_USER_VERBS_CMD_DESTROY_QP, qp->ib_qp.qp_num);
+
 	pib_detach_all_mcast(dev, qp);
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -544,6 +548,8 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 	qp = to_pqp(ibqp);
 	dev = to_pdev(ibqp->device);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_MODIFY_QP, qp->ib_qp.qp_num);
 
 	spin_lock_irqsave(&qp->lock, flags);
 
@@ -881,8 +887,9 @@ int pib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 		return -EINVAL;
 
 	dev = to_pdev(ibqp->device);
-
 	qp = to_pqp(ibqp);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_POST_SEND, qp->ib_qp.qp_num);
 
 	spin_lock_irqsave(&qp->lock, flags);
 
@@ -1107,8 +1114,9 @@ int pib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 		return -EINVAL;
 
 	dev = to_pdev(ibqp->device);
-
 	qp = to_pqp(ibqp);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_POST_RECV, qp->ib_qp.qp_num);
 
 	if (qp->ib_qp_init_attr.srq)
 		return -EINVAL;
@@ -1234,6 +1242,8 @@ void pib_util_insert_async_qp_error(struct pib_qp *qp, enum ib_event_type event)
 
 	if (!qp->ib_qp.event_handler)
 		return;
+
+	pib_trace_async(to_pdev(qp->ib_qp.device), event, qp->ib_qp.qp_num);
 
 	ev.event      = event;
 	ev.device     = qp->ib_qp.device;

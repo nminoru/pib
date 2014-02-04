@@ -7,6 +7,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_trace.h"
 
 
 static volatile int post_srq_recv_counter; /* これは厳密でなくてもよい */
@@ -84,6 +85,8 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 		list_add_tail(&recv_wqe->list, &srq->free_recv_wqe_head);
 	}
 
+	pib_trace_api(dev, IB_USER_VERBS_CMD_CREATE_SRQ, srq_num);
+
 	return &srq->ib_srq;
 
 err_alloc_wqe:
@@ -119,6 +122,8 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 
 	dev = to_pdev(ibsrq->device);
 	srq = to_psrq(ibsrq);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_DESTROY_SRQ, srq->srq_num);
 
 	spin_lock_irqsave(&srq->lock, flags);
 	list_for_each_entry_safe(recv_wqe, next, &srq->recv_wqe_head, list) {
@@ -157,6 +162,8 @@ int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 
 	dev = to_pdev(ibsrq->device);
 	srq = to_psrq(ibsrq);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_MODIFY_SRQ, srq->srq_num);
 
 	spin_lock_irqsave(&srq->lock, flags);
 
@@ -205,13 +212,17 @@ done:
 int pib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 {
 	int ret;
+	struct pib_dev *dev;
 	struct pib_srq *srq;
 	unsigned long flags;
 
 	if (!ibsrq || !attr)
 		return -EINVAL;
 
+	dev = to_pdev(ibsrq->device);
 	srq = to_psrq(ibsrq);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_QUERY_SRQ, srq->srq_num);
 
 	spin_lock_irqsave(&srq->lock, flags);
 
@@ -245,8 +256,9 @@ int pib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
 		return -EINVAL;
 
 	dev = to_pdev(ibsrq->device);
-
 	srq = to_psrq(ibsrq);
+
+	pib_trace_api(dev, IB_USER_VERBS_CMD_POST_SRQ_RECV, srq->srq_num);
 
 	spin_lock_irqsave(&srq->lock, flags);
 
@@ -356,6 +368,8 @@ void pib_util_insert_async_srq_error(struct pib_dev *dev, struct pib_srq *srq)
 	unsigned long flags;
 
 	BUG_ON(spin_is_locked(&srq->lock));
+
+	pib_trace_async(dev, IB_EVENT_SRQ_ERR, srq->srq_num);
 
 	spin_lock_irqsave(&srq->lock, flags);
 

@@ -11,6 +11,7 @@
 
 #include "pib.h"
 #include "pib_packet.h"
+#include "pib_trace.h"
 
 
 static const char *str_qp_type[IB_QPT_MAX] = {
@@ -61,8 +62,111 @@ static const char *str_wc_status[] = {
 };
 
 
+static const char *str_async_event[] = {
+	[IB_EVENT_CQ_ERR]          = "CQ_ERR",
+	[IB_EVENT_QP_FATAL]        = "QP_FATAL",
+	[IB_EVENT_QP_REQ_ERR]      = "QP_REQ_ERR",
+	[IB_EVENT_QP_ACCESS_ERR]   = "QP_ACCESS_ERR",
+	[IB_EVENT_COMM_EST]        = "COMM_EST",
+	[IB_EVENT_SQ_DRAINED]      = "SQ_DRAINED",
+	[IB_EVENT_PATH_MIG]        = "PATH_MIG",
+	[IB_EVENT_PATH_MIG_ERR]    = "PATH_MIG_ERR",
+	[IB_EVENT_DEVICE_FATAL]    = "DEV_FATAL",
+	[IB_EVENT_PORT_ACTIVE]     = "PORT_ACTIVE",
+	[IB_EVENT_PORT_ERR]        = "PORT_ERR",
+	[IB_EVENT_LID_CHANGE]      = "LID_CHANGE",
+	[IB_EVENT_PKEY_CHANGE]     = "PKEY_CHANGE",
+	[IB_EVENT_SM_CHANGE]       = "SM_CHANGE",
+	[IB_EVENT_SRQ_ERR]         = "SRQ_ERR",
+	[IB_EVENT_SRQ_LIMIT_REACHED] = "SRQ_LIMIT",
+	[IB_EVENT_QP_LAST_WQE_REACHED] ="QP_LAST_WQE",
+	[IB_EVENT_CLIENT_REREGISTER] = "CLIENT_REREG",
+	[IB_EVENT_GID_CHANGE]      = "GID_CHANGE",
+};
+
+
+static const char *str_uverbs_cmd[] = {
+	[IB_USER_VERBS_CMD_GET_CONTEXT]	= "get_context",
+	[IB_USER_VERBS_CMD_QUERY_DEVICE] = "query_device",
+	[IB_USER_VERBS_CMD_QUERY_PORT]  = "query_port",
+	[IB_USER_VERBS_CMD_ALLOC_PD]	= "alloc_pd",
+	[IB_USER_VERBS_CMD_DEALLOC_PD]	= "dealloc_pd",
+	[IB_USER_VERBS_CMD_CREATE_AH]	= "create_ah",
+	[IB_USER_VERBS_CMD_MODIFY_AH]	= "modify_ah",
+	[IB_USER_VERBS_CMD_QUERY_AH]	= "query_ah",
+	[IB_USER_VERBS_CMD_DESTROY_AH]	= "destroy_ah",
+	[IB_USER_VERBS_CMD_REG_MR]	= "reg_mr",
+	[IB_USER_VERBS_CMD_REG_SMR]	= "reg_smr",
+	[IB_USER_VERBS_CMD_REREG_MR]	= "rereg_mr",
+	[IB_USER_VERBS_CMD_QUERY_MR]	= "query_mr",
+	[IB_USER_VERBS_CMD_DEREG_MR]	= "dereg_mr",
+	[IB_USER_VERBS_CMD_ALLOC_MW]	= "alloc_mw",
+	[IB_USER_VERBS_CMD_BIND_MW]	= "bind_mw",
+	[IB_USER_VERBS_CMD_DEALLOC_MW]	= "dealloc_mw",
+	[IB_USER_VERBS_CMD_CREATE_COMP_CHANNEL]	= "create_comp_ch",
+	[IB_USER_VERBS_CMD_CREATE_CQ]	= "create_cq",
+	[IB_USER_VERBS_CMD_RESIZE_CQ]	= "resize_cq",
+	[IB_USER_VERBS_CMD_DESTROY_CQ]	= "destroy_cq",
+	[IB_USER_VERBS_CMD_POLL_CQ]	= "poll_cq",
+	[IB_USER_VERBS_CMD_PEEK_CQ]	= "peek_cq",
+	[IB_USER_VERBS_CMD_REQ_NOTIFY_CQ] = "req_notify_cq",
+	[IB_USER_VERBS_CMD_CREATE_QP]	= "create_qp",
+	[IB_USER_VERBS_CMD_QUERY_QP]	= "query_qp",
+	[IB_USER_VERBS_CMD_MODIFY_QP]	= "modify_qp",
+	[IB_USER_VERBS_CMD_DESTROY_QP]	= "destroy_qp",
+	[IB_USER_VERBS_CMD_POST_SEND]	= "post_send",
+	[IB_USER_VERBS_CMD_POST_RECV]	= "post_recv",
+	[IB_USER_VERBS_CMD_ATTACH_MCAST] = "attach_mcast",
+	[IB_USER_VERBS_CMD_DETACH_MCAST] = "detach_mcast",
+	[IB_USER_VERBS_CMD_CREATE_SRQ]	= "crete_srq",
+	[IB_USER_VERBS_CMD_MODIFY_SRQ]	= "modify_srq",
+	[IB_USER_VERBS_CMD_QUERY_SRQ]	= "query_srq",
+	[IB_USER_VERBS_CMD_DESTROY_SRQ]	= "destroy_srq",
+	[IB_USER_VERBS_CMD_POST_SRQ_RECV] = "post_srq_recv",
+	[IB_USER_VERBS_CMD_OPEN_XRCD]	= "open_xrcd",
+	[IB_USER_VERBS_CMD_CLOSE_XRCD]	= "close_xrcd",
+	[IB_USER_VERBS_CMD_CREATE_XSRQ]	= "create_xsrq",
+	[IB_USER_VERBS_CMD_OPEN_QP]	= "opeN_qp",
+#ifdef CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING
+	[IB_USER_VERBS_CMD_CREATE_FLOW]	= "create_flow",
+	[IB_USER_VERBS_CMD_DESTROY_FLOW] = "destroy_flow",
+#endif /* CONFIG_INFINIBAND_EXPERIMENTAL_UVERBS_FLOW_STEERING */
+	[PIB_USER_VERBS_CMD_DEALLOC_CONTEXT] = "dealloc_context",
+	[PIB_USER_VERBS_CMD_MODIFY_DEVICE] = "modify_device",
+	[PIB_USER_VERBS_CMD_MODIFY_PORT] = "modify_port",
+	[PIB_USER_VERBS_CMD_MODIFY_CQ]	= "modify_cq",
+};
+
+
+static const char *str_trans_op[] = {
+	[IB_OPCODE_SEND_FIRST]			= "SEND_FIRST",
+	[IB_OPCODE_SEND_MIDDLE]			= "SEND_MID",
+	[IB_OPCODE_SEND_LAST]			= "SEND_LAST",
+	[IB_OPCODE_SEND_LAST_WITH_IMMEDIATE]	= "SEND_LAST_IMM",
+	[IB_OPCODE_SEND_ONLY]			= "SEND_ONLY",
+	[IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE]	= "SEND_ONLY_IMM",
+	[IB_OPCODE_RDMA_WRITE_FIRST]		= "WRITE_FIRST",
+	[IB_OPCODE_RDMA_WRITE_MIDDLE]		= "WRITE_MID",
+	[IB_OPCODE_RDMA_WRITE_LAST]		= "WRITE_LAST",
+	[IB_OPCODE_RDMA_WRITE_LAST_WITH_IMMEDIATE] = "WRITE_LAST_IMM",
+	[IB_OPCODE_RDMA_WRITE_ONLY]		= "WRITE_ONLY",
+	[IB_OPCODE_RDMA_WRITE_ONLY_WITH_IMMEDIATE] = "WRITE_IMM",
+	[IB_OPCODE_RDMA_READ_REQUEST]		= "READ_REQ",
+	[IB_OPCODE_RDMA_READ_RESPONSE_FIRST]	= "READ_RES_FIRST",
+	[IB_OPCODE_RDMA_READ_RESPONSE_MIDDLE]	= "READ_RES_MID",
+	[IB_OPCODE_RDMA_READ_RESPONSE_LAST]	= "READ_RES_LAST",
+	[IB_OPCODE_RDMA_READ_RESPONSE_ONLY]	= "READ_RES_ONLY",
+	[IB_OPCODE_ACKNOWLEDGE]			= "ACK",
+	[IB_OPCODE_ATOMIC_ACKNOWLEDGE]		= "ATOMIC_ACK",
+	[IB_OPCODE_COMPARE_SWAP]		= "COMPARE_SWAP",
+	[IB_OPCODE_FETCH_ADD]			= "FETCH_ADD",
+};
+
+
+
 #define USEC_TO_JIFFIES(value) \
 	((u32)(((value ## ULL) * 1000) / (HZ * 1000ULL)))
+
 
 static const u32 rnr_nak_timeout[] = {
 	[IB_RNR_TIMER_655_36] = USEC_TO_JIFFIES(655360),
@@ -102,6 +206,7 @@ static const u32 rnr_nak_timeout[] = {
 
 #define NSEC_TO_JIFFIES(value)					\
 	((unsigned long)(((value ## ULL) * 1000) / (HZ * 1000000ULL)))
+
 
 /* IBA Spec. Vol.1 9.7.6.1.3 */
 static const unsigned long local_ack_timeout[] = {
@@ -215,7 +320,52 @@ const char *pib_get_qp_state(enum ib_qp_state state)
 
 const char *pib_get_wc_status(enum ib_wc_status status)
 {
+	if (!str_wc_status[status])
+		return NULL;
+
 	return str_wc_status[status];
+}
+
+
+const char *pib_get_async_event(enum ib_event_type type)
+{
+	if (!str_async_event[type]) 
+		return NULL;
+	return str_async_event[type];
+}
+
+
+const char *pib_get_uverbs_cmd(int uverbs_cmd)
+{
+	if (!str_uverbs_cmd[uverbs_cmd])
+		return NULL;
+	return str_uverbs_cmd[uverbs_cmd];
+}
+
+
+const char *pib_get_trans_op(int op)
+{
+	if (!str_trans_op[op & 0x1F])
+		return NULL;
+	return str_trans_op[op & 0x1F];
+}
+
+
+const char *pib_get_service_type(int op)
+{
+	switch (op & 0xE0) {
+	case IB_OPCODE_RC:
+		return "RC";
+	case IB_OPCODE_UC:
+		return "UC";
+	case IB_OPCODE_RD:
+		return "RD";
+	case IB_OPCODE_UD:
+		return "UD";
+	default:
+		return "UNKNOWN";
+	}
+
 }
 
 

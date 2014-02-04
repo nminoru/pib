@@ -8,7 +8,6 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
-
 #include <rdma/ib_mad.h>
 #include <rdma/ib_smi.h>
 

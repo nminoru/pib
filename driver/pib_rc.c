@@ -19,12 +19,12 @@
 #include <linux/if_vlan.h>
 #include <linux/random.h>
 #include <linux/kthread.h>
-
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
 #include "pib_packet.h"
+#include "pib_trace.h"
 
 
 /*
@@ -452,6 +452,8 @@ receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_
 
 	OpCode = bth->OpCode;
 	psn    = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
+
+	pib_trace_recv_ok(dev, port_num, OpCode, psn, qp->ib_qp.qp_num, size);
 
 	issue_comm_est(qp);
 
@@ -1458,6 +1460,8 @@ receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib
 	size      -= sizeof(*aeth);
 
 	syndrome =  be32_to_cpu(aeth->syndrome_msn) >> 24;
+
+	pib_trace_recv_ok(dev, port_num, bth->OpCode, psn, qp->ib_qp.qp_num, syndrome);
 
 	switch (syndrome >> 5) {
 	case 0:
