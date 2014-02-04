@@ -36,6 +36,7 @@ Debugging support features:
 
 * Inspect IB objects (ucontext, protection domain, MR, SRQ, CQ, AH, QP)
 * Error injection (QP/CQ/SRQ Error)
+* Execution trace (API invocation, packet sending/receiving, async event)
 * Select some implementation dependent behaviours and enforce error checking.
 * Show a warning of pithalls that programs should avoid. 
 
@@ -104,8 +105,8 @@ Source and binary packages for RHEL6 or CentOS6 are avaiable on this link http:/
 To build source packages from source code
 
     $ cd pib
-    $ cp -r libpib libpib-0.2.6
-    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.2.0.tar.gz libpib-0.2.6/
+    $ cp -r libpib libpib-0.2.8
+    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.2.8.tar.gz libpib-0.2.8/
     $ cp libpib/libpib.spec $(HOME)/rpmbuild/SPECS/
     $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/libpib.spec
 
@@ -178,7 +179,6 @@ IB functions
 Debugging support
 -----------------
 
-* Execution trace (API invocation, packet sending/receiving, async event)
 * Packet filtering
 
 Software components
