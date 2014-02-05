@@ -126,7 +126,16 @@ static void *inspection_seq_start(struct seq_file *file, loff_t *pos)
 	if (*pos != 0)
 		goto next;
 
-	seq_puts(file, "OID    CREATIONTIME                               ");
+	switch (control->type) {
+	case PIB_DEBUGFS_AH:
+	case PIB_DEBUGFS_QP:
+		seq_puts(file, "OID    CREATIONTIME                               ");
+		break;
+
+	default:
+		seq_puts(file, "OID  CREATIONTIME                               ");
+		break;
+	}
 
 	switch (control->type) {
 	case PIB_DEBUGFS_UCONTEXT:
@@ -204,8 +213,18 @@ static int inspection_seq_show(struct seq_file *file, void *iter)
 	time = record->creation_time;
 	time_to_tm(time.tv_sec, 0, &tm);
 
-	seq_printf(file, "%06x %10llu.%09lu (%04ld-%02d-%02d %02d:%02d:%02d)",
-		   record->obj_num,
+	switch (control->type) {
+	case PIB_DEBUGFS_AH:
+	case PIB_DEBUGFS_QP:
+		seq_printf(file, "%06x ", record->obj_num);
+		break;
+
+	default:
+		seq_printf(file, "%04x ", record->obj_num);
+		break;
+	}
+
+	seq_printf(file, "%10llu.%09lu (%04ld-%02d-%02d %02d:%02d:%02d)",
 		   (unsigned long long)time.tv_sec, time.tv_nsec,
 		   tm.tm_year + 1900, tm.tm_mon  + 1, tm.tm_mday,
 		   tm.tm_hour, tm.tm_min, tm.tm_sec);
@@ -623,10 +642,16 @@ inject_err_write(struct file *file, const char __user *buf,
 static ssize_t inject_err_read(struct file *file, char __user *buf,
 			       size_t count, loff_t *ppos)
 {
+	int ret;
+
 	if (*ppos != 0)
 		return 0;
 
-	return snprintf(buf, count, "[CQ|QP|SRQ|] OID\n");
+	ret = snprintf(buf, count, "[CQ|QP|SRQ|] OID\n");
+
+	*ppos = ret;
+
+	return ret;
 }
 
 
@@ -707,12 +732,59 @@ void pib_inject_err_handler(struct pib_work_struct *work)
 /* Execution trace                                                            */
 /******************************************************************************/
 
-static const char *str_act[] = {
-	[PIB_TRACE_ACT_API]     = "API ",
-	[PIB_TRACE_ACT_SEND]    = "SEND",
-	[PIB_TRACE_ACT_RECV]    = "RCV1",
-	[PIB_TRACE_ACT_RECV_OK] = "RCV2",
-	[PIB_TRACE_ACT_ASYNC]   = "ASYC",
+enum pib_trace_act {
+	PIB_TRACE_ACT_NONE,
+	PIB_TRACE_ACT_API,
+	PIB_TRACE_ACT_SEND,
+	PIB_TRACE_ACT_RECV1,
+	PIB_TRACE_ACT_RECV2,
+	PIB_TRACE_ACT_ASYNC
+};
+
+
+struct pib_trace_entry {
+	u64	timestamp;
+
+	u8	act;
+	u8	op;
+	u8	port;
+
+	union {
+		struct {
+			u32	oid;
+		} api;
+
+		struct {
+			u16	len;
+			u16	slid;
+			u16	dlid;
+			u32	sqpn;
+			u32	dqpn;
+			u32	psn;
+		} send;
+
+		struct {
+			u16	len;
+			u16	slid;
+			u16	dlid;
+			u32	dqpn;
+			u32	psn;
+		} recv1;
+
+		struct {
+			u32	sqpn;
+			u32	psn;
+			u32	data;
+		} recv2;
+
+		struct {
+			u32	oid;
+		} async;
+
+		struct {
+			struct timespec	time;
+		} timedate;
+	} u;
 };
 
 
@@ -720,6 +792,15 @@ struct pib_trace_info {
 	struct pib_trace_entry *entry;
 	u32		start;
 	u32		index;
+};
+
+
+static const char *str_act[] = {
+	[PIB_TRACE_ACT_API]     = "API ",
+	[PIB_TRACE_ACT_SEND]    = "SEND",
+	[PIB_TRACE_ACT_RECV1]   = "RCV1",
+	[PIB_TRACE_ACT_RECV2]   = "RCV2",
+	[PIB_TRACE_ACT_ASYNC]   = "ASYC",
 };
 
 
@@ -784,12 +865,28 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 	
 	switch (entry->act) {
 	case PIB_TRACE_ACT_API:
-		if (pib_get_uverbs_cmd(entry->op))
+		switch (entry->op) {
+		case IB_USER_VERBS_CMD_CREATE_AH:
+		case IB_USER_VERBS_CMD_MODIFY_AH:
+		case IB_USER_VERBS_CMD_QUERY_AH:
+		case IB_USER_VERBS_CMD_DESTROY_AH:
+		case IB_USER_VERBS_CMD_CREATE_QP:
+		case IB_USER_VERBS_CMD_QUERY_QP:
+		case IB_USER_VERBS_CMD_MODIFY_QP:
+		case IB_USER_VERBS_CMD_DESTROY_QP:
+		case IB_USER_VERBS_CMD_POST_SEND:
+		case IB_USER_VERBS_CMD_POST_RECV:
+		case IB_USER_VERBS_CMD_ATTACH_MCAST:
+		case IB_USER_VERBS_CMD_DETACH_MCAST:
 			snprintf(buffer, sizeof(buffer), "%s", pib_get_uverbs_cmd(entry->op));
-		else
-			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
+			seq_printf(file, "%-18s OID:%06x\n", buffer, entry->u.api.oid);
+			break;
 
-		seq_printf(file, "%-18s OID:%06x\n", buffer, entry->oid);
+		default:
+			snprintf(buffer, sizeof(buffer), "%s", pib_get_uverbs_cmd(entry->op));
+			seq_printf(file, "%-18s OID:%04x\n", buffer, entry->u.api.oid);
+			break;
+		}
 		break;
 
 	case PIB_TRACE_ACT_SEND:
@@ -801,11 +898,12 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 
 		seq_printf(file, "%-18s PORT:%2u PSN:%06x LEN:%4u SLID:%04x SQPN:%06x DLID:%04x DQPN:%06x\n",
 			   buffer,
-			   entry->port, entry->psn, entry->data,
-			   entry->slid, entry->oid, entry->dlid, entry->dqpn);
+			   entry->port, entry->u.send.psn, entry->u.send.len,
+			   entry->u.send.slid, entry->u.send.sqpn,
+			   entry->u.send.dlid, entry->u.send.dqpn);
 		break;
 
-	case PIB_TRACE_ACT_RECV:
+	case PIB_TRACE_ACT_RECV1:
 		if (pib_get_trans_op(entry->op))
 			snprintf(buffer, sizeof(buffer), "%s/%s",
 				 pib_get_service_type(entry->op), pib_get_trans_op(entry->op));
@@ -814,29 +912,25 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 
 		seq_printf(file, "%-18s PORT:%2u PSN:%06x LEN:%4u SLID:%04x DLID:%04x DQPN:%06x\n",
 			   buffer,
-			   entry->port, entry->psn, entry->data,
-			   entry->slid, entry->dlid, entry->dqpn);
+			   entry->port, entry->u.recv1.psn, entry->u.recv1.len,
+			   entry->u.recv1.slid, entry->u.recv1.dlid, entry->u.recv1.dqpn);
 		break;
 
-	case PIB_TRACE_ACT_RECV_OK:
+	case PIB_TRACE_ACT_RECV2:
 		if (pib_get_trans_op(entry->op))
 			snprintf(buffer, sizeof(buffer), "%s/%s",
 				 pib_get_service_type(entry->op), pib_get_trans_op(entry->op));
 		else
 			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
 
-		seq_printf(file, "%-18s PORT:%2u PSN:%06x LEN:%4u SQPN:%06x\n",
+		seq_printf(file, "%-18s PORT:%2u PSN:%06x DATA:%4u SQPN:%06x\n",
 			   buffer,
-			   entry->port, entry->psn, entry->data, entry->oid);
+			   entry->port, entry->u.recv2.psn, entry->u.recv2.data, entry->u.recv2.sqpn);
 		break
 ;
 	case PIB_TRACE_ACT_ASYNC:
-		if (pib_get_async_event(entry->op))
-			snprintf(buffer, sizeof(buffer), "%s", pib_get_async_event(entry->op));
-		else
-			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
-
-		seq_printf(file, "%-18s OID:%06x\n", buffer, entry->oid);
+		snprintf(buffer, sizeof(buffer), "%s", pib_get_async_event(entry->op));
+		seq_printf(file, "%-18s OID:%06x\n", buffer, entry->u.async.oid);
 		break;
 	}
 
@@ -880,21 +974,27 @@ static const struct file_operations trace_fops = {
 static struct pib_trace_entry *alloc_new_trace(struct pib_dev *dev)
 {
 	int index;
-	struct pib_trace_entry *table;
+	struct pib_trace_entry *entry;
 
-	table = dev->debugfs.trace_data;
-
-	if (!table)
+	if (!dev->debugfs.trace_data)
 		return NULL;
 
 	index = atomic_add_return(1, &dev->debugfs.trace_index);
 	index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
 
-	return &table[index];
+	entry = (struct pib_trace_entry *)dev->debugfs.trace_data + index;
+
+	entry->act = PIB_TRACE_ACT_NONE;
+
+	barrier();
+
+	entry->timestamp = jiffies;
+
+	return entry;
 }
 
 
-void pib_trace_api(struct pib_dev *dev, u8 op, u32 oid)
+void pib_trace_api(struct pib_dev *dev, int cmd, u32 oid)
 {
 	struct pib_trace_entry *entry;
 
@@ -903,9 +1003,12 @@ void pib_trace_api(struct pib_dev *dev, u8 op, u32 oid)
 	if (!entry)
 		return;
 
+	entry->op        = cmd;
+	entry->u.api.oid = oid;
+
+	barrier();
+
 	entry->act = PIB_TRACE_ACT_API;
-	entry->op  = op;
-	entry->oid = oid;
 }
 
 
@@ -921,13 +1024,12 @@ void pib_trace_send(struct pib_dev *dev, u8 port_num, int size)
 	if (!entry)
 		return;
 	
-	entry->act  = PIB_TRACE_ACT_SEND;
 	entry->port = port_num;
-	entry->data = size;
 
-	entry->slid = dev->thread.slid;
-	entry->dlid = dev->thread.dlid;
-	entry->oid  = dev->thread.src_qp_num;
+	entry->u.send.len = size;
+	entry->u.send.slid = dev->thread.slid;
+	entry->u.send.dlid = dev->thread.dlid;
+	entry->u.send.sqpn = dev->thread.src_qp_num;
 
 	buffer = dev->thread.buffer;
 	
@@ -939,9 +1041,13 @@ void pib_trace_send(struct pib_dev *dev, u8 port_num, int size)
 
 	bth = buffer;
 
-	entry->dqpn = be32_to_cpu(bth->destQP);
-	entry->psn  = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
+	entry->u.send.dqpn = be32_to_cpu(bth->destQP);
+	entry->u.send.psn  = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
 	entry->op   = bth->OpCode;
+
+	barrier();
+
+	entry->act  = PIB_TRACE_ACT_SEND;
 }
 
 
@@ -954,15 +1060,17 @@ void pib_trace_recv(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, int si
 	if (!entry)
 		return;
 
-	entry->act  = PIB_TRACE_ACT_RECV;
 	entry->op   = opcode;
 	entry->port = port_num;
-	entry->data = size;
-	entry->slid = slid;
-	entry->dlid = dlid;
-	entry->oid  = 0;
-	entry->dqpn = dqpn;
-	entry->psn  = psn;
+	entry->u.recv1.len = size;
+	entry->u.recv1.slid = slid;
+	entry->u.recv1.dlid = dlid;
+	entry->u.recv1.dqpn = dqpn;
+	entry->u.recv1.psn  = psn;
+
+	barrier();
+
+	entry->act  = PIB_TRACE_ACT_RECV1;
 }
 
 
@@ -975,16 +1083,19 @@ void pib_trace_recv_ok(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, u32
 	if (!entry)
 		return;
 
-	entry->act  = PIB_TRACE_ACT_RECV_OK;
 	entry->op   = opcode;
 	entry->port = port_num;
-	entry->data = data;
-	entry->oid  = sqpn;
-	entry->psn  = psn;
+	entry->u.recv2.data = data;
+	entry->u.recv2.sqpn = sqpn;
+	entry->u.recv2.psn  = psn;
+
+	barrier();
+
+	entry->act  = PIB_TRACE_ACT_RECV2;
 }
 
 
-void pib_trace_async(struct pib_dev *dev, u8 op, u32 id)
+void pib_trace_async(struct pib_dev *dev, enum ib_event_type type, u32 oid)
 {
 	struct pib_trace_entry *entry;
 
@@ -993,9 +1104,12 @@ void pib_trace_async(struct pib_dev *dev, u8 op, u32 id)
 	if (!entry)
 		return;
 
-	entry->act  = PIB_TRACE_ACT_ASYNC;
-	entry->op   = op;
-	entry->oid  = id;
+	entry->op           = type;
+	entry->u.async.oid  = oid;
+
+	barrier();
+
+	entry->act = PIB_TRACE_ACT_ASYNC;
 }
 
 

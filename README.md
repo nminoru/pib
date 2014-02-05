@@ -3,8 +3,7 @@ pib - Pseudo InfiniBand HCA driver
 
 pib is a software-based InfiniBand HCA driver.
 It provides InfiniBand functions without real IB HCA & fabric.
-
-pib aims to be accurate IB simulator to assist developers
+pib aims to simulate InfiniBand behavior accurately but not to get speed.
 
 pib contains the two components.
 
@@ -18,7 +17,7 @@ In single-host-mode, pib creates up to 4 InfiniBand HCA (The default is 2).
 These IB devices are pib_0, pib_1, pib_2 and pib_3.
 Each HCA contains up to 32 ports (The default is 2).
 
-In addition, pib creates single internal InfiniBand switch too.
+In addition, pib creates one internal InfiniBand switch too.
 All ports of pib's HCA are connected to this switch.
 
 The current version of pib enables to drive the following interface:
@@ -34,11 +33,11 @@ The current version of pib enables to drive the following interface:
 
 Debugging support features:
 
-* Inspect IB objects (ucontext, protection domain, MR, SRQ, CQ, AH, QP)
-* Error injection (QP/CQ/SRQ Error)
-* Execution trace (API invocation, packet sending/receiving, async event)
+* Inspect IB objects (ucontext, PD, MR, SRQ, CQ, AH, QP)
+* Trace API invocations, packet sending/receiving, async events/errors
+* Inject a specified error (QP/CQ/SRQ Error)
 * Select some implementation dependent behaviours and enforce error checking.
-* Show a warning of pithalls that programs should avoid. 
+* Show a warning of pithalls that IB programs should avoid. 
 
 Other features:
 
@@ -156,10 +155,92 @@ Performance counter
 
     # perfquery
 
-IB Objection inspection
------------------------
+Debugging support
+=================
 
-    # mount -t debugfs nodev /sys/kernel/debug
+pib provieds some debugging functions to help developing IB programs.
+
+    # mount -t debugfs none /sys/kernel/debug
+
+/sys/kernel/debug/pib/{pib_0,pib_1,pib_2,pib_3}/
+
+
+Objection inspection
+--------------------
+
+The object inspection displays IB objects.
+_ucontext_, _cq_, _pd_, _mr_, _ah_, _srq_ and _qp_
+
+Each IB objects except QP ha an unique number(OID) in creation time.
+The OID has a range from 1 to N.
+Zero indicates invalid.
+
+The QP's OID is the same as QPN.
+
+_ucontext_ displays a list of ucontext(s).
+
+    OID  CREATIONTIME                               PID   TIG   COMM
+    0003 1391600465.758872379 (2014-02-05 11:41:05)  3010  3010 ibv_srq_pingpon
+
+_cq_ displays a list of completion queue(s).
+
+_TYPE_ indicates *NONE*(don't attach completion channel), *SOLI*(solicited only) or *COMP*(all completion).
+
+_NOTIFY_ indicates *NOTIFY* or *WAIT*.
+
+    OID  CREATIONTIME                               S  MAX    CUR   TYPE NOTIFY
+    0001 1391600412.870028559 (2014-02-05 11:40:12) OK   1280     0 NONE WAIT
+    0004 1391600412.878382628 (2014-02-05 11:40:12) OK    128     9 NONE WAIT
+
+_pd_ displays a list of protection domain(s).
+
+    OID  CREATIONTIME
+    0001 1391600791.823835597 (2014-02-05 11:46:31)
+    0002 1391600791.832684317 (2014-02-05 11:46:31)
+
+_mr_ displays a list of memory region(s).
+
+_DMA_ indicates *DMA* or *USR*.
+
+    OID  CREATIONTIME                               PD   START            LENGTH           LKEY     RKEY     DMA AC
+    0001 1391600412.870147521 (2014-02-05 11:40:12) 0001 0000000000000000 ffffffffffffffff ebb40000 ebb47000 DMA 1
+    000f 1391600465.758921144 (2014-02-05 11:41:05) 0007 0000000000e28000 0000000000001000 694ed000 694ee000 USR 1
+
+_ah_ displays a list of address handle(s).
+
+    OID    CREATIONTIME                               PD   DLID AC PORT
+    000017 1391600420.365123687 (2014-02-05 11:40:20) 0001 0001  0 1
+    000019 1391600420.365679451 (2014-02-05 11:40:20) 0002 0001  0 2
+    00001a 1391600422.974130883 (2014-02-05 11:40:22) 0003 c000  1 1
+    00001f 1391600422.980053867 (2014-02-05 11:40:22) 0004 c000  1 2
+
+_srq_ displays a list of share receive queue(s).
+
+    OID  CREATIONTIME                               PD   S   MAX   CUR
+    0001 1391600791.843958465 (2014-02-05 11:46:31) 0003 OK    256   256
+    0002 1391600791.854553879 (2014-02-05 11:46:31) 0004 OK    256   256
+    0003 1391600801.525241462 (2014-02-05 11:46:41) 0005 OK    500   500
+
+_qp_ displays a list of queue pair(s).
+
+    OID    CREATIONTIME                               PD   QT  STATE SRQ  MAX-S CUR-S MAX-R CUR-R
+    cce848 1391600791.852536098 (2014-02-05 11:46:31) 0003 UD  RTS   0000   128     0   256   256
+    cce849 1391600791.866151759 (2014-02-05 11:46:31) 0004 UD  RTS   0000   128     0   256   256
+    cce84a 1391600801.525381039 (2014-02-05 11:46:41) 0005 RC  INIT  0003     1     0     0     0
+    cce84b 1391600801.525391678 (2014-02-05 11:46:41) 0005 RC  INIT  0003     1     0     0     0
+
+
+Execution trace
+---------------
+
+_trace_ displays execution trace.
+
+Error injection
+---------------
+
+You can inject CQ, QP or SRQ aschronous error via _inject_err_.
+
+    $ echo "CQ 0004" > inject_err
 
 Future work
 ===========
