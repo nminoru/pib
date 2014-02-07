@@ -432,6 +432,8 @@ struct pib_dev {
 		struct dentry  *trace;
 		void	       *trace_data;
 		atomic_t	trace_index;
+		unsigned long   last_record_time;
+		int		count_records;
 	} debugfs;
 };
 
@@ -781,14 +783,14 @@ struct pib_recv_wqe {
 
 
 struct pib_cqe {
-	struct ib_wc            ib_wc; /* @todo 内部の qp は余分 */
+	struct ib_wc            ib_wc;
 	struct list_head        list;
 };
 
 
 extern bool pib_multi_host_mode;
 extern int pib_debug_level;
-extern u64 hca_guid_base;
+extern u64 pib_hca_guid_base;
 extern struct pib_dev *pib_devs[];
 extern struct pib_easy_sw pib_easy_sw;
 extern unsigned int pib_num_hca;

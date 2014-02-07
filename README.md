@@ -46,7 +46,7 @@ Other features:
 Limitation
 ==========
 
-The current version is EXPERIMETNAL and not supported multi host mode.
+The current version is EXPERIMETNAL and not supported multi-host-mode.
 
 The follwing features are not supported:
 
@@ -55,6 +55,7 @@ The follwing features are not supported:
 - Memory Windows (MR)
 - SEND Invalidate operation
 - Virtual Lane (VL)
+- Flow control
 
 Supported OS
 ============

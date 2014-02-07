@@ -295,8 +295,9 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 		spin_lock_irqsave(&dev->lock, flags);
 		if (dev->ports[init_attr->port_num - 1].qp_info[qp_num])
 			pr_err("pib: try to create QP%u again\n", qp_num);
-		else
+		else 
 			dev->ports[init_attr->port_num - 1].qp_info[qp_num] = qp;
+		list_add_tail(&qp->list, &dev->qp_head);
 		spin_unlock_irqrestore(&dev->lock, flags);
 		break;
 
@@ -325,6 +326,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 	default:
 		pr_err("pib: pib_create_qp: unknown QP type %s(%d)\n",
 		       pib_get_qp_type(init_attr->qp_type), init_attr->qp_type);
+		kmem_cache_free(pib_qp_cachep, qp);
 		return ERR_PTR(-ENOSYS);
 	}
 
@@ -381,9 +383,10 @@ err_alloc_inlin_data_buffer:
 		spin_unlock_irqrestore(&dev->lock, flags);
 	}
 
+	list_del(&qp->list);
+
 	if ((qp_num != PIB_QP0) && (qp_num != PIB_QP1)) {
 		spin_lock_irqsave(&dev->lock, flags);
-		list_del(&qp->list);
 		dev->nr_qp--;
 		pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -500,8 +503,9 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 	else
 		rb_erase(&qp->rb_node, &dev->qp_table);
 
+	list_del(&qp->list);
+
 	if ((qp_num != PIB_QP0) && (qp_num != PIB_QP1)) {
-		list_del(&qp->list);
 		dev->nr_qp--;
 		pib_dealloc_obj_num(dev, PIB_BITMAP_QP_START, qp_num);
 	}

@@ -123,7 +123,7 @@ int pib_create_switch(struct pib_easy_sw *sw)
 			cpu_to_be64(0xFE80000000000000ULL);
 		/* the same guid for all ports on a switch */
 		port->gid[0].global.interface_id  =
-			cpu_to_be64(hca_guid_base | 0x0100ULL);
+			cpu_to_be64(pib_hca_guid_base | 0x0100ULL);
 
 		port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
 		port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
@@ -734,9 +734,9 @@ static int subn_get_nodeinfo(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_p
 	node_info->class_version	= PIB_MGMT_CLASS_VERSION;
 	node_info->node_type		= RDMA_NODE_IB_SWITCH;
 	node_info->node_ports		= sw->port_cnt - 1;
-	node_info->sys_image_guid	= cpu_to_be64(hca_guid_base | 0x0200ULL);
-	node_info->node_guid		= cpu_to_be64(hca_guid_base | 0x0100ULL);
-	node_info->port_guid		= cpu_to_be64(hca_guid_base | 0x0100ULL);
+	node_info->sys_image_guid	= cpu_to_be64(pib_hca_guid_base | 0x0200ULL);
+	node_info->node_guid		= cpu_to_be64(pib_hca_guid_base | 0x0100ULL);
+	node_info->port_guid		= cpu_to_be64(pib_hca_guid_base | 0x0100ULL);
 	node_info->partition_cap	= cpu_to_be16(1); /* @todo */
 	node_info->device_id		= cpu_to_be16(PIB_DRIVER_DEVICE_ID);
 	node_info->revision		= cpu_to_be32(PIB_DRIVER_REVISION);

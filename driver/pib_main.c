@@ -36,8 +36,8 @@ struct kmem_cache *pib_cqe_cachep;
 struct kmem_cache *pib_mcast_link_cachep;
 
 
-bool pib_multi_host_mode;
-u64 hca_guid_base;
+bool  pib_multi_host_mode;
+u64 pib_hca_guid_base;
 struct pib_dev *pib_devs[PIB_MAX_HCA];
 struct pib_easy_sw  pib_easy_sw;
 
@@ -345,7 +345,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	struct pib_dev *dev;
 	struct ib_device_attr ib_dev_attr = {
 		.fw_ver              = PIB_DRIVER_FW_VERSION,
-		.sys_image_guid      = cpu_to_be64(hca_guid_base | 0x0200ULL),
+		.sys_image_guid      = cpu_to_be64(pib_hca_guid_base | 0x0200ULL),
 		.max_mr_size         = 0xffffffffffffffffULL,
 		.page_size_cap       = 0xfffffe00UL, /* @todo */
 		.vendor_id           = 1U,
@@ -399,7 +399,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 
 	dev->ib_dev.owner		= THIS_MODULE;
 	dev->ib_dev.node_type		= RDMA_NODE_IB_CA;
-	dev->ib_dev.node_guid		= cpu_to_be64(hca_guid_base | ((3 + dev_id) << 8) | 0);
+	dev->ib_dev.node_guid		= cpu_to_be64(pib_hca_guid_base | ((3 + dev_id) << 8) | 0);
 	dev->ib_dev.local_dma_lkey	= PIB_LOCAL_DMA_LKEY;
 	dev->ib_dev.phys_port_cnt	= pib_phys_port_cnt;
 	dev->ib_dev.num_comp_vectors	= num_possible_cpus();
@@ -651,7 +651,7 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 		/* default GID prefix */
 		cpu_to_be64(0xFE80000000000000ULL);
 	port->gid[0].global.interface_id  =
-		cpu_to_be64(hca_guid_base | ((3 + dev->dev_id) << 8) | (port_num));
+		cpu_to_be64(pib_hca_guid_base | ((3 + dev->dev_id) << 8) | (port_num));
 
 	port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
 	port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
@@ -863,17 +863,17 @@ static void get_hca_guid_base(void)
 			continue;
 
 		for (i=0 ; i<ETH_ALEN ; i++) {
-			hca_guid_base |= (u8)dev->dev_addr[i];
-			hca_guid_base <<= 8;
+			pib_hca_guid_base |= (u8)dev->dev_addr[i];
+			pib_hca_guid_base <<= 8;
 		}
 		
-		hca_guid_base <<= (sizeof(hca_guid_base) - ETH_ALEN - 1) * 8;
+		pib_hca_guid_base <<= (sizeof(pib_hca_guid_base) - ETH_ALEN - 1) * 8;
 		break;
 	}
 	rtnl_unlock();
 
-	if (hca_guid_base == 0)
-		hca_guid_base = 0xCafeBabe0000ULL;
+	if (pib_hca_guid_base == 0)
+		pib_hca_guid_base = 0xCafeBabe0000ULL;
 }
 
 

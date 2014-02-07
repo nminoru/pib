@@ -1,15 +1,5 @@
 - pib.ko のアンロードの高速化
 
-- ソケットのバッファサイズを変更可能に
-
-    static unsigned int sendbuf_size;
-    module_param_named(send_queue_size, sendbuf_size, uint, 0444);
-    MODULE_PARM_DESC(send_queue_size, "Number of descriptors in send queue");
-
-    static unsigned int recvbuf_size;
-    module_param_named(recv_queue_size, recvbuf_size, uint, 0444);
-    MODULE_PARM_DESC(recv_queue_size, "Number of descriptors in send queue");
-
 - MSN
 
 - infiniband-diags のコマンドで落ちないようにする。
@@ -29,10 +19,6 @@
   - QP event 
     - IBV_EVENT_PATH_MIG
     - IBV_EVENT_PATH_MIG_ERR
-  - CQ events
-    - IBV_EVENT_CQ_ERR
-  - SRQ events
-    - IBV_EVENT_SRQ_ERR
   - Port events
     - IBV_EVENT_CLIENT_REREGISTER
     - IBV_EVENT_GID_CHANGE

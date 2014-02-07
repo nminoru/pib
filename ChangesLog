@@ -1,0 +1,67 @@
+2014-02-05 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.8
+           * Add debugfs feature to collect execution trace
+
+2014-01-31 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.7
+           * Add debugfs feature to inject an error
+           * Enable to change the size of send/recv buffers
+
+2014-01-29 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.6
+           * Add debugfs feature to inspect internal objects
+           * Add solicted event processing
+           * Change dev->lock locking
+
+2014-01-25 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.5
+           * Add PerfMtg MAD processing
+           * Enable to work ibnetdiscover, perfquery
+
+2014-01-24 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.4
+           * Add GRH support
+
+2014-01-23 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.3
+           * Fix the condition to generate IBV_EVENT_SQ_DRAINED
+
+2014-01-19 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.1
+           * Bugfix some bugs
+           * Enable to work RDMA CM
+
+2014-01-17 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.0
+           * Add multicast support
+           * Enable to work IPoIB
+
+2013-12-28 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.1.0
+           * Add Subnet Management Packet(SMP) processing
+           * Enable to work with OpenSM
+
+2013-12-09 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.0.5 
+           * libpib: version 0.0.5
+           * Hack for the IB/core bug to pas imm_data from ib_uverbs_send_wr to ib_send_wr correctly when sending UD messages.
+
+2013-10-30 Minoru NAKAMURA <nminoru@nminoru.jp>
+           
+           * libpib: version 0.0.2
+           * Add spec file
+
+2013-10-06 Minoru NAKAMURA <nminoru@nminoru.jp>
+           
+           * pib: version 0.0.1
+           * Initial 

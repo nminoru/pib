@@ -283,19 +283,15 @@ static const int attr_OpCode[] = {
 u32 pib_random(void)
 {
 	u32 d1, d2, d3;
-	struct timespec tv;
-
 	static u32 count;
-
-	getnstimeofday(&tv);
 
 	d1 = jiffies;
 	d2 = (u32)(uintptr_t)current;
 
 	if (1 == cpu_to_be32(1))
-		d3 = cpu_to_le32(tv.tv_sec ^ tv.tv_nsec);
+		d3 = cpu_to_le32(get_cycles());
 	else
-		d3 = cpu_to_be32(tv.tv_sec ^ tv.tv_nsec);
+		d3 = cpu_to_be32(get_cycles());
 
 	count++;
 
