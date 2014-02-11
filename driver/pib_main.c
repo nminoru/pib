@@ -36,10 +36,14 @@ struct kmem_cache *pib_cqe_cachep;
 struct kmem_cache *pib_mcast_link_cachep;
 
 
-bool  pib_multi_host_mode;
+bool pib_multi_host_mode;
+struct sockaddr *pib_netd_sockaddr;
+int pib_netd_socklen;
 u64 pib_hca_guid_base;
 struct pib_dev *pib_devs[PIB_MAX_HCA];
 struct pib_easy_sw  pib_easy_sw;
+struct sockaddr **pib_lid_table;
+
 
 int pib_debug_level;
 module_param_named(debug_level, pib_debug_level, int, 0644);
@@ -65,18 +69,17 @@ unsigned int pib_manner_err;
 module_param_named(manner_err, pib_manner_warn, uint, 0644);
 MODULE_PARM_DESC(manner_err, "Number of physical ports");
 
-char *pib_server_addr;
-module_param_named(addr, pib_server_addr, charp, S_IRUGO);
-MODULE_PARM_DESC(addr, "IP address");
+static char *server_addr;
+module_param_named(addr, server_addr, charp, S_IRUGO);
+MODULE_PARM_DESC(addr, "pibnetd's IP address");
 
-u16 pib_server_port;
-module_param_named(port, pib_server_port, ushort, S_IRUGO);
-MODULE_PARM_DESC(port, "Port number");
+static u16 server_port = PIB_NETD_DEFAULT_PORT;
+module_param_named(port, server_port, ushort, S_IRUGO);
+MODULE_PARM_DESC(port, "pibnetd's port number");
 
 static struct class *dummy_parent_class; /* /sys/class/pib */
 static struct device *dummy_parent_device;
 static u64 dummy_parent_device_dma_mask = DMA_BIT_MASK(32);
-static struct sockaddr **lid_table;
 
 
 static int pib_query_device(struct ib_device *ibdev,
@@ -530,7 +533,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 
 	for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
 		if (init_port(dev, i + 1))
-			goto err_ld_table;
+			goto err_init_port;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	dev->imm_data_lkey	= PIB_IMM_DATA_LKEY;
@@ -564,11 +567,7 @@ err_create_kthread:
 
 err_register_ibdev:
 
-err_ld_table:
-	if (lid_table == NULL)
-		for (i = dev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
-			if (dev->ports[i].lid_table)
-				vfree(dev->ports[i].lid_table);
+err_init_port:
 
 	vfree(dev->obj_num_bitmap);
 err_obj_num_bitmap:
@@ -636,14 +635,6 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 	port->port_num	   = port_num;
 	port->ib_port_attr = ib_port_attr;
 
-	if (lid_table != NULL) {
-		port->lid_table = lid_table;
-	} else {
-		port->lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
-		if (!port->lid_table)
-			return -1;
-	}
-
 	/*
 	 * @see IBA Spec. Vol.1 4.1.1
 	 */
@@ -703,7 +694,10 @@ void pib_dealloc_obj_num(struct pib_dev *dev, u32 start, u32 index)
 
 static void pib_dev_remove(struct pib_dev *dev)
 {
-	int i;
+#ifdef PIB_HACK_IPOIB_LEAK_AH
+	unsigned long flags;
+	struct pib_ah *ah, *next_ah;
+#endif
 
 	pr_info("pib: remove HCA (dev_id=%d)\n", dev->dev_id);
 
@@ -711,14 +705,24 @@ static void pib_dev_remove(struct pib_dev *dev)
 
 	pib_release_kthread(dev);
 
-	if (lid_table == NULL)
-		for (i= dev->ib_dev.phys_port_cnt - 1 ; 0 <= i ; i--)
-			if (dev->ports[i].lid_table)
-				vfree(dev->ports[i].lid_table);
-
 	vfree(dev->ports);
 	vfree(dev->obj_num_bitmap);
 	vfree(dev->mcast_table);
+
+#ifdef PIB_HACK_IPOIB_LEAK_AH
+	/*
+	 * HACK
+	 * ib_ipoib.ko が IB ドライバの unregister 時に AH をリークさせている。
+	 * 応急処置として AH は全て解放する。
+	 */
+	spin_lock_irqsave(&dev->lock, flags);
+	list_for_each_entry_safe(ah, next_ah, &dev->ah_head, list) {
+		list_del(&ah->list);
+		dev->nr_ah--;
+		kmem_cache_free(pib_ah_cachep, ah);
+	}
+	spin_unlock_irqrestore(&dev->lock, flags);
+#endif
 
 	ib_dealloc_device(&dev->ib_dev);
 }
@@ -877,6 +881,43 @@ static void get_hca_guid_base(void)
 }
 
 
+static int parse_multi_host_mode(void)
+{
+	struct sockaddr_in *sockaddr;
+	unsigned int s1, s2, s3, s4;
+
+	if (!server_addr)
+		return 0;
+
+	/* Confirm that pib_server_addr is a valid IPv4 address */
+	if (sscanf(server_addr, "%u.%u.%u.%u", &s1, &s2, &s3, &s4) != 4)
+		return 0;
+
+	if ((256 <= s1) || (256 <= s2) || (256 <= s3) || (256 <= s4))
+		return 0;
+
+	if ((server_port == 0) || (65536 <= server_port))
+		return 0;
+
+	sockaddr = kzalloc(sizeof(*sockaddr), GFP_KERNEL);
+
+	if (!sockaddr)
+		return -1;
+
+	/* Enable multi-host-mode */
+	pib_multi_host_mode = true;
+
+	sockaddr->sin_family      = AF_INET;
+	sockaddr->sin_addr.s_addr = htonl((s1 << 24) | (s2 << 16) | (s3 << 8) | s4);
+	sockaddr->sin_port	  = server_port;
+
+	pib_netd_sockaddr = (struct sockaddr *)sockaddr;
+	pib_netd_socklen  = sizeof(*sockaddr);
+
+	return 0;
+}
+
+
 static int __init pib_init(void)
 {
 	int i, j, err = 0;
@@ -916,22 +957,25 @@ static int __init pib_init(void)
 
 	get_hca_guid_base();
 
-#ifdef PIB_USE_EASY_SWITCH
-	lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
-	if (!lid_table)
-		goto err_alloc_lid_table;
-#endif
+	if (parse_multi_host_mode())
+		goto err_parse_multi_host_mode;
+
+	if (pib_multi_host_mode)
+		pr_info("pib: multi-host-mode\n");
+	else
+		pr_info("pib: single-host-mode\n");
+
+	if (!pib_multi_host_mode) {
+		pib_lid_table = vzalloc(sizeof(struct sockaddr*) * PIB_MAX_LID);
+		if (!pib_lid_table)
+			goto err_alloc_lid_table;
+	}
 
 	if (pib_kmem_cache_create()) {
 		pib_kmem_cache_destroy();
 		err = -ENOMEM;
 		goto err_kmem_cache_destroy;
 	}
-
-	if (pib_multi_host_mode)
-		pr_info("pib: multi-host-mode\n");
-	else
-		pr_info("pib: single-host-mode\n");
 	
 	if (!pib_multi_host_mode) {
 		if (pib_create_switch(&pib_easy_sw))
@@ -960,13 +1004,20 @@ err_ib_add:
 	pib_release_switch(&pib_easy_sw);
 err_create_switch:
 
+	if (pib_netd_sockaddr) {
+		kfree(pib_netd_sockaddr);
+		pib_netd_sockaddr = NULL;
+	}
+err_parse_multi_host_mode:
+
 	pib_kmem_cache_destroy();
 err_kmem_cache_destroy:
 
-#ifdef PIB_USE_EASY_SWITCH
-	vfree(lid_table);
+	if (pib_lid_table)
+		vfree(pib_lid_table);
+	pib_lid_table = NULL;
+
 err_alloc_lid_table:
-#endif
 
 	device_unregister(dummy_parent_device);
 	dummy_parent_device = NULL;
@@ -995,11 +1046,15 @@ static void __exit pib_cleanup(void)
 	if (!pib_multi_host_mode)
 		pib_release_switch(&pib_easy_sw);
 
+	if (pib_netd_sockaddr)
+		kfree(pib_netd_sockaddr);
+
 	pib_kmem_cache_destroy();
 
-#ifdef PIB_USE_EASY_SWITCH
-	vfree(lid_table);
-#endif
+	if (pib_lid_table) {
+		vfree(pib_lid_table);
+		pib_lid_table = NULL;
+	}
 
 	if (dummy_parent_device) {
 		device_unregister(dummy_parent_device);

@@ -1,3 +1,5 @@
+- ICRC & VCRC と PktLen を規格に合致させること。
+
 - pib.ko のアンロードの高速化
 
 - MSN

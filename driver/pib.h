@@ -34,8 +34,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	8
-#define PIB_DRIVER_VERSION 	"0.2.8"
+#define PIB_VERSION_REVISION	9
+#define PIB_DRIVER_VERSION 	"0.2.9"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -47,7 +47,7 @@
 #define PIB_UVERBS_ABI_VERSION  (6)
 
 
-#define PIB_USE_EASY_SWITCH
+#define PIB_NETD_DEFAULT_PORT	(8432)
 
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
@@ -58,6 +58,8 @@
  */
 #define PIB_HACK_IMM_DATA_LKEY
 #endif
+
+#define PIB_HACK_IPOIB_LEAK_AH
 
 #define PIB_LOCAL_DMA_LKEY		(0)
 
@@ -192,10 +194,13 @@ enum pib_swqe_list {
 };
 
 
+/*
+ *  この並びは優先度順
+ */
 enum pib_thread_flag {
 	PIB_THREAD_STOP,
-	PIB_THREAD_READY_TO_RECV,
 	PIB_THREAD_WQ_SCHEDULE,
+	PIB_THREAD_READY_TO_RECV,
 	PIB_THREAD_QP_SCHEDULE
 };
 
@@ -321,7 +326,6 @@ struct pib_port {
 
 	struct pib_port_perf	perf;  
 
-	struct sockaddr       **lid_table;
 	struct socket          *socket;
 	struct sockaddr        *sockaddr;
 	union ib_gid		gid[PIB_GID_PER_PORT];
@@ -406,13 +410,14 @@ struct pib_dev {
 
 		unsigned long	flags;
 
-		void	       *buffer; /* buffer for sendmsg/recvmsg */
+		void	       *send_buffer; /* buffer for sendmsg */
+		void	       *recv_buffer; /* buffer for recvmsg */
+		int		recv_size;
 
 		u8		port_num;
 		u16		slid;
 		u16		dlid;
 		u32		src_qp_num;
-		size_t		msg_size;
 		int		ready_to_send;
 	} thread;
 
@@ -474,7 +479,6 @@ struct pib_ucontext {
 
 	u32			ucontext_num;
 	struct timespec		creation_time;
-	pid_t			pid;
 	pid_t			tgid;	
 	char			comm[TASK_COMM_LEN];
 };
@@ -789,17 +793,18 @@ struct pib_cqe {
 
 
 extern bool pib_multi_host_mode;
+extern struct sockaddr *pib_netd_sockaddr;
+extern int pib_netd_socklen;
 extern int pib_debug_level;
 extern u64 pib_hca_guid_base;
 extern struct pib_dev *pib_devs[];
 extern struct pib_easy_sw pib_easy_sw;
+extern struct sockaddr **pib_lid_table;
 extern unsigned int pib_num_hca;
 extern unsigned int pib_phys_port_cnt;
 extern unsigned int pib_behavior;
 extern unsigned int pib_manner_warn;
 extern unsigned int pib_manner_err;
-extern char *pib_server_addr;
-extern u16 pib_server_port;
 extern struct kmem_cache *pib_ah_cachep;
 extern struct kmem_cache *pib_mr_cachep;
 extern struct kmem_cache *pib_qp_cachep;
@@ -1047,6 +1052,7 @@ extern u32 pib_get_rnr_nak_time(int timeout);
 extern unsigned long pib_get_local_ack_time(int timeout);
 extern u8 pib_get_local_ca_ack_delay(void);
 extern bool pib_is_unicast_lid(u16 lid);
+extern bool pib_is_permissive_lid(u16 lid);
 extern const char *pib_get_mgmt_method(u8 method);
 extern const char *pib_get_smp_attr(__be16 attr_id);
 extern const char *pib_get_sa_attr(__be16 attr_id);

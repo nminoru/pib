@@ -103,7 +103,7 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	buffer = dev->thread.buffer;
+	buffer = dev->thread.send_buffer;
 
 	memset(buffer, 0, sizeof(*lrh) + sizeof(*grh) + sizeof(*bth) + sizeof(*deth));
 
@@ -186,10 +186,10 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	buffer += send_wqe->total_length;
 
 	/* サイズの再計算 */
-	packet_length     = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.send_buffer;
 	fix_packet_length = (packet_length + 3) & ~3;
 
-	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
+	pib_packet_lrh_set_pktlen(lrh, (fix_packet_length + 4)/ 4); /* add ICRC size */
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
 	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
@@ -197,7 +197,6 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
 	dev->thread.slid	= slid;
 	dev->thread.dlid	= dlid;
-	dev->thread.msg_size	= fix_packet_length;
 	dev->thread.ready_to_send = 1;
 
 	qp->ib_qp_attr.sq_psn++;

@@ -51,7 +51,7 @@ static void push_atomic_acknowledge(struct pib_qp *qp, u32 psn, u64 res);
  */
 static void generate_Normal_or_Atomic_acknowledge(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, struct pib_ack *ack);
 static int generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, struct pib_ack *ack);
-static int pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_syndrome syndrome, int with_atomiceth, u64 res);
+static int pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_syndrome syndrome, int with_atomiceth, u64 res, struct pib_packet_bth **bth_p);
 
 /*
  *  Requester: Receiving Responses
@@ -121,7 +121,7 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	pd = to_ppd(qp->ib_qp.pd);
 
-	buffer = dev->thread.buffer;
+	buffer = dev->thread.send_buffer;
 
 	slid = dev->ports[port_num - 1].ib_port_attr.lid;
 	dlid = ah_attr.dlid;
@@ -240,7 +240,6 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	dev->thread.slid	= slid;
 	dev->thread.dlid	= dlid;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
-	dev->thread.msg_size    = pib_packet_lrh_get_pktlen(lrh) * 4;
 	dev->thread.ready_to_send = 1;
 
 	if (send_wqe->opcode != IB_WR_RDMA_READ) {
@@ -320,10 +319,10 @@ process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struc
 	buffer += payload_size;
 
 	/* calculate packet length & pad count */
-	packet_length     = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.send_buffer;
 	fix_packet_length = (packet_length + 3) & ~3;
 
-	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
+	pib_packet_lrh_set_pktlen(lrh, (fix_packet_length + 4) / 4); /* add ICRC size */
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
 	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
@@ -377,10 +376,10 @@ process_RDMA_READ_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_sen
 	reth->dmalen = cpu_to_be32(dmalen);
 
 	/* calculate packet length & pad count */
-	packet_length     = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.send_buffer;
 	fix_packet_length = (packet_length + 3) & ~3;
 
-	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
+	pib_packet_lrh_set_pktlen(lrh, (fix_packet_length + 4) / 4); /* add ICRC size */
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
 	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
@@ -403,10 +402,10 @@ process_Atomic_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_w
 	atomiceth->cmp_dt  = cpu_to_be64(send_wqe->wr.atomic.compare_add);
 
 	/* calculate packet length & pad count */
-	packet_length     = buffer - dev->thread.buffer;
+	packet_length     = buffer - dev->thread.send_buffer;
 	fix_packet_length = (packet_length + 3) & ~3;
 
-	pib_packet_lrh_set_pktlen(lrh, fix_packet_length / 4); 
+	pib_packet_lrh_set_pktlen(lrh, (fix_packet_length + 4) / 4); /* add ICRC size */
 	pib_packet_bth_set_padcnt(bth, fix_packet_length - packet_length);
 	pib_packet_bth_set_solicited(bth, send_wqe->send_flags & IB_SEND_SOLICITED);
 
@@ -1272,17 +1271,16 @@ generate_Normal_or_Atomic_acknowledge(struct pib_dev *dev, struct pib_qp *qp, u1
 	if (ack->type == PIB_ACK_NORMAL)
 		size = pack_acknowledge_packet(dev, qp,
 					       IB_OPCODE_RC_ACKNOWLEDGE, ack->psn,
-					       1, ack->syndrome, 0, 0);
+					       1, ack->syndrome, 0, 0, NULL);
 	else
 		size = pack_acknowledge_packet(dev, qp,
 					       IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE, ack->psn,
-					       1, PIB_SYND_ACK_CODE, 1, ack->data.atomic.res);
+					       1, PIB_SYND_ACK_CODE, 1, ack->data.atomic.res, NULL);
 
 	dev->thread.port_num    = port_num;
 	dev->thread.slid	= dev->ports[port_num - 1].ib_port_attr.lid;
 	dev->thread.dlid	= dlid;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
-	dev->thread.msg_size    = size;
 	dev->thread.ready_to_send = 1;
 }
 
@@ -1297,11 +1295,12 @@ generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, st
 	struct pib_pd *pd;
 	u32 data_size, payload_size;
 	struct pib_packet_lrh *lrh;
+	struct pib_packet_bth *bth;
 	enum ib_wc_status status;
 	unsigned long flags;
 	u8 port_num;
 
-	lrh = (struct pib_packet_lrh*)dev->thread.buffer;
+	lrh = (struct pib_packet_lrh*)dev->thread.send_buffer;
 
 	pmtu = (128U << qp->ib_qp_attr.path_mtu);
 
@@ -1320,21 +1319,22 @@ generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, st
 	/* ここからパケット送信 */
 
 	size = pack_acknowledge_packet(dev, qp, OpCode, ack->psn + psn_offset,
-				       with_aeth, PIB_SYND_ACK_CODE, 0, 0);
+				       with_aeth, PIB_SYND_ACK_CODE, 0, 0, &bth);
 
 	data_size = (ack->data.rdma_read.size - ack->data.rdma_read.offset < pmtu) ?
 		(ack->data.rdma_read.size - ack->data.rdma_read.offset) : pmtu;
 	
 	payload_size = (data_size + 3) & ~3;
 
-	pib_packet_lrh_set_pktlen(lrh, pib_packet_lrh_get_pktlen(lrh) + payload_size / 4);
+	pib_packet_lrh_set_pktlen(lrh, (size + payload_size + 4) / 4); /* add ICRC size */
+	pib_packet_bth_set_padcnt(bth, payload_size - data_size);
 
 	pd = to_ppd(qp->ib_qp.pd);
 
 	spin_lock_irqsave(&pd->lock, flags);
 	status = pib_util_mr_copy_data_with_rkey(pd,
 						 ack->data.rdma_read.rkey,
-						 dev->thread.buffer + size,
+						 dev->thread.send_buffer + size,
 						 ack->data.rdma_read.vaddress + ack->data.rdma_read.offset,
 						 data_size,
 						 IB_ACCESS_REMOTE_READ,
@@ -1353,7 +1353,6 @@ generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, st
 	dev->thread.slid	= dev->ports[port_num - 1].ib_port_attr.lid;
 	dev->thread.dlid	= dlid;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
-	dev->thread.msg_size    = size + payload_size;
 	dev->thread.ready_to_send = 1;
 
 	ack->data.rdma_read.offset += data_size;
@@ -1363,7 +1362,7 @@ generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, st
 
 
 static int
-pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_syndrome syndrome, int with_atomiceth, u64 res)
+pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 psn, int with_aeth, enum pib_syndrome syndrome, int with_atomiceth, u64 res, struct pib_packet_bth **bth_p)
 {
 	int size;
 	void *buffer;
@@ -1379,7 +1378,7 @@ pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 
 	port_num = qp->ib_qp_attr.port_num;
 	ah_attr  = qp->ib_qp_attr.ah_attr;
 
-	buffer = dev->thread.buffer;
+	buffer = dev->thread.send_buffer;
 
 	memset(buffer, 0, sizeof(*lrh) + sizeof(*grh) + sizeof(*bth) + sizeof(*aeth) + sizeof(*atomicacketh));
 
@@ -1396,6 +1395,7 @@ pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 
 		grh = NULL;
 		lnh = 0x2;
 	}
+
 	bth = (struct pib_packet_bth*)buffer;
 	buffer += sizeof(*bth);
 
@@ -1422,10 +1422,14 @@ pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 
 		atomicacketh->orig_rem_dt = cpu_to_be64(res);
 	}
 
-	size = buffer - dev->thread.buffer;
+	size = buffer - dev->thread.send_buffer;
 
-	pib_packet_lrh_set_pktlen(lrh, size / 4);
+	pib_packet_lrh_set_pktlen(lrh, (size + 4)/ 4); /* add ICRC size */
 	pib_packet_bth_set_padcnt(bth, 0);
+
+	if (bth_p) {
+		*bth_p = bth;
+	}
 
 	return size;
 }

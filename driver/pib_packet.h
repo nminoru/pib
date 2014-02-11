@@ -148,4 +148,14 @@ struct pib_packet_atomicacketh {
 } __attribute__ ((packed));
 
 
+union pib_packet_footer {
+	struct {
+		__be16	vcrc; /* Variant CRC */
+	} native;
+	struct {
+		__be64	port_guid;
+	} pib;
+} __attribute__ ((packed));
+
+
 #endif /* PIB_PACKET_H */

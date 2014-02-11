@@ -346,6 +346,13 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	} else if (ret == 0)
 		return -EAGAIN;
 
+	if (ret < sizeof(union pib_packet_footer)) {
+		pib_debug("pib: no packet footer(size=%u)\n", ret);
+		goto silently_drop;		
+	}
+
+	ret -= sizeof(union pib_packet_footer);
+
 	in_sw_port_num = get_sw_port_num((const struct sockaddr*)&sockaddr_in6);
 	if (in_sw_port_num == 0) {
 		pr_err("pib: easy switch: Can't match the sockaddr of incoming packet\n");
@@ -361,7 +368,7 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 
 	ret = pib_parse_packet_header(buffer, recvmsg_size, &lrh, &grh, &bth);
 	if (ret < 0) {
-		pib_debug("pib: wrong drop packet(size=%u)\n", ret);
+		pib_debug("pib: wrong drop packet(size=%u)\n", recvmsg_size);
 		goto silently_drop;
 	}
 
@@ -378,8 +385,7 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	if ((dest_qp_num == PIB_QP0) || (dest_qp_num == PIB_QP1))
 		goto process_mad;
 
-	if ((dlid != 0) &&
-	    (dlid != PIB_LID_PERMISSIVE) &&
+	if (!pib_is_permissive_lid(dlid) &&
 	    (dlid != pib_easy_sw.ports[0].ib_port_attr.lid)) {
 		/* Easy switch 宛のパケットではない */
 		if ((dest_qp_num == IB_MULTICAST_QPN) || !pib_is_unicast_lid(dlid))
@@ -521,7 +527,7 @@ send_packet:
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
 	iov.iov_base	   = sw->buffer;
-	iov.iov_len	   = recvmsg_size;
+	iov.iov_len	   = recvmsg_size + sizeof(union pib_packet_footer);
 
 	ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
 
@@ -549,7 +555,7 @@ relay_ucast:
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
 	iov.iov_base	   = sw->buffer;
-	iov.iov_len	   = recvmsg_size;
+	iov.iov_len	   = recvmsg_size + sizeof(union pib_packet_footer);
 
 	ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
 
@@ -587,7 +593,7 @@ relay_mcast:
 		msghdr.msg_name    = &sockaddr_in6;
 		msghdr.msg_namelen = sizeof(sockaddr_in6);
 		iov.iov_base	   = sw->buffer;
-		iov.iov_len	   = recvmsg_size;
+		iov.iov_len	   = recvmsg_size + sizeof(union pib_packet_footer);
 
 		ret = kernel_sendmsg(sw->socket, &msghdr, &iov, 1, iov.iov_len);
 

@@ -1,3 +1,8 @@
+2014-02-11 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.2.9
+           * Hack that ib_ipoib leak adress handles when IB driver is unregistered
+
 2014-02-05 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib: version 0.2.8

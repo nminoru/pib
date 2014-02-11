@@ -516,16 +516,15 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	old_sm_lid = port->ib_port_attr.sm_lid;
 	new_sm_lid = be16_to_cpu(port_info->sm_lid);
 
-#ifdef PIB_USE_EASY_SWITCH
-	if (old_lid != new_lid) {
-		/* @todo need lock */
-		if (old_lid != 0)
-			dev->ports[port_index].lid_table[old_lid] = NULL;
-		if (new_lid != 0)
-			dev->ports[port_index].lid_table[new_lid] = 
-				dev->ports[port_num - 1].sockaddr;
+	if (!pib_multi_host_mode) {
+		if (old_lid != new_lid) {
+			if (old_lid != 0)
+				pib_lid_table[old_lid] = NULL;
+			if (new_lid != 0)
+				pib_lid_table[new_lid] =
+					dev->ports[port_num - 1].sockaddr;
+		}
 	}
-#endif
 
 	old_state = port->ib_port_attr.state;
 	

@@ -27,12 +27,14 @@
 
 
 static int kthread_routine(void *data);
+static void kthread_routine_iteration(struct pib_dev *dev);
 static int create_socket(struct pib_dev *dev, int port_index);
 static void release_socket(struct pib_dev *dev, int port_index);
 static void process_on_qp_scheduler(struct pib_dev *dev);
 static int process_new_send_wr(struct pib_qp *qp);
 static int process_send_wr(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
-static int process_incoming_message(struct pib_dev *dev, int port_index);
+static int receive_packet(struct pib_dev *dev, int port_index);
+static void process_incoming_message(struct pib_dev *dev, int port_index, void *buffer, int packet_size);
 static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 static void process_on_wq_scheduler(struct pib_dev *dev);
 static void process_sendmsg(struct pib_dev *dev);
@@ -61,10 +63,16 @@ int pib_create_kthread(struct pib_dev *dev)
 	dev->thread.timer.function = timer_timeout_callback;
 	dev->thread.timer.data     = (unsigned long)dev;
 
-	dev->thread.buffer	   = vmalloc(PIB_PACKET_BUFFER);
-	if (!dev->thread.buffer) {
+	dev->thread.send_buffer	   = vmalloc(PIB_PACKET_BUFFER);
+	if (!dev->thread.send_buffer) {
 		ret = -ENOMEM;
-		goto err_vmalloc;
+		goto err_send_vmalloc;
+	}
+
+	dev->thread.recv_buffer	   = vmalloc(PIB_PACKET_BUFFER);
+	if (!dev->thread.recv_buffer) {
+		ret = -ENOMEM;
+		goto err_recv_vmalloc;
 	}
 
 	for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
@@ -90,9 +98,15 @@ err_sock:
 	for (j = i-1 ; 0 <= j ; j--)
 		release_socket(dev, j);
 
-	vfree(dev->thread.buffer);
+	vfree(dev->thread.recv_buffer);
+	dev->thread.recv_buffer = NULL;
 
-err_vmalloc:
+err_recv_vmalloc:
+
+	vfree(dev->thread.send_buffer);
+	dev->thread.send_buffer = NULL;
+
+err_send_vmalloc:
 
 	return ret;
 }
@@ -117,7 +131,11 @@ void pib_release_kthread(struct pib_dev *dev)
 	for (i=dev->ib_dev.phys_port_cnt - 1 ; 0 <= i  ; i--)
 		release_socket(dev, i);
 
-	vfree(dev->thread.buffer);
+	vfree(dev->thread.recv_buffer);
+	dev->thread.recv_buffer = NULL;
+
+	vfree(dev->thread.send_buffer);
+	dev->thread.send_buffer = NULL;
 }
 
 
@@ -201,23 +219,10 @@ err_sock:
 
 static void release_socket(struct pib_dev *dev, int port_index)
 {
-#ifndef PIB_USE_EASY_SWITCH
-	int i;
-#endif
-
 	if (dev->ports[port_index].sockaddr) {
 		kfree(dev->ports[port_index].sockaddr);
 		dev->ports[port_index].sockaddr = NULL;
 	}
-
-#ifndef PIB_USE_EASY_SWITCH
-	for (i=0 ; i<PIB_MAX_LID ; i++) {
-		if (dev->ports[port_index].lid_table[i]) {
-			kfree(dev->ports[port_index].lid_table[i]);
-			dev->ports[port_index].lid_table[i] = NULL;
-		}
-	}
-#endif
 
 	if (dev->ports[port_index].socket) {
 		sock_release(dev->ports[port_index].socket);
@@ -258,31 +263,42 @@ static int kthread_routine(void *data)
 
 		while (dev->thread.flags) {
 			cond_resched();
-
-			if (test_and_clear_bit(PIB_THREAD_STOP, &dev->thread.flags))
-				goto done;
-
-			if (test_and_clear_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags)) {
-				int i, ret;
-				for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
-					do {
-						ret = process_incoming_message(dev, i);
-					} while (ret == 0);
-				}
-			}
-
-			if (test_and_clear_bit(PIB_THREAD_WQ_SCHEDULE, &dev->thread.flags))
-				process_on_wq_scheduler(dev);
-
-			if (test_and_clear_bit(PIB_THREAD_QP_SCHEDULE, &dev->thread.flags))
-				process_on_qp_scheduler(dev);
+			kthread_routine_iteration(dev);
 		}
 
 		process_on_qp_scheduler(dev);
 	}
 
-done:
 	return 0;
+}
+
+
+static void kthread_routine_iteration(struct pib_dev *dev)
+{
+	if (test_and_clear_bit(PIB_THREAD_STOP, &dev->thread.flags))
+		return;
+
+	if (test_and_clear_bit(PIB_THREAD_WQ_SCHEDULE, &dev->thread.flags)) {
+		process_on_wq_scheduler(dev);
+		return;
+	}
+
+	if (test_and_clear_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags)) {
+		int i;
+		for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
+			while (0 < receive_packet(dev, i)) {
+				process_incoming_message(dev, i,
+							 dev->thread.recv_buffer,
+							 dev->thread.recv_size);
+			}
+		}
+		return;
+	}
+
+	if (test_and_clear_bit(PIB_THREAD_QP_SCHEDULE, &dev->thread.flags)) {
+		process_on_qp_scheduler(dev);
+		return;
+	}
 }
 
 
@@ -408,7 +424,7 @@ done:
 	if (dev->thread.ready_to_send)
 		process_sendmsg(dev);
 
-	if (dev->thread.flags & PIB_THREAD_READY_TO_RECV)
+	if (dev->thread.flags & ((1U << PIB_THREAD_QP_SCHEDULE) - 1))
 		return;
 
 	spin_lock_irqsave(&dev->qp_sched.lock, flags);
@@ -554,22 +570,14 @@ completion_error:
 }
 
 
-static int process_incoming_message(struct pib_dev *dev, int port_index)
+static int receive_packet(struct pib_dev *dev, int port_index)
 {
-	int ret, header_size;
+	int ret;
 	struct msghdr msghdr = {.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
 	struct kvec iov;
 	struct pib_port *port;
-	void *buffer;
-	struct pib_packet_lrh *lrh;
-	struct ib_grh         *grh;
-	struct pib_packet_bth *bth;
-	u32 dest_qp_num;
-	u16 slid, dlid;
 
-	buffer = dev->thread.buffer;
-
-	iov.iov_base = buffer;
+	iov.iov_base = dev->thread.recv_buffer;
 	iov.iov_len  = PIB_PACKET_BUFFER;
 
 	port = &dev->ports[port_index];
@@ -584,22 +592,56 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 	} else if (ret == 0)
 		return -EAGAIN;
 
-	port->perf.rcv_packets++;
-	port->perf.rcv_data += ret;
+	dev->thread.recv_size = ret;
+	
+	return ret;
+}
 
-	header_size = pib_parse_packet_header(buffer, ret, &lrh, &grh, &bth);
+
+static void process_incoming_message(struct pib_dev *dev, int port_index, void *buffer, int packet_size)
+{
+	int size, header_size;
+	struct pib_port *port;
+	struct pib_packet_lrh *lrh;
+	struct ib_grh         *grh;
+	struct pib_packet_bth *bth;
+	u32 dest_qp_num;
+	u16 slid, dlid;
+
+	size = packet_size;
+
+	port = &dev->ports[port_index];
+
+	if (size < sizeof(union pib_packet_footer)) {
+		pib_debug("pib: no packet footer(size=%u)\n", size);
+		goto silently_drop;
+	}
+
+	size -= sizeof(union pib_packet_footer);
+
+	port->perf.rcv_packets++;
+	port->perf.rcv_data += packet_size;
+
+	header_size = pib_parse_packet_header(buffer, size, &lrh, &grh, &bth);
 	if (header_size < 0) {
-		pib_debug("pib: wrong drop packet(size=%u)\n", ret);
+		pib_debug("pib: wrong drop packet(size=%u)\n", size);
 		goto silently_drop;
 	}
 
 	buffer += header_size;
-	ret    -= header_size;
+	size   -= header_size;
 
 	/* Payload */
-	ret -= pib_packet_bth_get_padcnt(bth); /* Pad Count */
-	if (ret < 0) {
-		pib_debug("pib: drop packet: too small packet except LRH & BTH (size=%u)\n", ret);
+	size -= pib_packet_bth_get_padcnt(bth); /* Pad Count */
+	if (size < 0) {
+		pib_debug("pib: drop packet: too small packet except LRH & BTH (size=%u)\n", size);
+		goto silently_drop;
+	}
+
+	/* Emit ICRC */
+	size -= 4;
+	if (size < 0) {
+		pib_debug("pib: drop packet: too small packet except ICRC (size=%u)\n", size);
 		goto silently_drop;
 	}
 
@@ -607,14 +649,29 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 	dlid        = be16_to_cpu(lrh->dlid);
 	dest_qp_num = be32_to_cpu(bth->destQP) & PIB_QPN_MASK;
 
+	switch (port->ib_port_attr.state) {
+	case IB_PORT_INIT:
+	case IB_PORT_ARMED:
+		/* The link layer can only receive SMP. */
+		if (dest_qp_num != PIB_QP0)
+			goto silently_drop;
+		break;
+	case IB_PORT_ACTIVE:
+		/* The link layer can transmit all packet types. */
+		break;
+	default:
+		/* The physical link is not up or error */
+		goto silently_drop;
+	}
+
 	pib_trace_recv(dev, port_index + 1,
-		       bth->OpCode, be32_to_cpu(bth->psn) & PIB_PSN_MASK, ret,
+		       bth->OpCode, be32_to_cpu(bth->psn) & PIB_PSN_MASK, packet_size,
 		       slid, dlid, dest_qp_num);
 
 	if ((dest_qp_num == PIB_QP0) || (dlid < PIB_MCAST_LID_BASE)) {
 		/* Unicast */
 		process_incoming_message_per_qp(dev, port_index, dlid, dest_qp_num,
-						lrh, grh, bth, buffer, ret);
+						lrh, grh, bth, buffer, size);
 	} else {
 		/* Multicast */
 		int i, max;
@@ -631,7 +688,7 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 			goto silently_drop;
 		}
 
-		if (ret < sizeof(struct pib_packet_deth))
+		if (size < sizeof(struct pib_packet_deth))
 			goto silently_drop;
 
 		deth = (struct pib_packet_deth*)buffer;
@@ -661,14 +718,14 @@ static int process_incoming_message(struct pib_dev *dev, int port_index)
 
 			pib_debug("pib: MC packet qp_num=0x%06x\n", qp_nums[i]);
 			process_incoming_message_per_qp(dev, port_index, dlid, qp_nums[i],
-							lrh, grh, bth, buffer, ret);
+							lrh, grh, bth, buffer, size);
 
 			cond_resched();
 		}
 	}
 
 silently_drop:
-	return 0;
+	return;
 }
 
 
@@ -704,14 +761,16 @@ int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_
 	if (lnh == 0x2)
 		/* IBA local */
 		goto skip_grh;
-	else if (lnh != 0x3)
+	else if (lnh != 0x3) {
 		return -3;
+	}
 
 	/* IBA global */
 	grh = (struct ib_grh *)buffer;
 
-	if (size < sizeof(*grh))
+	if (size < sizeof(*grh)) {
 		return -1;
+	}
 
 	buffer += sizeof(*grh);
 	size   -= sizeof(*grh);
@@ -765,7 +824,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 	}
 
 	/* LRH: check port LID and DLID of incoming packet */
-	if (((dest_qp_num == PIB_QP0) && (dlid == PIB_LID_PERMISSIVE)))
+	if ((dest_qp_num == PIB_QP0) && pib_is_permissive_lid(dlid))
 		;
 	else if (!pib_is_unicast_lid(dlid))
 		;
@@ -1018,11 +1077,49 @@ static void process_sendmsg(struct pib_dev *dev)
 	struct msghdr	msghdr;
 	struct kvec	iov;
 	struct pib_port *port;
+	union pib_packet_footer *footer;
+	size_t msg_size;
 
 	port_num   = dev->thread.port_num;
 	src_qp_num = dev->thread.src_qp_num;
 	slid       = dev->thread.slid;
 	dlid       = dev->thread.dlid;
+
+	port = &dev->ports[port_num - 1];
+
+	/* QP0 以外は SLID または DLID が 0 のパケットは投げない */
+	if (src_qp_num != PIB_QP0)
+		if ((slid == 0) || (dlid == 0))
+			goto done;
+
+	switch (port->ib_port_attr.state) {
+	case IB_PORT_INIT:
+	case IB_PORT_ARMED:
+		/* The link layer can only transmit and receive SMP. */
+		if (src_qp_num != PIB_QP0)
+			return;
+		break;
+	case IB_PORT_ACTIVE:
+		/* The link layer can transmit and receive all packet types. */
+		break;
+	default:
+		/* The physical link is not up or error */
+		return;
+	}
+
+	/* 送信サイズを確定 */
+	msg_size = pib_packet_lrh_get_pktlen(dev->thread.send_buffer) * 4 + sizeof(*footer);
+
+	if ((0 == msg_size) || (PIB_PACKET_BUFFER < msg_size + sizeof(*footer))) {
+		pr_err("pib: wrong length = %zu\n", msg_size);
+		return;
+	}
+
+	/* フッターとして VCRC が入る領域に Port GUID を入れる */
+	footer = dev->thread.send_buffer + msg_size;
+	footer->pib.port_guid = port->gid[0].global.interface_id;
+
+	pib_trace_send(dev, port_num, msg_size);
 
 	sockaddr = get_sockaddr_from_dlid(dev, port_num, src_qp_num, dlid);
 	if (!sockaddr) {
@@ -1030,42 +1127,35 @@ static void process_sendmsg(struct pib_dev *dev)
 		goto done;
 	}
 
-	BUG_ON(dev->thread.msg_size == 0);
-
-	/* QP0 以外は SLID または DLID が 0 のパケットは投げない */
-	if (src_qp_num != PIB_QP0)
-		if ((slid == 0) || (dlid == 0))
-			goto done;
-
-	pib_trace_send(dev, port_num, dev->thread.msg_size);
-
 	memset(&msghdr, 0, sizeof(msghdr));
 
 	msghdr.msg_name    = sockaddr;
 	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
 		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 
-	iov.iov_base = dev->thread.buffer;
-	iov.iov_len  = dev->thread.msg_size;
-
-	port = &dev->ports[port_num - 1];
+	iov.iov_base = dev->thread.send_buffer;
+	iov.iov_len  = msg_size;
 
 	ret = kernel_sendmsg(port->socket, &msghdr, &iov, 1, iov.iov_len);
 
-	if (ret > 0) {
-		port->perf.xmit_packets++;
-		port->perf.xmit_data += ret;
+	if (ret < 0) {
+		if ((ret == -EINTR) || (ret == -EAGAIN))
+			goto done;
+		pr_err("pib: kernel_sendmsg (errno=%d)\n", ret);
+		goto done;
 	}
+
+	port->perf.xmit_packets++;
+	port->perf.xmit_data += msg_size;
 
 	if (pib_is_unicast_lid(dlid))
 		goto done;
 
 	/*
 	 * マルチキャストの場合、同じ HCA に同一の multicast group の受け取りを
-	 * する別の QP がある可能性があるので、loopback にも送信する。
+	 * する別の QP がある可能性があるので、loopback にも受信させる。
 	 */
-	sockaddr = port->sockaddr;
-
+	sockaddr           = port->sockaddr;
 	msghdr.msg_name    = sockaddr;
 	msghdr.msg_namelen = (sockaddr->sa_family == AF_INET6) ?
 		sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
@@ -1083,6 +1173,9 @@ get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dli
 	unsigned long flags;
 	struct sockaddr *sockaddr = NULL;
 
+	if (pib_multi_host_mode)
+		return pib_netd_sockaddr;
+
 	if (src_qp_num != PIB_QP0) {
 		if (dlid == 0)
 			sockaddr = dev->ports[port_num - 1].sockaddr;
@@ -1091,7 +1184,7 @@ get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dli
 			sockaddr = dev->ports[port_num - 1].sockaddr;
 		else if (dlid < PIB_MCAST_LID_BASE)
 			/* unicast */
-			sockaddr = dev->ports[port_num - 1].lid_table[dlid];
+			sockaddr = pib_lid_table[dlid];
 	}
 
 	if (sockaddr)

@@ -16,6 +16,9 @@
 #include "pib_trace.h"
 
 
+#define PIB_BOOKMARK_MESSAGE (16)
+
+
 static struct dentry *debugfs_root;
 static cycles_t	init_timestamp;
 
@@ -47,7 +50,6 @@ void show_timespec(struct seq_file *file, const struct timespec *time_p)
 }
 
 
-
 /******************************************************************************/
 /* Objection Inspection                                                       */
 /******************************************************************************/
@@ -66,13 +68,15 @@ static const char *debug_file_symbols[] = {
 struct pib_base_record {
 	u32	obj_num;
 	struct timespec	creation_time;
+	bool	is_user_handle;
+	u64	user_handle;
+	u32	ucontext_num;
 };
 
 
 struct pib_ucontext_record {
 	struct pib_base_record	base;
-	pid_t	pid;
-	pid_t	tgid;	
+	pid_t	tgid;
 	char	comm[TASK_COMM_LEN];
 };
 
@@ -155,19 +159,23 @@ static void *inspection_seq_start(struct seq_file *file, loff_t *pos)
 		goto next;
 
 	switch (control->type) {
+	case PIB_DEBUGFS_UCONTEXT:
+		seq_printf(file, "%-4s %-33s ", "OID", "CREATIONTIME");
+		break;
+
 	case PIB_DEBUGFS_AH:
 	case PIB_DEBUGFS_QP:
-		seq_printf(file, "%-6s %-33s ", "OID", "CREATIONTIME");
+		seq_printf(file, "%-6s %-4s %-5s %-33s ", "OID", "UCTX", "UHWD", "CREATIONTIME");
 		break;
 
 	default:
-		seq_printf(file, "%-4s %-33s ", "OID", "CREATIONTIME");
+		seq_printf(file, "%-4s %-4s %-5s %-33s ", "OID", "UCTX", "UHWD", "CREATIONTIME");
 		break;
 	}
 
 	switch (control->type) {
 	case PIB_DEBUGFS_UCONTEXT:
-		seq_printf(file, "%-5s %-5s %-5s\n", "PID", "TIG", "COMM");
+		seq_printf(file, "%-5s %-5s\n", "PID", "COMM");
 		break;
 
 	case PIB_DEBUGFS_MR:
@@ -248,14 +256,23 @@ static int inspection_seq_show(struct seq_file *file, void *iter)
 		break;
 	}
 
-	show_timespec(file, &record->creation_time);
+	if (control->type == PIB_DEBUGFS_UCONTEXT) {
+		show_timespec(file, &record->creation_time);
+	} else {
+		if (record->is_user_handle)
+			seq_printf(file, "%4u %5u ", record->ucontext_num, (unsigned int)record->user_handle);
+		else
+			seq_printf(file, "KERN NOHWD ");
+
+		show_timespec(file, &record->creation_time);
+	}
 
 	switch (control->type) {
 
 	case PIB_DEBUGFS_UCONTEXT: {
 		struct pib_ucontext_record *ucontext_rec = (struct pib_ucontext_record *)record;
-		seq_printf(file, " %5u %5u %s",
-			   ucontext_rec->pid, ucontext_rec->tgid, ucontext_rec->comm);
+		seq_printf(file, " %5u %s",
+			   ucontext_rec->tgid, ucontext_rec->comm);
 		break;
 	}
 
@@ -334,6 +351,21 @@ static const struct seq_operations inspection_seq_ops = {
 };
 
 
+static void set_pid_and_handle(struct pib_base_record *base_rec, const struct ib_uobject *uobject)
+{
+	struct pib_ucontext *ucontext;
+
+	if (!uobject || !uobject->context)
+		return;
+
+	ucontext = to_pucontext(uobject->context);
+
+	base_rec->is_user_handle= true;
+	base_rec->user_handle	= uobject->id;
+	base_rec->ucontext_num  = ucontext->ucontext_num;
+}
+
+
 static int inspection_open(struct inode *inode, struct file *file)
 {
 	int i, ret;
@@ -364,8 +396,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 		list_for_each_entry(ucontext, &dev->ucontext_head, list) {
 			records[i].base.obj_num       = ucontext->ucontext_num;
 			records[i].base.creation_time = ucontext->creation_time;
-			records[i].pid  = ucontext->pid;
-			records[i].tgid = ucontext->tgid;
+			records[i].tgid		      = ucontext->tgid;
 			memcpy(records[i].comm, ucontext->comm, sizeof(ucontext->comm));
 			i++;
 		}
@@ -392,6 +423,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 		list_for_each_entry(pd, &dev->pd_head, list) {
 			records[i].base.obj_num       = pd->pd_num;
 			records[i].base.creation_time = pd->creation_time;
+			set_pid_and_handle(&records[i].base, pd->ib_pd.uobject);
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -424,6 +456,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 			records[i].length             = mr->length;
 			records[i].lkey	 	      = mr->ib_mr.lkey;
 			records[i].rkey     	      = mr->ib_mr.rkey;
+			set_pid_and_handle(&records[i].base, mr->ib_mr.uobject);
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -453,6 +486,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 			records[i].state              = srq->state;
 			records[i].max_wqe            = srq->ib_srq_attr.max_wr;
 			records[i].nr_wqe             = srq->ib_srq_attr.max_wr - srq->nr_recv_wqe;
+			set_pid_and_handle(&records[i].base, srq->ib_srq.uobject);
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -482,6 +516,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 			records[i].dlid		      = ah->ib_ah_attr.dlid;
 			records[i].ah_flags	      = ah->ib_ah_attr.ah_flags;
 			records[i].port_num	      = ah->ib_ah_attr.port_num;
+			set_pid_and_handle(&records[i].base, ah->ib_ah.uobject);
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -510,6 +545,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 			records[i].state              = cq->state;
 			records[i].max_cqe            = cq->ib_cq.cqe;
 			records[i].nr_cqe             = cq->nr_cqe;
+			set_pid_and_handle(&records[i].base, cq->ib_cq.uobject);
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -548,6 +584,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 			records[i].nr_rwqe	      = qp->ib_qp_init_attr.cap.max_recv_wr - qp->responder.nr_recv_wqe;
 			records[i].qp_type	      = qp->qp_type;
 			records[i].state	      = qp->state;
+			set_pid_and_handle(&records[i].base, qp->ib_qp.uobject);
 			i++;
 		}
 		spin_unlock_irqrestore(&dev->lock, flags);
@@ -644,7 +681,7 @@ inject_err_write(struct file *file, const char __user *buf,
 	} else
 		return -EINVAL;
 
-	if (sscanf(buf, "%x", &oid) != 1)
+	if (sscanf(buf, "%x", &oid) != 1) /* @todo */
 		return -EINVAL;
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -763,7 +800,8 @@ enum pib_trace_act {
 	PIB_TRACE_ACT_RECV1,
 	PIB_TRACE_ACT_RECV2,
 	PIB_TRACE_ACT_ASYNC,
-	PIB_TRACE_ACT_TIMEDATE
+	PIB_TRACE_ACT_TIMEDATE,
+	PIB_TRACE_ACT_BOOKMARK
 };
 
 
@@ -807,6 +845,10 @@ struct pib_trace_entry {
 		struct {
 			struct timespec	time;
 		} timedate;
+
+		struct {
+			char	message[PIB_BOOKMARK_MESSAGE];
+		} bookmark;
 	} u;
 
 	cycles_t	timestamp;
@@ -830,7 +872,174 @@ static const char *str_act[] = {
 	[PIB_TRACE_ACT_RECV2]   = "RCV2",
 	[PIB_TRACE_ACT_ASYNC]   = "ASYC",
 	[PIB_TRACE_ACT_TIMEDATE]= "TIME",
+	[PIB_TRACE_ACT_BOOKMARK]= "BOOKMARK",
 };
+
+
+static struct pib_trace_entry *alloc_new_trace(struct pib_dev *dev)
+{
+	int index;
+	struct pib_trace_entry *entry;
+
+	if (!dev->debugfs.trace_data)
+		return NULL;
+
+	dev->debugfs.count_records--;
+
+	if ((dev->debugfs.count_records < 0) || time_after(jiffies, dev->debugfs.last_record_time + HZ)) {
+
+		index = atomic_add_return(1, &dev->debugfs.trace_index);
+		index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
+
+		entry = (struct pib_trace_entry *)dev->debugfs.trace_data + index;
+
+		entry->act = PIB_TRACE_ACT_NONE;
+	
+		barrier();
+
+		getnstimeofday(&entry->u.timedate.time);
+		entry->timestamp = get_cycles();
+
+		barrier();
+
+		entry->act = PIB_TRACE_ACT_TIMEDATE;
+
+		dev->debugfs.count_records    = 100;
+		dev->debugfs.last_record_time = jiffies;
+	}
+
+	index = atomic_add_return(1, &dev->debugfs.trace_index);
+	index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
+
+	entry = (struct pib_trace_entry *)dev->debugfs.trace_data + index;
+
+	entry->act = PIB_TRACE_ACT_NONE;
+
+	barrier();
+
+	entry->timestamp = get_cycles();
+
+	return entry;
+}
+
+
+void pib_trace_api(struct pib_dev *dev, int cmd, u32 oid)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->op        = cmd;
+	entry->u.api.oid = oid;
+
+	barrier();
+
+	entry->act = PIB_TRACE_ACT_API;
+}
+
+
+void pib_trace_send(struct pib_dev *dev, u8 port_num, int size)
+{
+	struct pib_trace_entry *entry;
+	void *buffer;
+	struct pib_packet_lrh *lrh;
+	struct pib_packet_bth *bth;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+	
+	entry->port = port_num;
+
+	entry->u.send.len = size;
+	entry->u.send.slid = dev->thread.slid;
+	entry->u.send.dlid = dev->thread.dlid;
+	entry->u.send.sqpn = dev->thread.src_qp_num;
+
+	buffer = dev->thread.send_buffer;
+	
+	lrh = buffer;
+	buffer += sizeof(*lrh);
+
+	if ((lrh->sl_rsv_lnh & 0x3) == 0x3)
+		buffer += sizeof(struct ib_grh);
+
+	bth = buffer;
+
+	entry->u.send.dqpn = be32_to_cpu(bth->destQP);
+	entry->u.send.psn  = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
+	entry->op   = bth->OpCode;
+
+	barrier();
+
+	entry->act  = PIB_TRACE_ACT_SEND;
+}
+
+
+void pib_trace_recv(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, int size, u16 slid, u16 dlid, u32 dqpn)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->op   = opcode;
+	entry->port = port_num;
+	entry->u.recv1.len = size;
+	entry->u.recv1.slid = slid;
+	entry->u.recv1.dlid = dlid;
+	entry->u.recv1.dqpn = dqpn;
+	entry->u.recv1.psn  = psn;
+
+	barrier();
+
+	entry->act  = PIB_TRACE_ACT_RECV1;
+}
+
+
+void pib_trace_recv_ok(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, u32 sqpn, u32 data)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->op   = opcode;
+	entry->port = port_num;
+	entry->u.recv2.data = data;
+	entry->u.recv2.sqpn = sqpn;
+	entry->u.recv2.psn  = psn;
+
+	barrier();
+
+	entry->act  = PIB_TRACE_ACT_RECV2;
+}
+
+
+void pib_trace_async(struct pib_dev *dev, enum ib_event_type type, u32 oid)
+{
+	struct pib_trace_entry *entry;
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return;
+
+	entry->op           = type;
+	entry->u.async.oid  = oid;
+
+	barrier();
+
+	entry->act = PIB_TRACE_ACT_ASYNC;
+}
 
 
 static void *trace_seq_start(struct seq_file *file, loff_t *ppos)
@@ -1014,6 +1223,10 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 		seq_puts(file, "\n");
 		break;
 
+	case PIB_TRACE_ACT_BOOKMARK:
+		seq_printf(file, "%*s\n", -(int)sizeof(entry->u.bookmark.message), entry->u.bookmark.message);
+		break;
+
 	default:
 		BUG();
 	}
@@ -1032,8 +1245,8 @@ static const struct seq_operations trace_seq_ops = {
 
 static int trace_open(struct inode *inode, struct file *file)
 {
-	struct seq_file *seq;
 	int ret;
+	struct seq_file *seq;
 
 	ret = seq_open(file, &trace_seq_ops);
 	if (ret)
@@ -1046,179 +1259,58 @@ static int trace_open(struct inode *inode, struct file *file)
 }
 
 
+static ssize_t
+trace_write(struct file *file, const char __user *buf,
+	    size_t len, loff_t *ppos)
+{
+	int i;
+	size_t size;
+	struct seq_file *seq;
+	struct pib_dev *dev;
+	struct pib_trace_entry *entry;
+	char message[PIB_BOOKMARK_MESSAGE];
+
+	seq = file->private_data;
+	dev = seq->private;
+
+	if (*ppos != 0)
+		goto done;
+
+	size = min_t(size_t, PIB_BOOKMARK_MESSAGE, len);
+
+	if (copy_from_user(message, buf, size))
+		return -EFAULT;
+
+	for (i=0 ; i<sizeof(message) ; i++)
+		if (message[i] == '\n')
+			message[i] = '\0';
+
+	entry = alloc_new_trace(dev);
+
+	if (!entry)
+		return -ENOSYS;
+
+	strncpy(entry->u.bookmark.message, message, sizeof(entry->u.bookmark.message));
+
+	barrier();
+
+	entry->act = PIB_TRACE_ACT_BOOKMARK;
+
+done:
+	*ppos = len;
+
+	return len;
+}
+
+
 static const struct file_operations trace_fops = {
 	.owner   = THIS_MODULE,
 	.open    = trace_open,
 	.read    = seq_read,
+	.write   = trace_write,
 	.llseek  = seq_lseek,
 	.release = seq_release,
 };
-
-
-static struct pib_trace_entry *alloc_new_trace(struct pib_dev *dev)
-{
-	int index;
-	struct pib_trace_entry *entry;
-
-	if (!dev->debugfs.trace_data)
-		return NULL;
-
-	dev->debugfs.count_records--;
-
-	if ((dev->debugfs.count_records < 0) || time_after(jiffies, dev->debugfs.last_record_time + HZ)) {
-
-		index = atomic_add_return(1, &dev->debugfs.trace_index);
-		index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
-
-		entry = (struct pib_trace_entry *)dev->debugfs.trace_data + index;
-
-		entry->act = PIB_TRACE_ACT_NONE;
-	
-		barrier();
-
-		getnstimeofday(&entry->u.timedate.time);
-		entry->timestamp = get_cycles();
-
-		barrier();
-
-		entry->act = PIB_TRACE_ACT_TIMEDATE;
-
-		dev->debugfs.count_records    = 100;
-		dev->debugfs.last_record_time = jiffies;
-	}
-
-	index = atomic_add_return(1, &dev->debugfs.trace_index);
-	index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
-
-	entry = (struct pib_trace_entry *)dev->debugfs.trace_data + index;
-
-	entry->act = PIB_TRACE_ACT_NONE;
-
-	barrier();
-
-	entry->timestamp = get_cycles();
-
-	return entry;
-}
-
-
-void pib_trace_api(struct pib_dev *dev, int cmd, u32 oid)
-{
-	struct pib_trace_entry *entry;
-
-	entry = alloc_new_trace(dev);
-
-	if (!entry)
-		return;
-
-	entry->op        = cmd;
-	entry->u.api.oid = oid;
-
-	barrier();
-
-	entry->act = PIB_TRACE_ACT_API;
-}
-
-
-void pib_trace_send(struct pib_dev *dev, u8 port_num, int size)
-{
-	struct pib_trace_entry *entry;
-	void *buffer;
-	struct pib_packet_lrh *lrh;
-	struct pib_packet_bth *bth;
-
-	entry = alloc_new_trace(dev);
-
-	if (!entry)
-		return;
-	
-	entry->port = port_num;
-
-	entry->u.send.len = size;
-	entry->u.send.slid = dev->thread.slid;
-	entry->u.send.dlid = dev->thread.dlid;
-	entry->u.send.sqpn = dev->thread.src_qp_num;
-
-	buffer = dev->thread.buffer;
-	
-	lrh = buffer;
-	buffer += sizeof(*lrh);
-
-	if ((lrh->sl_rsv_lnh & 0x3) == 0x3)
-		buffer += sizeof(struct ib_grh);
-
-	bth = buffer;
-
-	entry->u.send.dqpn = be32_to_cpu(bth->destQP);
-	entry->u.send.psn  = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
-	entry->op   = bth->OpCode;
-
-	barrier();
-
-	entry->act  = PIB_TRACE_ACT_SEND;
-}
-
-
-void pib_trace_recv(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, int size, u16 slid, u16 dlid, u32 dqpn)
-{
-	struct pib_trace_entry *entry;
-
-	entry = alloc_new_trace(dev);
-
-	if (!entry)
-		return;
-
-	entry->op   = opcode;
-	entry->port = port_num;
-	entry->u.recv1.len = size;
-	entry->u.recv1.slid = slid;
-	entry->u.recv1.dlid = dlid;
-	entry->u.recv1.dqpn = dqpn;
-	entry->u.recv1.psn  = psn;
-
-	barrier();
-
-	entry->act  = PIB_TRACE_ACT_RECV1;
-}
-
-
-void pib_trace_recv_ok(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, u32 sqpn, u32 data)
-{
-	struct pib_trace_entry *entry;
-
-	entry = alloc_new_trace(dev);
-
-	if (!entry)
-		return;
-
-	entry->op   = opcode;
-	entry->port = port_num;
-	entry->u.recv2.data = data;
-	entry->u.recv2.sqpn = sqpn;
-	entry->u.recv2.psn  = psn;
-
-	barrier();
-
-	entry->act  = PIB_TRACE_ACT_RECV2;
-}
-
-
-void pib_trace_async(struct pib_dev *dev, enum ib_event_type type, u32 oid)
-{
-	struct pib_trace_entry *entry;
-
-	entry = alloc_new_trace(dev);
-
-	if (!entry)
-		return;
-
-	entry->op           = type;
-	entry->u.async.oid  = oid;
-
-	barrier();
-
-	entry->act = PIB_TRACE_ACT_ASYNC;
-}
 
 
 /******************************************************************************/
@@ -1235,7 +1327,7 @@ int pib_register_debugfs(void)
 		return -ENOMEM;
 	}
 
-	for (i=0 ; i<pib_phys_port_cnt ; i++)
+	for (i=0 ; i<pib_num_hca ; i++)
 		if (register_dev(debugfs_root, pib_devs[i]))
 			goto err_register_dev;
 
@@ -1259,7 +1351,7 @@ void pib_unregister_debugfs(void)
 	if (!debugfs_root)
 		return;
 
-	for (i=0 ; i<pib_phys_port_cnt ; i++) {
+	for (i=0 ; i<pib_num_hca ; i++) {
 		BUG_ON(!pib_devs[i]);
 		unregister_dev(pib_devs[i]);
 	}
@@ -1292,10 +1384,10 @@ static int register_dev(struct dentry *root, struct pib_dev *dev)
 	}
 
 	/* Execution trace */
-	dev->debugfs.trace = debugfs_create_file("trace", S_IFREG | S_IRUGO,
-						      dev->debugfs.dir,
-						      dev,
-						      &trace_fops);
+	dev->debugfs.trace = debugfs_create_file("trace", S_IFREG | S_IRWXUGO,
+						 dev->debugfs.dir,
+						 dev,
+						 &trace_fops);
 	if (!dev->debugfs.trace) {
 		pr_err("pib: failed to create debugfs \"pib/%s/trace\"\n", dev->ib_dev.name);
 		goto err;

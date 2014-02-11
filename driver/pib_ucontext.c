@@ -45,7 +45,6 @@ pib_alloc_ucontext(struct ib_device *ibdev,
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	memcpy(ucontext->comm, current->comm, sizeof(current->comm));
-	ucontext->pid	= current->pid;
 	ucontext->tgid	= current->tgid;
 
 	return &ucontext->ib_ucontext;
