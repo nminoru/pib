@@ -1,3 +1,7 @@
+- WQ scheduler と QP scheduler の統合
+
+- ib_ipoib.ko のバグを解析すること
+
 - ICRC & VCRC と PktLen を規格に合致させること。
 
 - pib.ko のアンロードの高速化

@@ -33,9 +33,9 @@
 #define PIB_EASYSW_DESCRIPTION	"Pseudo InfiniBand HCA switch"
 
 #define PIB_VERSION_MAJOR	0
-#define PIB_VERSION_MINOR	2
-#define PIB_VERSION_REVISION	9
-#define PIB_DRIVER_VERSION 	"0.2.9"
+#define PIB_VERSION_MINOR	3
+#define PIB_VERSION_REVISION	0
+#define PIB_DRIVER_VERSION 	"0.3.0"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -72,6 +72,7 @@
 #define PIB_QP0				(0)
 #define PIB_QP1				(1)
 #define PIB_MAD_QPS_CORE		(2)
+#define PIB_LINK_QP			(3)
 
 #define PIB_MAX_SGE			(32)
 #define PIB_MAX_RD_ATOM			(16)
@@ -250,21 +251,35 @@ enum pib_debugfs_type {
 	PIB_DEBUGFS_CQ,
 	PIB_DEBUGFS_QP,
 	PIB_DEBUGFS_LAST
-}; 
-
-
-struct pib_work_struct {
-	void		       *data;
-	struct list_head	entry;
-	void		      (*func)(struct pib_work_struct *);
 };
 
 
-#define PIB_INIT_WORK(_work, _data, _func)				\
+enum pib_link_cmd {
+	PIB_LINK_CMD_CONNECT	= 1,
+	PIB_LINK_CMD_CONNECT_ACK,
+	PIB_LINK_CMD_DISCONNECT,
+	PIB_LINK_CMD_DISCONNECT_ACK,
+	PIB_LINK_SHUTDOWN,
+};
+
+
+struct pib_work_struct {
+	bool			on_timer;
+	void		       *data;
+	struct pib_dev	       *dev;	
+	struct list_head	entry;
+	void		      (*func)(struct pib_work_struct *);
+	struct timer_list	timer;
+};
+
+
+#define PIB_INIT_WORK(_work, _dev, _data, _func)			\
 	do {								\
 		INIT_LIST_HEAD(&(_work)->entry);			\
 		(_work)->data = (_data);				\
+		(_work)->dev  = (_dev);					\
 		(_work)->func = (_func);				\
+		init_timer(&(_work)->timer);				\
 	} while (0)
 
 
@@ -312,6 +327,8 @@ struct pib_port {
 	u8                      port_num;
 	struct ib_port_attr     ib_port_attr;
 
+	bool			is_connected;
+
 	u8			mkey;
 	u8			mkeyprot;
 	u16			mkey_lease_period;
@@ -331,6 +348,11 @@ struct pib_port {
 	union ib_gid		gid[PIB_GID_PER_PORT];
 	struct pib_qp	       *qp_info[PIB_MAD_QPS_CORE];
 	u16			pkey_table[PIB_PKEY_TABLE_LEN];
+
+	struct {
+		enum pib_link_cmd	cmd;
+		struct pib_work_struct	work;
+	} link;
 };
 
 
@@ -397,6 +419,7 @@ struct pib_dev {
 	struct {
 		spinlock_t	lock;
 		struct list_head	head;
+		struct list_head	timer_head;
 	} wq_sched;
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
@@ -871,7 +894,6 @@ static inline int pib_error_manner(enum pib_manner manner)
 {
 	return (pib_manner_err & (1UL << manner)) != 0;
 }
- 
 
 
 /*
@@ -896,8 +918,11 @@ extern struct pib_qp *pib_util_get_first_scheduling_qp(struct pib_dev *dev);
 extern int pib_create_kthread(struct pib_dev *dev);
 extern void pib_release_kthread(struct pib_dev *dev);
 extern int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_p, struct ib_grh **grh_p, struct pib_packet_bth **bth_p);
+extern void pib_netd_comm_handler(struct pib_work_struct *work);
 extern void pib_queue_work(struct pib_dev *dev, struct pib_work_struct *work);
+extern void pib_queue_delayed_work(struct pib_dev *dev, struct pib_work_struct *work, unsigned long delay);
 extern void pib_cancel_work(struct pib_dev *dev, struct pib_work_struct *work);
+extern void pib_stop_delayed_queue(struct pib_dev *dev);
 
 /*
  *  in pib_ah.c

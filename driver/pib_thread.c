@@ -28,19 +28,22 @@
 
 static int kthread_routine(void *data);
 static void kthread_routine_iteration(struct pib_dev *dev);
-static int create_socket(struct pib_dev *dev, int port_index);
-static void release_socket(struct pib_dev *dev, int port_index);
+static int create_socket(struct pib_dev *dev, u8 port_num);
+static void release_socket(struct pib_dev *dev, u8 port_num);
 static void process_on_qp_scheduler(struct pib_dev *dev);
 static int process_new_send_wr(struct pib_qp *qp);
 static int process_send_wr(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
-static int receive_packet(struct pib_dev *dev, int port_index);
-static void process_incoming_message(struct pib_dev *dev, int port_index, void *buffer, int packet_size);
-static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
+static int receive_packet(struct pib_dev *dev, u8 port_num);
+static void process_incoming_message(struct pib_dev *dev, u8 port_num, void *buffer, int packet_size);
+static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
+static void connect_pibnetd(struct pib_dev *dev, u8 port_num);
+static void process_raw_packet(struct pib_dev *dev, u8 port_num, struct pib_packet_lrh *lrh, void *buffer, int size);
 static void process_on_wq_scheduler(struct pib_dev *dev);
 static void process_sendmsg(struct pib_dev *dev);
 static struct sockaddr *get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dlid);
 static void sock_data_ready_callback(struct sock *sk, int bytes);
 static void timer_timeout_callback(unsigned long opaque);
+static void delayed_work_timeout_callback(unsigned long data);
 
 
 static int send_buffer_size;
@@ -76,7 +79,7 @@ int pib_create_kthread(struct pib_dev *dev)
 	}
 
 	for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
-		ret = create_socket(dev, i);
+		ret = create_socket(dev, i + 1);
 		if (ret < 0)
 			goto err_sock;
 	}
@@ -96,7 +99,7 @@ err_task:
 	
 err_sock:
 	for (j = i-1 ; 0 <= j ; j--)
-		release_socket(dev, j);
+		release_socket(dev, j + 1);
 
 	vfree(dev->thread.recv_buffer);
 	dev->thread.recv_buffer = NULL;
@@ -129,7 +132,7 @@ void pib_release_kthread(struct pib_dev *dev)
 	}
 
 	for (i=dev->ib_dev.phys_port_cnt - 1 ; 0 <= i  ; i--)
-		release_socket(dev, i);
+		release_socket(dev, i + 1);
 
 	vfree(dev->thread.recv_buffer);
 	dev->thread.recv_buffer = NULL;
@@ -139,7 +142,7 @@ void pib_release_kthread(struct pib_dev *dev)
 }
 
 
-static int create_socket(struct pib_dev *dev, int port_index)
+static int create_socket(struct pib_dev *dev, u8 port_num)
 {
 	int ret, addrlen;
 	int rcvbuf_size, sndbuf_size;
@@ -186,18 +189,7 @@ static int create_socket(struct pib_dev *dev, int port_index)
 		goto err_sock;
 	}
 
-#if 0
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-	pib_debug("kernel_getsockname: %pISpc\n",
-		  (const struct sockaddr*)&sockaddr_in);
-#else
-	pib_debug("kernel_getsockname: %08x:%u\n",
-		  ntohl(sockaddr_in.sin_addr.s_addr),
-		  ntohs(sockaddr_in.sin_port));
-#endif
-#endif
-
-	dev->ports[port_index].socket = socket;
+	dev->ports[port_num - 1].socket = socket;
 
 	/* register lid_table */
 	sockaddr_in_p  = kzalloc(sizeof(struct sockaddr_in), GFP_KERNEL);
@@ -206,7 +198,7 @@ static int create_socket(struct pib_dev *dev, int port_index)
 	sockaddr_in_p->sin_addr.s_addr	= htonl(INADDR_LOOPBACK);
 	sockaddr_in_p->sin_port		= sockaddr_in.sin_port;
 
-	dev->ports[port_index].sockaddr	= (struct sockaddr *)sockaddr_in_p;
+	dev->ports[port_num - 1].sockaddr	= (struct sockaddr *)sockaddr_in_p;
 
 	return 0;
 
@@ -217,16 +209,16 @@ err_sock:
 }
 
 
-static void release_socket(struct pib_dev *dev, int port_index)
+static void release_socket(struct pib_dev *dev, u8 port_num)
 {
-	if (dev->ports[port_index].sockaddr) {
-		kfree(dev->ports[port_index].sockaddr);
-		dev->ports[port_index].sockaddr = NULL;
+	if (dev->ports[port_num - 1].sockaddr) {
+		kfree(dev->ports[port_num - 1].sockaddr);
+		dev->ports[port_num - 1].sockaddr = NULL;
 	}
 
-	if (dev->ports[port_index].socket) {
-		sock_release(dev->ports[port_index].socket);
-		dev->ports[port_index].socket = NULL;
+	if (dev->ports[port_num - 1].socket) {
+		sock_release(dev->ports[port_num - 1].socket);
+		dev->ports[port_num - 1].socket = NULL;
 	}
 }
 
@@ -243,6 +235,12 @@ static int kthread_routine(void *data)
 	/* Hibernation / freezing of the SRPT kernel thread is not supported. */
 	current->flags |= PF_NOFREEZE;
 #endif
+
+	if (pib_multi_host_mode) {
+		int i;
+		for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
+			connect_pibnetd(dev, i + 1);
+	}
 
 	while (!kthread_should_stop()) {
 		unsigned long flags;
@@ -286,8 +284,8 @@ static void kthread_routine_iteration(struct pib_dev *dev)
 	if (test_and_clear_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags)) {
 		int i;
 		for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++) {
-			while (0 < receive_packet(dev, i)) {
-				process_incoming_message(dev, i,
+			while (0 < receive_packet(dev, i + 1)) {
+				process_incoming_message(dev, i + 1,
 							 dev->thread.recv_buffer,
 							 dev->thread.recv_size);
 			}
@@ -570,7 +568,7 @@ completion_error:
 }
 
 
-static int receive_packet(struct pib_dev *dev, int port_index)
+static int receive_packet(struct pib_dev *dev, u8 port_num)
 {
 	int ret;
 	struct msghdr msghdr = {.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL};
@@ -580,7 +578,7 @@ static int receive_packet(struct pib_dev *dev, int port_index)
 	iov.iov_base = dev->thread.recv_buffer;
 	iov.iov_len  = PIB_PACKET_BUFFER;
 
-	port = &dev->ports[port_index];
+	port = &dev->ports[port_num - 1];
 
 	ret = kernel_recvmsg(port->socket, &msghdr,
 			     &iov, 1, iov.iov_len, msghdr.msg_flags);
@@ -598,7 +596,7 @@ static int receive_packet(struct pib_dev *dev, int port_index)
 }
 
 
-static void process_incoming_message(struct pib_dev *dev, int port_index, void *buffer, int packet_size)
+static void process_incoming_message(struct pib_dev *dev, u8 port_num, void *buffer, int packet_size)
 {
 	int size, header_size;
 	struct pib_port *port;
@@ -610,7 +608,7 @@ static void process_incoming_message(struct pib_dev *dev, int port_index, void *
 
 	size = packet_size;
 
-	port = &dev->ports[port_index];
+	port = &dev->ports[port_num - 1];
 
 	if (size < sizeof(union pib_packet_footer)) {
 		pib_debug("pib: no packet footer(size=%u)\n", size);
@@ -630,6 +628,9 @@ static void process_incoming_message(struct pib_dev *dev, int port_index, void *
 
 	buffer += header_size;
 	size   -= header_size;
+
+	if ((lrh->sl_rsv_lnh & 0x3) == 0)
+		goto raw_packet;
 
 	/* Payload */
 	size -= pib_packet_bth_get_padcnt(bth); /* Pad Count */
@@ -664,13 +665,13 @@ static void process_incoming_message(struct pib_dev *dev, int port_index, void *
 		goto silently_drop;
 	}
 
-	pib_trace_recv(dev, port_index + 1,
+	pib_trace_recv(dev, port_num,
 		       bth->OpCode, be32_to_cpu(bth->psn) & PIB_PSN_MASK, packet_size,
 		       slid, dlid, dest_qp_num);
 
 	if ((dest_qp_num == PIB_QP0) || (dlid < PIB_MCAST_LID_BASE)) {
 		/* Unicast */
-		process_incoming_message_per_qp(dev, port_index, dlid, dest_qp_num,
+		process_incoming_message_per_qp(dev, port_num, dlid, dest_qp_num,
 						lrh, grh, bth, buffer, size);
 	} else {
 		/* Multicast */
@@ -717,7 +718,7 @@ static void process_incoming_message(struct pib_dev *dev, int port_index, void *
 				continue;
 
 			pib_debug("pib: MC packet qp_num=0x%06x\n", qp_nums[i]);
-			process_incoming_message_per_qp(dev, port_index, dlid, qp_nums[i],
+			process_incoming_message_per_qp(dev, port_num, dlid, qp_nums[i],
 							lrh, grh, bth, buffer, size);
 
 			cond_resched();
@@ -726,6 +727,9 @@ static void process_incoming_message(struct pib_dev *dev, int port_index, void *
 
 silently_drop:
 	return;
+
+raw_packet:
+	process_raw_packet(dev, port_num, lrh, buffer, size);
 }
 
 
@@ -761,6 +765,9 @@ int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_
 	if (lnh == 0x2)
 		/* IBA local */
 		goto skip_grh;
+	else if (lnh == 0)
+		/* Raw packt */
+		return ret;
 	else if (lnh != 0x3) {
 		return -3;
 	}
@@ -793,11 +800,10 @@ skip_grh:
 }
 
 
-static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size)
+static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size)
 {
 	unsigned long flags;
 	struct pib_qp *qp;
-	const u8 port_num = port_index + 1;
 
 	spin_lock_irqsave(&dev->lock, flags);
 
@@ -805,7 +811,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 
 	case PIB_QP0:
 	case PIB_QP1:
-		qp = dev->ports[port_index].qp_info[dest_qp_num];
+		qp = dev->ports[port_num - 1].qp_info[dest_qp_num];
 		break;
 
 	case IB_MULTICAST_QPN:
@@ -828,10 +834,10 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, int port_index,
 		;
 	else if (!pib_is_unicast_lid(dlid))
 		;
-	else if (dlid != dev->ports[port_index].ib_port_attr.lid) {
+	else if (dlid != dev->ports[port_num - 1].ib_port_attr.lid) {
 		spin_unlock_irqrestore(&dev->lock, flags);
 		pib_debug("pib: drop packet: differ packet's dlid from port lid (0x%04x, 0x%04x)\n",
-			  dlid, dev->ports[port_index].ib_port_attr.lid);
+			  dlid, dev->ports[port_num - 1].ib_port_attr.lid);
 		goto silently_drop;
 	}
 
@@ -869,6 +875,89 @@ silently_drop:
 	return;
 }
 
+/******************************************************************************/
+/*                                                                            */
+/******************************************************************************/
+
+static void connect_pibnetd(struct pib_dev *dev, u8 port_num)
+{
+	struct pib_port *port;
+	void *buffer;
+	struct pib_packet_lrh *lrh;
+	struct pib_packet_link *link;
+
+	port = &dev->ports[port_num-1];
+
+	buffer = dev->thread.send_buffer;
+
+	lrh    = buffer;
+
+	memset(lrh, 0, sizeof(*lrh));
+
+	lrh->dlid = cpu_to_be16(PIB_LID_PERMISSIVE);
+	lrh->slid = cpu_to_be16(PIB_LID_PERMISSIVE);
+
+	buffer += sizeof(*lrh);
+
+	link   = buffer;
+	link->cmd = PIB_LINK_CMD_CONNECT;
+
+	buffer += sizeof(*link);
+
+	pib_packet_lrh_set_pktlen(lrh, (buffer - dev->thread.send_buffer) / 4);
+
+	dev->thread.port_num	  = port_num;
+	dev->thread.src_qp_num	  = PIB_LINK_QP;
+	dev->thread.slid	  = PIB_LID_PERMISSIVE;
+	dev->thread.dlid	  = PIB_LID_PERMISSIVE;
+	dev->thread.ready_to_send = 1;
+
+	process_sendmsg(dev);
+
+	pib_queue_delayed_work(dev, &port->link.work, 60 * HZ);
+}
+
+
+static void process_raw_packet(struct pib_dev *dev, u8 port_num, struct pib_packet_lrh *lrh, void *buffer, int size)
+{
+	struct pib_packet_link *link;
+	struct pib_port *port;
+
+	port = &dev->ports[port_num-1];
+
+	if (size == sizeof(*link)) {
+		link = buffer;
+		switch (be32_to_cpu(link->cmd)) {
+		case PIB_LINK_CMD_CONNECT_ACK:
+			/* @tod lock */
+			port->is_connected = true;
+			port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
+			port->ib_port_attr.state      = IB_PORT_INIT;
+			break;
+		case PIB_LINK_CMD_DISCONNECT_ACK:
+		case PIB_LINK_SHUTDOWN:
+			port->is_connected = false;
+			port->ib_port_attr.phys_state = PIB_PHYS_PORT_POLLING;
+			port->ib_port_attr.state      = IB_PORT_DOWN;
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+
+void pib_netd_comm_handler(struct pib_work_struct *work)
+{
+	struct pib_dev *dev = work->dev;
+	struct pib_port *port = work->data;
+
+	BUG_ON(!spin_is_locked(&dev->lock));
+
+	if (port->ib_port_attr.state == IB_PORT_DOWN)
+		/* 再設定 */
+		connect_pibnetd(dev, port->port_num);
+}
 
 
 /******************************************************************************/
@@ -1008,7 +1097,6 @@ done:
 	return qp;
 }
 
-
 /******************************************************************************/
 /*                                                                            */
 /******************************************************************************/
@@ -1053,12 +1141,43 @@ void pib_queue_work(struct pib_dev *dev, struct pib_work_struct *work)
 }
 
 
+void pib_queue_delayed_work(struct pib_dev *dev, struct pib_work_struct *work, unsigned long delay)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->wq_sched.lock, flags);
+	list_add_tail(&work->entry, &dev->wq_sched.timer_head);
+	work->on_timer = true;
+	work->timer.function	= delayed_work_timeout_callback;
+	work->timer.data	= (unsigned long)work;
+	work->timer.expires	= jiffies + delay;
+	add_timer(&work->timer);
+	spin_unlock_irqrestore(&dev->wq_sched.lock, flags);
+}
+
+
 void pib_cancel_work(struct pib_dev *dev, struct pib_work_struct *work)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->wq_sched.lock, flags);
 	list_del_init(&work->entry);
+	spin_unlock_irqrestore(&dev->wq_sched.lock, flags);
+}
+
+
+void pib_stop_delayed_queue(struct pib_dev *dev)
+{
+	unsigned long flags;
+	struct pib_work_struct *work, *next_work;
+
+	spin_lock_irqsave(&dev->wq_sched.lock, flags);
+	list_for_each_entry_safe(work, next_work, &dev->wq_sched.timer_head, entry) {
+		list_del_init(&work->entry);
+		list_add_tail(&work->entry, &dev->wq_sched.head);
+		del_timer_sync(&work->timer);
+		work->on_timer = false;
+	}
 	spin_unlock_irqrestore(&dev->wq_sched.lock, flags);
 }
 
@@ -1087,16 +1206,20 @@ static void process_sendmsg(struct pib_dev *dev)
 
 	port = &dev->ports[port_num - 1];
 
-	/* QP0 以外は SLID または DLID が 0 のパケットは投げない */
-	if (src_qp_num != PIB_QP0)
+	/* QP0 と LINK_QP 以外は SLID または DLID が 0 のパケットは投げない */
+	if ((src_qp_num != PIB_QP0) && (src_qp_num != PIB_LINK_QP))
 		if ((slid == 0) || (dlid == 0))
 			goto done;
 
 	switch (port->ib_port_attr.state) {
+	case IB_PORT_DOWN:
+		if (src_qp_num != PIB_LINK_QP)
+			return;
+		break;
 	case IB_PORT_INIT:
 	case IB_PORT_ARMED:
 		/* The link layer can only transmit and receive SMP. */
-		if (src_qp_num != PIB_QP0)
+		if ((src_qp_num != PIB_QP0) && (src_qp_num != PIB_LINK_QP))
 			return;
 		break;
 	case IB_PORT_ACTIVE:
@@ -1217,5 +1340,22 @@ static void timer_timeout_callback(unsigned long opaque)
 	struct pib_dev* dev  = (struct pib_dev*)opaque;
 	
 	set_bit(PIB_THREAD_QP_SCHEDULE, &dev->thread.flags);
+	complete(&dev->thread.completion);
+}
+
+
+static void delayed_work_timeout_callback(unsigned long data)
+{
+	struct pib_work_struct *work = (struct pib_work_struct*)data;
+	struct pib_dev *dev = work->dev;
+	unsigned long flags;
+
+	spin_lock_irqsave(&dev->wq_sched.lock, flags);
+	work->on_timer = false;
+	list_del_init(&work->entry);
+	list_add_tail(&work->entry, &dev->wq_sched.head);
+	spin_unlock_irqrestore(&dev->wq_sched.lock, flags);
+
+	set_bit(PIB_THREAD_WQ_SCHEDULE, &dev->thread.flags);
 	complete(&dev->thread.completion);
 }

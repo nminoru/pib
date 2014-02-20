@@ -530,11 +530,13 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	
 	pib_subn_set_portinfo(smp, port, port_num, PIB_PORT_CA);
 
-	if (port->ib_port_attr.phys_state != PIB_PHYS_PORT_LINK_UP)
-		port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
+	if (port->is_connected) {
+		if (port->ib_port_attr.phys_state != PIB_PHYS_PORT_LINK_UP)
+			port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
 
-	if (port->ib_port_attr.state < IB_PORT_INIT)
-		port->ib_port_attr.state = IB_PORT_INIT;
+		if (port->ib_port_attr.state < IB_PORT_INIT)
+			port->ib_port_attr.state = IB_PORT_INIT;
+	}
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 

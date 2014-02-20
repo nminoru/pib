@@ -72,7 +72,7 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	spin_lock_init(&srq->lock);
 	INIT_LIST_HEAD(&srq->recv_wqe_head);
 	INIT_LIST_HEAD(&srq->free_recv_wqe_head);
-	PIB_INIT_WORK(&srq->work, srq, srq_error_handler);
+	PIB_INIT_WORK(&srq->work, dev, srq, srq_error_handler);
 
 	for (i=0 ; i<srq->ib_srq_attr.max_wr ; i++) {
 		struct pib_recv_wqe *recv_wqe;
@@ -399,7 +399,7 @@ void pib_util_insert_async_srq_error(struct pib_dev *dev, struct pib_srq *srq)
 static void srq_error_handler(struct pib_work_struct *work)
 {
 	struct pib_srq *srq = work->data;
-	struct pib_dev *dev = to_pdev(srq->ib_srq.device);
+	struct pib_dev *dev = work->dev;
 
 	BUG_ON(!spin_is_locked(&dev->lock));
 

@@ -735,7 +735,7 @@ static const struct file_operations inject_err_fops = {
 
 void pib_inject_err_handler(struct pib_work_struct *work)
 {
-	struct pib_dev *dev = work->data;
+	struct pib_dev *dev = work->dev;
 	u32 oid;
 
 	oid = dev->debugfs.inject_err_oid;

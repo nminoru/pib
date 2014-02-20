@@ -148,6 +148,11 @@ struct pib_packet_atomicacketh {
 } __attribute__ ((packed));
 
 
+struct pib_packet_link {
+	u32	cmd;
+} __attribute__ ((packed));
+
+
 union pib_packet_footer {
 	struct {
 		__be16	vcrc; /* Variant CRC */

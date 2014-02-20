@@ -65,7 +65,7 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 
 	INIT_LIST_HEAD(&cq->cqe_head);
 	INIT_LIST_HEAD(&cq->free_cqe_head);
-	PIB_INIT_WORK(&cq->work, cq, cq_overflow_handler);
+	PIB_INIT_WORK(&cq->work, dev, cq, cq_overflow_handler);
 
 	/* allocate CQE internally */
 
@@ -410,7 +410,7 @@ void pib_util_insert_async_cq_error(struct pib_dev *dev, struct pib_cq *cq)
 static void cq_overflow_handler(struct pib_work_struct *work)
 {
 	struct pib_cq *cq = work->data;
-	struct pib_dev *dev = to_pdev(cq->ib_cq.device);
+	struct pib_dev *dev = work->dev;
 
 	BUG_ON(!spin_is_locked(&dev->lock));
 

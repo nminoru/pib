@@ -510,7 +510,8 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 
 	spin_lock_init(&dev->wq_sched.lock);
 	INIT_LIST_HEAD(&dev->wq_sched.head);
-	PIB_INIT_WORK(&dev->debugfs.inject_err_work, dev, pib_inject_err_handler);
+	INIT_LIST_HEAD(&dev->wq_sched.timer_head);
+	PIB_INIT_WORK(&dev->debugfs.inject_err_work, dev, NULL, pib_inject_err_handler);
 
 	dev->ib_dev_attr		= ib_dev_attr;
 
@@ -597,6 +598,7 @@ static void setup_obj_num_bitmap(struct pib_dev *dev)
 
 	bitmap_set(bitmap, PIB_BITMAP_QP_START + PIB_QP0,          1);
 	bitmap_set(bitmap, PIB_BITMAP_QP_START + PIB_QP1,          1);
+	bitmap_set(bitmap, PIB_BITMAP_QP_START + PIB_LINK_QP,      1);
 	bitmap_set(bitmap, PIB_BITMAP_QP_START + IB_MULTICAST_QPN, 1);
 
 }
@@ -607,7 +609,6 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 	int j;
 	struct pib_port *port;
 	struct ib_port_attr ib_port_attr = {
-		/* .state           = IB_PORT_DOWN, */
 		.state           = IB_PORT_INIT,
 		.max_mtu         = IB_MTU_4096,
 		.active_mtu      = IB_MTU_256,
@@ -626,7 +627,6 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 		.init_type_reply = 0U,
 		.active_width    = IB_WIDTH_12X,
 		.active_speed    = IB_SPEED_QDR,
-		/* .phys_state      = PIB_PHYS_PORT_POLLING, */
 		.phys_state      = PIB_PHYS_PORT_LINK_UP,
 	};
 
@@ -649,6 +649,18 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 
 	for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
 		port->pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
+
+	if (pib_multi_host_mode) {
+		port->is_connected = false;
+		port->ib_port_attr.phys_state = PIB_PHYS_PORT_POLLING;
+		port->ib_port_attr.state      = IB_PORT_DOWN;
+	} else {
+		port->is_connected = true;
+		port->ib_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
+		port->ib_port_attr.state      = IB_PORT_INIT;
+	}
+
+	PIB_INIT_WORK(&port->link.work, dev, port, pib_netd_comm_handler);
 
 	return 0;
 }
@@ -700,6 +712,8 @@ static void pib_dev_remove(struct pib_dev *dev)
 #endif
 
 	pr_info("pib: remove HCA (dev_id=%d)\n", dev->dev_id);
+
+	pib_stop_delayed_queue(dev);
 
 	ib_unregister_device(&dev->ib_dev);
 
@@ -909,10 +923,18 @@ static int parse_multi_host_mode(void)
 
 	sockaddr->sin_family      = AF_INET;
 	sockaddr->sin_addr.s_addr = htonl((s1 << 24) | (s2 << 16) | (s3 << 8) | s4);
-	sockaddr->sin_port	  = server_port;
+	sockaddr->sin_port	  = htons(server_port);
 
 	pib_netd_sockaddr = (struct sockaddr *)sockaddr;
 	pib_netd_socklen  = sizeof(*sockaddr);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+	pr_info("pibnetd's IP address: %pISpc\n",
+		(const struct sockaddr*)pib_netd_sockaddr);
+#else
+	pr_info("pibnetd's IP address: %u.%u.%u.%u:%u\n",
+		s1, s2, s3, s4, server_port);
+#endif
 
 	return 0;
 }
