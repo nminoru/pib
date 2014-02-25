@@ -276,7 +276,7 @@ static int pma_get_port_samples_control(struct ib_pma_mad *pmp, struct pib_node 
 
 	p->sample_start      = cpu_to_be32(0);
 	p->sample_interval   = cpu_to_be32(0);
-	p->tag               = perf->tag;
+	p->tag               = cpu_to_be16(perf->tag);
 
 	for (i=0 ; i<ARRAY_SIZE(p->counter_select) ; i++)
 		p->counter_select[i] = cpu_to_be16(perf->counter_select[i]);
@@ -314,7 +314,7 @@ static int pma_set_port_samples_control(struct ib_pma_mad *pmp, struct pib_node 
 	perf = &node->ports[port_select - node->port_start].perf; 
 
 	perf->OpCode	= p->opcode;
-	perf->tag	= p->tag;
+	perf->tag	= be16_to_cpu(p->tag);
 
 #if 0
 	p->sample_start      = cpu_to_be32();
@@ -345,7 +345,7 @@ static int pma_get_port_samples_result(struct ib_pma_mad *pmp, struct pib_node *
 
 	perf = &node->ports[port_num - node->port_start].perf;
 
-	p->tag           = perf->tag;
+	p->tag           = cpu_to_be16(perf->tag);
 	p->sample_status = PIB_PMA_SAMPLE_STATUS_DONE;
 
 	for (i=0 ; i<ARRAY_SIZE(p->counter) ; i++)
@@ -372,7 +372,7 @@ static int pma_get_port_samples_result_ext(struct ib_pma_mad *pmp, struct pib_no
 
 	perf = &node->ports[port_num - node->port_start].perf;
 
-	p->tag            = perf->tag;
+	p->tag            = cpu_to_be16(perf->tag);
 	p->sample_status  = cpu_to_be16(PIB_PMA_SAMPLE_STATUS_DONE);
 	p->extended_width = cpu_to_be32(0x80000000); /* 64 bits counter */
 

@@ -765,19 +765,18 @@ int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_
 	if (lnh == 0x2)
 		/* IBA local */
 		goto skip_grh;
-	else if (lnh == 0)
+	else if (lnh == 0) {
 		/* Raw packt */
+		*lrh_p = lrh;
 		return ret;
-	else if (lnh != 0x3) {
+	} else if (lnh != 0x3)
 		return -3;
-	}
 
 	/* IBA global */
 	grh = (struct ib_grh *)buffer;
 
-	if (size < sizeof(*grh)) {
+	if (size < sizeof(*grh))
 		return -1;
-	}
 
 	buffer += sizeof(*grh);
 	size   -= sizeof(*grh);
@@ -786,7 +785,7 @@ int pib_parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_
 skip_grh:
 	/* Base Transport Header */
 	bth = (struct pib_packet_bth *)buffer;
-	    
+
 	if (size < sizeof(*bth))
 		return -1;
 
@@ -900,7 +899,7 @@ static void connect_pibnetd(struct pib_dev *dev, u8 port_num)
 	buffer += sizeof(*lrh);
 
 	link   = buffer;
-	link->cmd = PIB_LINK_CMD_CONNECT;
+	link->cmd = cpu_to_be32(PIB_LINK_CMD_CONNECT);
 
 	buffer += sizeof(*link);
 
@@ -1231,9 +1230,9 @@ static void process_sendmsg(struct pib_dev *dev)
 	}
 
 	/* 送信サイズを確定 */
-	msg_size = pib_packet_lrh_get_pktlen(dev->thread.send_buffer) * 4 + sizeof(*footer);
+	msg_size = pib_packet_lrh_get_pktlen(dev->thread.send_buffer) * 4;
 
-	if ((0 == msg_size) || (PIB_PACKET_BUFFER < msg_size + sizeof(*footer))) {
+	if ((0 == msg_size) || (PIB_PACKET_BUFFER < msg_size)) {
 		pr_err("pib: wrong length = %zu\n", msg_size);
 		return;
 	}
@@ -1241,6 +1240,8 @@ static void process_sendmsg(struct pib_dev *dev)
 	/* フッターとして VCRC が入る領域に Port GUID を入れる */
 	footer = dev->thread.send_buffer + msg_size;
 	footer->pib.port_guid = port->gid[0].global.interface_id;
+
+	msg_size += sizeof(*footer);
 
 	pib_trace_send(dev, port_num, msg_size);
 

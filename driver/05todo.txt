@@ -1,3 +1,5 @@
+- Single-host-mode の lid_table を廃止する。
+
 - WQ scheduler と QP scheduler の統合
 
 - ib_ipoib.ko のバグを解析すること

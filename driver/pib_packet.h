@@ -149,7 +149,7 @@ struct pib_packet_atomicacketh {
 
 
 struct pib_packet_link {
-	u32	cmd;
+	__be32	cmd;
 } __attribute__ ((packed));
 
 

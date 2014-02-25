@@ -293,7 +293,7 @@ struct pib_mcast_link {
 
 struct pib_port_perf {
 	u8			OpCode; /* all 0xFF */
-	__be16			tag;
+	u16			tag;
 	u16			counter_select[16];
 	u64			counter[16];
 
