@@ -53,12 +53,13 @@
   このためにホスト内で見つかった最初のイーサーネット機器の MAC アドレス (EUI-48) を借用し、
   これを上位につめた 64 ビットを合成する。
 
-  0x0000 Not use
-  0x0100 Easy Switch
-  0x0200 SystemImageGUID 
-  0xyyzz NodeGUID or PortGUID
-         -- yy は 3 から始まる HCA 番号
-         -- zz は 0 なら NodeGUID で、1 以上は PortGUID
+  0x0000         Not use
+  0x0100         Easy switch (for single-host-mode)
+  0x0101～0x01FF pibnetd (for multi-host-mode)
+  0x0200         SystemImageGUID 
+  0xyyzz         NodeGUID or PortGUID
+                 - yy は 3 から始まる HCA 番号
+                 - zz は 0 なら NodeGUID で、1 以上は PortGUID
 
 ・送信処理は Send Queue は submitted(未送信)、sending(送信中)、waiting(ACK待ち) の 3 つのキューで処理する。
 

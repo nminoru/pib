@@ -1,3 +1,5 @@
+- pibnetd の初期メッセージ・追加・削除を
+
 - Single-host-mode の lid_table を廃止する。
 
 - WQ scheduler と QP scheduler の統合

@@ -214,7 +214,9 @@ static int process_subn_get_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 		if (port_cap_flags & IB_PORT_SM)
 			return IB_MAD_RESULT_SUCCESS;
 
-		/* pass through */
+		pr_err("pib: process_subn: GET SMInfo on no SM port\n");
+		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
+		return reply(smp);
 	}
 
 	default:
@@ -255,7 +257,9 @@ static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 i
 		if (port_cap_flags & IB_PORT_SM)
 			return IB_MAD_RESULT_SUCCESS;
 
-		/* pass through */
+		pr_err("pib: process_subn: SET SMInfo on no SM port\n");
+		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
+		return reply(smp);
 	}
 
 	default:

@@ -11,10 +11,15 @@
 #include <errno.h>
 #include <assert.h>
 #include <getopt.h>
+#include <inttypes.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>
 #include <arpa/inet.h>
-#include <endian.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <net/if.h>
 
 #include "pibnetd.h"
 #include "pibnetd_packet.h"
@@ -27,6 +32,7 @@ static uint32_t port_num = PIB_NETD_DEFAULT_PORT;
 
 static struct pib_switch *init_switch(void);
 static void finish_switch(struct pib_switch *sw);
+static void construct_hca_guid_base(int sockfd);
 static void do_work(struct pib_switch *sw);
 static void receive_packet(struct pib_switch *sw);
 static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct sockaddr *sockaddr, void *buffer, int size);
@@ -93,6 +99,8 @@ static struct pib_switch *init_switch(void)
 		exit(EXIT_FAILURE);
 	}
 
+	construct_hca_guid_base(sw->sockfd);
+
 	memset(&sockaddr, 0, sizeof(sockaddr));
 	sockaddr.sin_family      = AF_INET;
 	sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -144,7 +152,7 @@ static struct pib_switch *init_switch(void)
 			htobe64(0xFE80000000000000ULL);
 		/* the same guid for all ports on a switch */
 		port->gid[0].global.interface_id  =
-			htobe64(pib_hca_guid_base | 0x0100ULL);
+			htobe64(pib_hca_guid_base | 0x0101ULL);
 
 		port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
 		port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
@@ -166,6 +174,59 @@ static struct pib_switch *init_switch(void)
 static void finish_switch(struct pib_switch *sw)
 {
 	close(sw->sockfd);
+}
+
+
+static void construct_hca_guid_base(int sockfd)
+{
+	uint64_t hwaddr = 0xCafeBabe0000ULL;
+	struct ifaddrs *ifaddr, *ifa;
+
+	if (getifaddrs(&ifaddr) < 0) {
+		int eno  = errno;
+		pib_report_err("pibnetd: getifaddrs(ret=%d)", eno);
+		exit(EXIT_FAILURE);
+	}
+
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL)
+			continue;
+
+		int family = ifa->ifa_addr->sa_family;
+
+		if (family == AF_INET || family == AF_INET6) {
+			struct ifreq ifr;
+
+			memset(&ifr, 0, sizeof(ifr));
+			ifr.ifr_addr.sa_family = family;
+			strncpy(ifr.ifr_name, ifa->ifa_name, IFNAMSIZ-1);
+
+			ioctl(sockfd, SIOCGIFHWADDR, &ifr);
+
+			int i;
+			for (i=6 ; i<sizeof(ifr.ifr_hwaddr.sa_data) ; i++)
+				if (ifr.ifr_hwaddr.sa_data[i] != 0)
+					goto skip;
+
+			hwaddr = (uint8_t)ifr.ifr_hwaddr.sa_data[0];
+			for (i=1 ; i<6 ; i++) {
+				hwaddr <<= 8;
+				hwaddr |= (uint8_t)ifr.ifr_hwaddr.sa_data[i];
+			}
+
+			if (hwaddr != 0)
+				goto done;
+		}
+	skip:
+		;
+	}
+
+done:	
+	freeifaddrs(ifaddr);
+
+	pib_hca_guid_base = hwaddr;
+
+	pib_report_info("pibned: HWADDR=%" PRIx64 "\n", hwaddr);
 }
 
 
