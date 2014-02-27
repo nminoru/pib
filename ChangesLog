@@ -1,3 +1,8 @@
+2014-02-27 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib, pibnetd: version 0.3.1
+           * When a node unloads pib.ko, pibnetd frees the port of which is connected to the node.
+
 2014-02-25 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib, pibnetd: version 0.3.0

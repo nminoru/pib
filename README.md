@@ -5,10 +5,11 @@ pib is a software-based InfiniBand HCA driver.
 It provides InfiniBand functions without real IB HCA & fabric.
 pib aims to simulate InfiniBand behavior accurately but not to get speed.
 
-pib contains the two components.
+pib contains the three components.
 
-- pib.ko - Linux kernel module
-- libpib - Userspace plug-in module for libibverbs
+- pib.ko  - Linux kernel module
+- libpib  - Userspace plug-in module for libibverbs
+- pibnetd - IB switch emulator for multi-host-mode
 
 Features
 ========
@@ -46,7 +47,7 @@ Other features:
 Limitation
 ==========
 
-The current version is EXPERIMETNAL and not supported multi-host-mode.
+The current version is EXPERIMETNAL.
 
 The follwing features are not supported:
 
@@ -134,6 +135,7 @@ pib.ko options
 * behavior
 * manner_warn
 * manner_err
+* addr
 
 Running
 =======
@@ -172,10 +174,6 @@ See detailed information on DEBUGFS.md.
 
 Future work
 ===========
-
-Multi host support
-------------------
-For multi host mode, I'm planning to develop an InfiniBand fabric simulater like ibsim.
 
 IB functions
 ------------

@@ -57,8 +57,14 @@ int pib_process_smp(struct pib_smp *smp, struct pib_switch *sw, uint8_t in_port_
 			return ret;
 		return process_smp_get_method(smp, sw, in_port_num);
 
+	case PIB_MGMT_METHOD_GET_RESP:
+		if (smp->mgmt_class == PIB_MGMT_CLASS_SUBN_LID_ROUTED)
+			return PIB_SMP_RESULT_SUCCESS | PIB_SMP_RESULT_CONSUMED;
+		/* pass through */
+
 	default:
-		pib_report_debug("pibnetd: process_smp: %u %u", smp->method, be16_to_cpu(smp->attr_id));
+		pib_report_debug("pibnetd: process_smp: %u %u",
+				 smp->method, be16_to_cpu(smp->attr_id));
 		smp->status |= PIB_SMP_UNSUP_METHOD;
 		return reply(smp);
 	}
@@ -105,7 +111,8 @@ static int process_smp_get_method(struct pib_smp *smp, struct pib_switch *sw, u8
 		return subn_get_mcast_forward_table(smp, sw, in_port_num);
 
 	default:
-		pib_report_debug("pibnet: process_subn: IB_MGMT_METHOD_GET: %u", be16_to_cpu(smp->attr_id));
+		pib_report_debug("pibnet: process_subn: IB_MGMT_METHOD_GET: %u",
+				 be16_to_cpu(smp->attr_id));
 		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
@@ -144,7 +151,8 @@ static int process_smp_set_method(struct pib_smp *smp, struct pib_switch *sw, u8
 		return subn_set_mcast_forward_table(smp, sw, in_port_num);
 
 	default:
-		pib_report_debug("pibnetd: process_smp: IB_MGMT_METHOD_SET: %u", be16_to_cpu(smp->attr_id));
+		pib_report_debug("pibnetd: process_smp: IB_MGMT_METHOD_SET: %u",
+				 be16_to_cpu(smp->attr_id));
 		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}

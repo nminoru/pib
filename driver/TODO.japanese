@@ -1,4 +1,5 @@
-- pibnetd の初期メッセージ・追加・削除を
+- SMInfo
+- Trap を受けた場合を追加。
 
 - Single-host-mode の lid_table を廃止する。
 

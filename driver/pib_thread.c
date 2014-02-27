@@ -37,6 +37,8 @@ static int receive_packet(struct pib_dev *dev, u8 port_num);
 static void process_incoming_message(struct pib_dev *dev, u8 port_num, void *buffer, int packet_size);
 static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 static void connect_pibnetd(struct pib_dev *dev, u8 port_num);
+static void disconnect_pibnetd(struct pib_dev *dev, u8 port_num);
+static void send_raw_packet_to_pibnetd(struct pib_dev *dev, u8 port_num, bool disconnect);
 static void process_raw_packet(struct pib_dev *dev, u8 port_num, struct pib_packet_lrh *lrh, void *buffer, int size);
 static void process_on_wq_scheduler(struct pib_dev *dev);
 static void process_sendmsg(struct pib_dev *dev);
@@ -265,6 +267,12 @@ static int kthread_routine(void *data)
 		}
 
 		process_on_qp_scheduler(dev);
+	}
+
+	if (pib_multi_host_mode) {
+		int i;
+		for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
+			disconnect_pibnetd(dev, i + 1);
 	}
 
 	return 0;
@@ -874,6 +882,7 @@ silently_drop:
 	return;
 }
 
+
 /******************************************************************************/
 /*                                                                            */
 /******************************************************************************/
@@ -881,11 +890,32 @@ silently_drop:
 static void connect_pibnetd(struct pib_dev *dev, u8 port_num)
 {
 	struct pib_port *port;
+
+	port = &dev->ports[port_num-1];
+	send_raw_packet_to_pibnetd(dev, port_num, false);
+	pib_queue_delayed_work(dev, &port->link.work, 60 * HZ);
+}
+
+
+static void disconnect_pibnetd(struct pib_dev *dev, u8 port_num)
+{
+	struct pib_port *port;
+
+	port = &dev->ports[port_num-1];
+
+	send_raw_packet_to_pibnetd(dev, port_num, true);
+
+	port->is_connected = false;
+	port->ib_port_attr.phys_state = PIB_PHYS_PORT_POLLING;
+	port->ib_port_attr.state      = IB_PORT_DOWN;
+}
+
+
+static void send_raw_packet_to_pibnetd(struct pib_dev *dev, u8 port_num, bool disconnect)
+{
 	void *buffer;
 	struct pib_packet_lrh *lrh;
 	struct pib_packet_link *link;
-
-	port = &dev->ports[port_num-1];
 
 	buffer = dev->thread.send_buffer;
 
@@ -899,7 +929,7 @@ static void connect_pibnetd(struct pib_dev *dev, u8 port_num)
 	buffer += sizeof(*lrh);
 
 	link   = buffer;
-	link->cmd = cpu_to_be32(PIB_LINK_CMD_CONNECT);
+	link->cmd = cpu_to_be32(disconnect ? PIB_LINK_CMD_DISCONNECT : PIB_LINK_CMD_CONNECT);
 
 	buffer += sizeof(*link);
 
@@ -912,8 +942,6 @@ static void connect_pibnetd(struct pib_dev *dev, u8 port_num)
 	dev->thread.ready_to_send = 1;
 
 	process_sendmsg(dev);
-
-	pib_queue_delayed_work(dev, &port->link.work, 60 * HZ);
 }
 
 

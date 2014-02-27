@@ -18,8 +18,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	3
-#define PIB_VERSION_REVISION	0
-#define PIB_DRIVER_VERSION 	"0.3.0"
+#define PIB_VERSION_REVISION	1
+#define PIB_DRIVER_VERSION 	"0.3.1"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -137,21 +137,6 @@ enum pib_port_width {
 	PIB_WIDTH_4X	= 2,
 	PIB_WIDTH_8X	= 4,
 	PIB_WIDTH_12X	= 8
-};
-
-
-union pib_sockaddr {
-	struct sockaddr		sockaddr;
-	struct sockaddr_in	sockaddr_in;
-	struct sockaddr_in6	sockaddr_in6;
-};
-
-
-struct pib_conn_info {
-	int			conn_fd;
-	union pib_sockaddr	sockaddr;
-	socklen_t		socklen;
-	char			buffer[4096 * 2];
 };
 
 

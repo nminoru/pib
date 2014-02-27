@@ -1,4 +1,0 @@
-/etc/libibverbs.d/pib.driver
-/etc/modprobe.d/libpib.conf
-/etc/rdma/pib.conf
-/etc/rdma/setup-pib.awk

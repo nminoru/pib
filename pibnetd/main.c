@@ -36,6 +36,8 @@ static void construct_hca_guid_base(int sockfd);
 static void do_work(struct pib_switch *sw);
 static void receive_packet(struct pib_switch *sw);
 static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct sockaddr *sockaddr, void *buffer, int size);
+static void resend_ack(struct pib_switch *sw, int size, uint8_t port_num);
+static void send_trap_ntc128(struct pib_switch *sw);
 static uint8_t detect_in_port(struct pib_switch *sw, uint64_t port_guid);
 static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth, void *buffer, int size);
 static void relay_unicast_packet(struct pib_switch *sw, uint8_t in_port_num, uint16_t dlid, int size);
@@ -75,6 +77,7 @@ int main(int argc, char** argv)
 
 	struct pib_switch *sw;
 	sw = init_switch();
+	pib_report_info("pibnetd: " PIB_SWITCH_DESCRIPTION " v" PIB_DRIVER_VERSION);
 	do_work(sw);
 
 	return 0;
@@ -95,7 +98,8 @@ static struct pib_switch *init_switch(void)
 
 	sw->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sw->sockfd < 0) {
-		perror("socket");
+		int eno = errno;
+		pib_report_err("pibnetd: socket(ret=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
 
@@ -225,8 +229,6 @@ done:
 	freeifaddrs(ifaddr);
 
 	pib_hca_guid_base = hwaddr;
-
-	pib_report_info("pibned: HWADDR=%" PRIx64 "\n", hwaddr);
 }
 
 
@@ -380,77 +382,95 @@ retry:
 
 static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct sockaddr *sockaddr, void *buffer, int size)
 {
-	uint8_t port;
+	int socklen;
+	uint8_t port_num;
+	uint16_t udp_port;
 	struct pib_packet_link *link;
+	char address[64];
+
+	memset(address, 0, sizeof(address));
+
+	switch (sockaddr->sa_family) {
+	case AF_INET: {
+		struct sockaddr_in *sockaddr_in = (struct sockaddr_in*)sockaddr;
+		inet_ntop(AF_INET, &sockaddr_in->sin_addr, address, sizeof(address));
+		udp_port = sockaddr_in->sin_port;
+		socklen = sizeof(struct sockaddr_in);
+		break;
+	}
+
+	case AF_INET6: {
+		struct sockaddr_in6 *sockaddr_in6 = (struct sockaddr_in6*)sockaddr;
+		inet_ntop(AF_INET6, &sockaddr_in6->sin6_addr, address, sizeof(address));
+		udp_port = sockaddr_in6->sin6_port;
+		socklen = sizeof(struct sockaddr_in6);
+		break;
+	}
+
+	default:
+		pib_report_err("pibnetd: sockaddr");
+		exit(EXIT_FAILURE);		
+		break;
+	} 
 
 	if (size < sizeof(*link))
 		return;
 
 	link = buffer;
 
-	pib_report_info("CMD: %u PortGUID=0x%016llx", be32_to_cpu(link->cmd), port_guid);
-
 	switch (be32_to_cpu(link->cmd)) {
 
-	case PIB_LINK_CMD_CONNECT: {
-		int socklen = sizeof(struct sockaddr_in); /* @todo */
+	case PIB_LINK_CMD_CONNECT:
+		port_num = detect_in_port(sw, port_guid);
 
-		port = detect_in_port(sw, port_guid);
+		if (port_num != 0)
+			break;
 
-		if (port != 0)
-			goto send_ack;
-
-		for (port = 1 ; port < sw->port_cnt ; port++) {
-			if (sw->ports[port].port_guid != 0)
-			    continue;
-
-			sw->ports[port].port_guid = port_guid;
-			sw->ports[port].sockaddr  = malloc(socklen);
-			sw->ports[port].socklen   = socklen;
-					
-			sw->ports[port].ibv_port_attr.state      = IBV_PORT_INIT,
-				sw->ports[port].ibv_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
-
-			memcpy(sw->ports[port].sockaddr, sockaddr, socklen);
-			goto send_ack;
-		}
+		for (port_num = 1 ; port_num < sw->port_cnt ; port_num++)
+			if (sw->ports[port_num].port_guid == 0)
+				goto found_new_port;
 
 		pib_report_err("pibnetd: There is no empty port in this switch.");
 		exit(EXIT_FAILURE);
+		break;
 
-		send_ack:		
+	found_new_port:
+		sw->ports[port_num].port_guid = port_guid;
+		sw->ports[port_num].sockaddr  = malloc(socklen);
+		sw->ports[port_num].socklen   = socklen;
 
-		/* @todo 冗長 */
+		sw->ports[port_num].ibv_port_attr.state      = IBV_PORT_INIT;
+		sw->ports[port_num].ibv_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
+
 		link->cmd = cpu_to_be32(PIB_LINK_CMD_CONNECT_ACK);
 
-		struct iovec iovec;
-		struct msghdr msghdr;
+		resend_ack(sw, size, port_num);
+		send_trap_ntc128(sw);
 
-		memset(&msghdr, 0, sizeof(msghdr));
-		memset(&iovec,  0, sizeof(iovec));
-
-		iovec.iov_base     = sw->buffer;
-		iovec.iov_len      = sizeof(struct pib_packet_lrh) + size + sizeof(union pib_packet_footer);
-				
-		msghdr.msg_name    = sockaddr;
-		msghdr.msg_namelen = socklen;
-		msghdr.msg_iov     = &iovec;
-		msghdr.msg_iovlen  = 1;
-
-		int ret;
-		ret = sendmsg(sw->sockfd, &msghdr, 0);
-		if (ret < 0) {
-			int eno  = errno;
-			pib_report_err("pibnetd: sendmsg(errno=%d)", eno);
-			exit(EXIT_FAILURE);
-		}
+		pib_report_info("pibnetd: link up port[%u]: port_guid=0x%" PRIx64 ", sock-addr=%s:%u",
+				port_num, port_guid, address, udp_port);
 		break;
-	}
 
 	case PIB_LINK_CMD_DISCONNECT:
-		break;
+		port_num = detect_in_port(sw, port_guid);
 
-	case PIB_LINK_CMD_DISCONNECT_ACK:
+		if (port_num == 0)
+			break;
+
+		pib_report_info("pibnetd: link down port[%u]: port_guid=0x%" PRIx64 ", sock-addr=%s:%u",
+				port_num, port_guid, address, udp_port);
+
+		link->cmd = cpu_to_be32(PIB_LINK_CMD_DISCONNECT_ACK);
+
+		resend_ack(sw, size, port_num);
+		send_trap_ntc128(sw);
+
+		sw->ports[port_num].port_guid = 0;
+		free(sw->ports[port_num].sockaddr);
+		sw->ports[port_num].sockaddr  = NULL;
+		sw->ports[port_num].socklen   = 0;
+		sw->ports[port_num].ibv_port_attr.state      = IBV_PORT_DOWN;
+		sw->ports[port_num].ibv_port_attr.phys_state = PIB_PHYS_PORT_POLLING;
 		break;
 
 	case PIB_LINK_SHUTDOWN:
@@ -462,13 +482,39 @@ static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct
 }
 
 
+static void resend_ack(struct pib_switch *sw, int size, uint8_t port_num)
+{
+	struct iovec iovec;
+	struct msghdr msghdr;
+
+	memset(&msghdr, 0, sizeof(msghdr));
+	memset(&iovec,  0, sizeof(iovec));
+
+	iovec.iov_base     = sw->buffer;
+	iovec.iov_len      = sizeof(struct pib_packet_lrh) + size + sizeof(union pib_packet_footer);
+				
+	msghdr.msg_name    = sw->ports[port_num].sockaddr;
+	msghdr.msg_namelen = sw->ports[port_num].socklen;
+	msghdr.msg_iov     = &iovec;
+	msghdr.msg_iovlen  = 1;
+
+	int ret;
+	ret = sendmsg(sw->sockfd, &msghdr, 0);
+	if (ret < 0) {
+		int eno  = errno;
+		pib_report_err("pibnetd: sendmsg(errno=%d)", eno);
+		exit(EXIT_FAILURE);
+	}
+}
+
+
 static uint8_t detect_in_port(struct pib_switch *sw, uint64_t port_guid)
 {
-	uint8_t port;
+	uint8_t port_num;
 
-	for (port = 1 ; port < sw->port_cnt ; port++) {
-		if (port_guid == sw->ports[port].port_guid) {
-			return port;
+	for (port_num = 1 ; port_num < sw->port_cnt ; port_num++) {
+		if (port_guid == sw->ports[port_num].port_guid) {
+			return port_num;
 		}
 	}
 
@@ -533,6 +579,10 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 			return -1;
 
 		ret = pib_process_smp(smp, sw, in_port_num);
+
+		if (ret & PIB_SMP_RESULT_CONSUMED)
+			return 0;
+
 		lrh->dlid = lrh->slid;
 		lrh->slid = cpu_to_be16(dlid);
 		if (ret & PIB_SMP_RESULT_FAILURE) {
@@ -787,6 +837,84 @@ skip_grh:
 	*bth_p = bth;
 
 	return ret;
+}
+
+
+static void send_trap_ntc128(struct pib_switch *sw)
+{
+	uint16_t slid, dlid;
+
+	slid = sw->ports[0].ibv_port_attr.lid;
+	dlid = sw->ports[0].ibv_port_attr.sm_lid;
+
+	if ((slid == 0) || (dlid == 0))
+		return;
+
+	uint8_t out_port_num = sw->ucast_fwd_table[dlid];
+
+	printf("slid=%04x dlid=%04x outgoing-port=%u\n", slid, dlid, out_port_num);
+
+	if (out_port_num == 0)
+		return;
+
+	struct packet {
+		struct pib_packet_lrh  lrh;
+		struct pib_packet_bth  bth;
+		struct pib_packet_deth deth;
+		struct pib_smp         smp;
+	} *packet = sw->buffer;
+
+	memset(packet, 0, sizeof(*packet));
+
+	packet->lrh.dlid       = cpu_to_be16(dlid);
+	packet->lrh.sl_rsv_lnh = 0x2;
+	packet->lrh.slid       = cpu_to_be16(slid);
+	packet->bth.OpCode     = 0x64; /* IB_OPCODE_UD_SEND_ONLY */
+	packet->bth.pkey       = 0;
+	packet->bth.destQP     = cpu_to_be32(PIB_QP0);
+	packet->deth.qkey      = 0;
+	packet->deth.srcQP     = cpu_to_be32(PIB_QP0);
+
+	packet->smp.base_version = PIB_MGMT_BASE_VERSION;
+	packet->smp.mgmt_class = PIB_MGMT_CLASS_SUBN_LID_ROUTED;
+	packet->smp.class_version = PIB_MGMT_CLASS_VERSION;
+	packet->smp.method     = PIB_MGMT_METHOD_TRAP;
+	packet->smp.status     = 0;
+	packet->smp.tid        = cpu_to_be64(1);
+	packet->smp.attr_id    = cpu_to_be16(PIB_SMP_ATTR_NOTICE);
+	packet->smp.attr_mod   = 0;
+
+	pib_packet_lrh_set_pktlen(&packet->lrh, sizeof(*packet) / 4);
+
+	struct pib_trap *trap;
+
+	trap = (struct pib_trap *)packet->smp.data;
+
+	trap->generice_type_prodtype = cpu_to_be32((1U << 31) | (1U /* Urgent */ << 24) | 2 /* swich */);
+	trap->trapnum = cpu_to_be16(128);
+	trap->issuerlid = cpu_to_be16(slid);
+	trap->details.ntc_128.lidaddr = cpu_to_be16(slid);
+
+	struct iovec iovec;
+	struct msghdr msghdr;
+
+	memset(&msghdr, 0, sizeof(msghdr));
+	memset(&iovec,  0, sizeof(iovec));
+
+	iovec.iov_base     = sw->buffer;
+	iovec.iov_len      = sizeof(*packet) + sizeof(union pib_packet_footer);
+				
+	msghdr.msg_name    = sw->ports[out_port_num].sockaddr;
+	msghdr.msg_namelen = sw->ports[out_port_num].socklen;
+	msghdr.msg_iov     = &iovec;
+	msghdr.msg_iovlen  = 1;
+
+	int ret = sendmsg(sw->sockfd, &msghdr, 0);
+	if (ret < 0) {
+		int eno  = errno;
+		pib_report_err("pibnetd: sendmsg(errno=%d)", eno);
+		exit(EXIT_FAILURE);
+	}
 }
 
 

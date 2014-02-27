@@ -140,19 +140,17 @@ static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
 			ret = reply(smp);
 		}
 		goto bail;
+#endif
 
 	case IB_MGMT_METHOD_TRAP:
 	case IB_MGMT_METHOD_REPORT:
 	case IB_MGMT_METHOD_REPORT_RESP:
 	case IB_MGMT_METHOD_GET_RESP:
-		/*
-		 * The ib_mad module will call us to process responses
-		 * before checking for other consumers.
-		 * Just tell the caller to process it normally.
-		 */
-		ret = IB_MAD_RESULT_SUCCESS;
-		goto bail;
+		if (in_mad->mad_hdr.mgmt_class == IB_MGMT_CLASS_SUBN_LID_ROUTED)
+			ret = IB_MAD_RESULT_SUCCESS;
+		/* pass through */
 
+#if 0
 	case IB_MGMT_METHOD_SEND:
 		if (ib_get_smp_direction(smp) &&
 		    smp->attr_id == QIB_VENDOR_IPG) {

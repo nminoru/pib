@@ -309,4 +309,34 @@ struct pib_port_info {
 	u8 link_roundtrip_latency[3];
 };
 
+
+struct pib_trap {
+	/*
+	 * - IsGeneric
+	 * - Type
+	 * - ProducerType / VendorID
+	 */
+	__be32 generice_type_prodtype; /* 1 bit, 7 bits, 24 bits */
+	__be16 trapnum;
+
+	/* IssuerLID */
+	__be16 issuerlid;
+
+	/*
+	 * - NoticeToggle
+	 * - NoticeCount
+	 */	
+	__be16 toggle_count;  /* 1bit, 15 bits */
+
+	union {
+		struct {
+			u8 details[54];
+		} raw_data;
+
+		struct {
+			__be16	lidaddr;
+		} __attribute__ ((packed)) ntc_128;
+	} details;
+};
+
 #endif /* _PIBNETD_PACKET_H_ */
