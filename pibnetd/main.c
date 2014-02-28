@@ -248,10 +248,13 @@ static void do_work(struct pib_switch *sw)
 		tv.tv_sec  = 10;
 		tv.tv_usec = 0;
 
+	retry:
 		ret = select(max, &rfds, NULL, NULL, &tv);
-
 		if (ret < 0) {
-			perror("select");
+			int eno = errno;
+			if (eno == EINTR)
+				goto retry;
+			pib_report_err("pibnetd: select(errno=%d)", eno);
 			exit(EXIT_FAILURE);
 		} else if (ret > 0) {
 			if (FD_ISSET(sw->sockfd, &rfds))
@@ -283,8 +286,11 @@ static void receive_packet(struct pib_switch *sw)
 retry:
 	size = recvmsg(sw->sockfd, &msghdr, 0);
 	if (size < 0) {
-		if (size == EINTR)
+		int eno  = errno;
+		if (eno == EINTR)
 			goto retry;
+		pib_report_err("pibnetd: recvmsg(errno=%d)", eno);
+		exit(EXIT_FAILURE);
 		return;
 	}
 
@@ -375,7 +381,8 @@ retry:
 	}
 
 	/* MAD 以外の easy switch 宛のパケット */
-	pib_report_debug("pibnetd: drop packet: dlid=0x%04x, dest_qp_num=0x%06x", dlid, dest_qp_num);
+	pib_report_debug("pibnetd: drop packet: dlid=0x%04x, dest_qp_num=0x%06x",
+			 dlid, dest_qp_num);
 	return;
 }
 
@@ -438,9 +445,10 @@ static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct
 		sw->ports[port_num].port_guid = port_guid;
 		sw->ports[port_num].sockaddr  = malloc(socklen);
 		sw->ports[port_num].socklen   = socklen;
-
 		sw->ports[port_num].ibv_port_attr.state      = IBV_PORT_INIT;
 		sw->ports[port_num].ibv_port_attr.phys_state = PIB_PHYS_PORT_LINK_UP;
+
+		memcpy(sw->ports[port_num].sockaddr, sockaddr, socklen);
 
 		link->cmd = cpu_to_be32(PIB_LINK_CMD_CONNECT_ACK);
 
@@ -499,9 +507,12 @@ static void resend_ack(struct pib_switch *sw, int size, uint8_t port_num)
 	msghdr.msg_iovlen  = 1;
 
 	int ret;
+retry:
 	ret = sendmsg(sw->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno  = errno;
+		if (eno == EINTR)
+			goto retry;
 		pib_report_err("pibnetd: sendmsg(errno=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
@@ -512,11 +523,9 @@ static uint8_t detect_in_port(struct pib_switch *sw, uint64_t port_guid)
 {
 	uint8_t port_num;
 
-	for (port_num = 1 ; port_num < sw->port_cnt ; port_num++) {
-		if (port_guid == sw->ports[port_num].port_guid) {
+	for (port_num = 1 ; port_num < sw->port_cnt ; port_num++)
+		if (port_guid == sw->ports[port_num].port_guid)
 			return port_num;
-		}
-	}
 
 	return 0;
 }
@@ -677,8 +686,11 @@ send_packet:
 retry:
 	ret = sendmsg(sw->sockfd, &msghdr, 0);
 	if (ret < 0) {
-		if (ret == EINTR)
+		int eno = errno;
+		if (eno == EINTR)
 			goto retry;
+		pib_report_err("pibnetd: sendmsg(ret=%d)", eno);
+		exit(EXIT_FAILURE);
 	}
 
 	if (ret > 0) {
@@ -718,8 +730,11 @@ static void relay_unicast_packet(struct pib_switch *sw, uint8_t in_port_num, uin
 retry:
 	ret = sendmsg(sw->sockfd, &msghdr, 0);
 	if (ret < 0) {
-		if (ret == EINTR)
+		int eno = errno;
+		if (eno == EINTR)
 			goto retry;
+		pib_report_err("pibnetd: sendmsg(ret=%d)", eno);
+		exit(EXIT_FAILURE);
 	}
 
 	if (ret > 0) {
@@ -762,8 +777,11 @@ static void relay_multicast_packet(struct pib_switch *sw, uint8_t in_port_num, u
 	retry:
 		ret = sendmsg(sw->sockfd, &msghdr, 0);
 		if (ret < 0) {
-			if (ret == EINTR)
+			int eno = errno;
+			if (eno == EINTR)
 				goto retry;
+			pib_report_err("pibnetd: sendmsg(ret=%d)", eno);
+			exit(EXIT_FAILURE);
 		}
 
 		if (ret > 0) {
@@ -909,9 +927,13 @@ static void send_trap_ntc128(struct pib_switch *sw)
 	msghdr.msg_iov     = &iovec;
 	msghdr.msg_iovlen  = 1;
 
-	int ret = sendmsg(sw->sockfd, &msghdr, 0);
+	int ret;
+retry:
+	ret = sendmsg(sw->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno  = errno;
+		if (eno == EINTR)
+			goto retry;
 		pib_report_err("pibnetd: sendmsg(errno=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
