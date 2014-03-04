@@ -43,12 +43,12 @@ static void send_trap_ntc128(struct pib_switch *sw);
 static uint8_t detect_in_port(struct pib_switch *sw, uint64_t port_guid);
 static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth, void *buffer, int size);
 static void relay_unicast_packet(struct pib_switch *sw, uint8_t in_port_num, uint16_t dlid, int size);
-static void relay_unicast_packet(struct pib_switch *sw, uint8_t in_port_num, uint16_t dlid, int size);
 static void relay_multicast_packet(struct pib_switch *sw, uint8_t in_port_num, uint16_t dlid, int size);
 
 static int parse_packet_header(void *buffer, int size, struct pib_packet_lrh **lrh_p, struct pib_grh **grh_p, struct pib_packet_bth **bth_p);
 static int pib_is_unicast_lid(uint16_t lid);
 static int pib_is_permissive_lid(uint16_t lid);
+static void parse_sockaddr(struct sockaddr *sockaddr, char *buffer, size_t size, socklen_t *socklen_p);
 
 
 int main(int argc, char** argv)
@@ -342,7 +342,13 @@ retry:
 	uint8_t in_port_num;
 	in_port_num = detect_in_port(sw, port_guid);
 
-	assert(in_port_num != 0);
+	if (in_port_num == 0) {
+		char address[64];
+		parse_sockaddr((struct sockaddr*)&sockaddr, address, sizeof(address),  NULL);
+		pib_report_debug("pibnetd: unknown port_guid=0x%" PRIx64 ", sock-addr=%s",
+				 port_guid, buffer);
+		return;
+	}
 
 	if (packet_size > 0) {
 		struct pib_port* port;
@@ -391,36 +397,12 @@ retry:
 
 static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct sockaddr *sockaddr, void *buffer, int size)
 {
-	int socklen;
+	socklen_t socklen;
 	uint8_t port_num;
-	uint16_t udp_port;
 	struct pib_packet_link *link;
 	char address[64];
 
-	memset(address, 0, sizeof(address));
-
-	switch (sockaddr->sa_family) {
-	case AF_INET: {
-		struct sockaddr_in *sockaddr_in = (struct sockaddr_in*)sockaddr;
-		inet_ntop(AF_INET, &sockaddr_in->sin_addr, address, sizeof(address));
-		udp_port = sockaddr_in->sin_port;
-		socklen = sizeof(struct sockaddr_in);
-		break;
-	}
-
-	case AF_INET6: {
-		struct sockaddr_in6 *sockaddr_in6 = (struct sockaddr_in6*)sockaddr;
-		inet_ntop(AF_INET6, &sockaddr_in6->sin6_addr, address, sizeof(address));
-		udp_port = sockaddr_in6->sin6_port;
-		socklen = sizeof(struct sockaddr_in6);
-		break;
-	}
-
-	default:
-		pib_report_err("pibnetd: sockaddr");
-		exit(EXIT_FAILURE);		
-		break;
-	} 
+	parse_sockaddr(sockaddr, address, sizeof(address), &socklen);
 
 	if (size < sizeof(*link))
 		return;
@@ -457,8 +439,8 @@ static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct
 		resend_ack(sw, size, port_num);
 		send_trap_ntc128(sw);
 
-		pib_report_info("pibnetd: link up port[%u]: port_guid=0x%" PRIx64 ", sock-addr=%s:%u",
-				port_num, port_guid, address, udp_port);
+		pib_report_info("pibnetd: link up port[%u]: port_guid=0x%" PRIx64 ", sock-addr=%s",
+				port_num, port_guid, address);
 		break;
 
 	case PIB_LINK_CMD_DISCONNECT:
@@ -467,8 +449,8 @@ static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct
 		if (port_num == 0)
 			break;
 
-		pib_report_info("pibnetd: link down port[%u]: port_guid=0x%" PRIx64 ", sock-addr=%s:%u",
-				port_num, port_guid, address, udp_port);
+		pib_report_info("pibnetd: link down port[%u]: port_guid=0x%" PRIx64 ", sock-addr=%s",
+				port_num, port_guid, address);
 
 		link->cmd = cpu_to_be32(PIB_LINK_CMD_DISCONNECT_ACK);
 
@@ -707,7 +689,8 @@ static void relay_unicast_packet(struct pib_switch *sw, uint8_t in_port_num, uin
 	struct msghdr msghdr;
 
 	out_port_num = sw->ucast_fwd_table[dlid];
-	if (out_port_num == 0)
+
+	if ((out_port_num == 0) || (sw->port_cnt <= out_port_num))
 		return;
 
 	memset(&msghdr,   0, sizeof(msghdr));
@@ -942,4 +925,43 @@ static int pib_is_unicast_lid(uint16_t lid)
 static int pib_is_permissive_lid(uint16_t lid)
 {
 	return (lid == 0) || (lid == PIB_LID_PERMISSIVE);
+}
+
+
+static void parse_sockaddr(struct sockaddr *sockaddr, char *buffer, size_t size, socklen_t *socklen_p)
+{
+	size_t str_len = 0;
+	socklen_t socklen = 0;
+
+	memset(buffer, 0, size);
+
+	switch (sockaddr->sa_family) {
+	case AF_INET: {
+		struct sockaddr_in *sockaddr_in = (struct sockaddr_in*)sockaddr;
+		inet_ntop(AF_INET, &sockaddr_in->sin_addr, buffer, size);
+		str_len = strlen(buffer);
+		assert(str_len < size);
+		snprintf(buffer + str_len, size - str_len, ":%u", sockaddr_in->sin_port);
+		socklen = sizeof(struct sockaddr_in);
+		break;
+	}
+
+	case AF_INET6: {
+		struct sockaddr_in6 *sockaddr_in6 = (struct sockaddr_in6*)sockaddr;
+		inet_ntop(AF_INET6, &sockaddr_in6->sin6_addr, buffer, size);
+		str_len = strlen(buffer);
+		assert(str_len < size);
+		snprintf(buffer + str_len, size - str_len, ":%u", sockaddr_in6->sin6_port);
+		socklen = sizeof(struct sockaddr_in6);
+		break;
+	}
+
+	default:
+		pib_report_err("pibnetd: sockaddr");
+		exit(EXIT_FAILURE);		
+		break;
+	}
+
+	if (socklen_p)
+		*socklen_p = socklen;
 }

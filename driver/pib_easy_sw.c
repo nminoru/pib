@@ -541,6 +541,9 @@ send_packet:
 relay_ucast:
 	out_sw_port_num = sw->ucast_fwd_table[dlid];
 
+	if ((out_sw_port_num == 0) || (sw->port_cnt <= out_sw_port_num))
+		return 0;
+
 	dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
 
 	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
@@ -1003,6 +1006,10 @@ static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_easy_sw 
 	for (i = 0 ; i < 16 ; i++) {
 		u32 value = be32_to_cpu(table[i]);
 		u16 dlid  = value >> 16;
+
+		/* 0xFF as port number is an invalid port */
+		if ((value & 0xFFU) == 0xFFU)
+			value &= ~0x8000U;
 
 		/* @todo LMC */
 		

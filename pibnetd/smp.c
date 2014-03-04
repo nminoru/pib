@@ -677,6 +677,10 @@ static int subn_set_random_forward_table(struct pib_smp *smp, struct pib_switch 
 		u32 value = be32_to_cpu(table[i]);
 		u16 dlid  = value >> 16;
 
+		/* 0xFF as port number is an invalid port */
+		if ((value & 0xFFU) == 0xFFU)
+			value &= ~0x8000U;
+
 		/* @todo LMC */
 		
 		sw->ucast_fwd_table[dlid] = (value & 0x8000U) ?
