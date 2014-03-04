@@ -11,7 +11,13 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <infiniband/verbs.h>
+
 #include "byteorder.h"
+#include "pibnetd_packet.h"
+
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(a) (sizeof (a) / sizeof ((a)[0]))
+#endif
 
 
 #define PIB_SWITCH_DESCRIPTION	"Pseudo InfiniBand HCA switch"
@@ -226,6 +232,7 @@ extern uint64_t pib_hca_guid_base;
 struct pib_smp;
 
 extern int pib_process_smp(struct pib_smp *smp, struct pib_switch *sw, uint8_t in_port_num);
+extern int pib_process_pma_mad(struct pib_pma_mad *pmp, struct pib_switch *sw, uint8_t port_num);
 
 #define pib_report_debug(fmt, ...)					\
 	do {								\

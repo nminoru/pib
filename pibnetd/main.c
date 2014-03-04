@@ -591,27 +591,20 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 
 		ret = pib_process_smp(smp, sw, in_port_num);
 
-		if (ret & PIB_SMP_RESULT_CONSUMED)
+		if (ret & PIB_MAD_RESULT_CONSUMED)
 			return 0;
 
 		lrh->dlid = lrh->slid;
 		lrh->slid = cpu_to_be16(dlid);
-		if (ret & PIB_SMP_RESULT_FAILURE) {
+		if (ret & PIB_MAD_RESULT_FAILURE) {
 			pib_report_err("pibnetd: process_smp: failure");
 			goto silently_drop;
 		}
 		out_port_num = in_port_num;
 		goto send_packet;
 
-	case PIB_MGMT_CLASS_PERF_MGMT: {
-#if 0
-		struct pib_node node = {
-			.port_count = sw->port_cnt,
-			.port_start = 0,
-			.ports      = sw->ports,
-		};
-
-		ret = pib_process_pma_mad(&node, in_port_num, mad, mad);
+	case PIB_MGMT_CLASS_PERF_MGMT:
+		ret = pib_process_pma_mad((struct pib_pma_mad *)mad, sw, in_port_num);
 		lrh->dlid = lrh->slid;
 		lrh->slid = dlid;
 		if (ret & PIB_MAD_RESULT_FAILURE) {
@@ -619,9 +612,7 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 			goto silently_drop;
 		}
 		out_port_num = in_port_num;
-#endif
 		goto send_packet;
-	}
 
 	default:
 		pib_report_err("pibnetd: mgmt_class = %u",
@@ -651,13 +642,13 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 			out_port_num = in_port_num;
 			self_consumed = 1;
 		} else {
-			ret = PIB_SMP_RESULT_SUCCESS;
+			ret = PIB_MAD_RESULT_SUCCESS;
 			out_port_num = smp->initial_path[smp->hop_ptr + 1];
 			smp->hop_ptr++;
 		}
 	} else {
 		/* Returning SMP */
-		ret = PIB_SMP_RESULT_SUCCESS;
+		ret = PIB_MAD_RESULT_SUCCESS;
 		smp->hop_ptr--;
 		out_port_num = smp->initial_path[smp->hop_ptr];
 		smp->return_path[smp->hop_ptr] = out_port_num;
@@ -669,7 +660,7 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 			lrh->slid = be16_to_cpu(PIB_LID_PERMISSIVE);
 	}
 
-	if (ret & PIB_SMP_RESULT_FAILURE) {
+	if (ret & PIB_MAD_RESULT_FAILURE) {
 		pib_report_err("pibnetd: process_smp: failure");
 		goto silently_drop;
 	}

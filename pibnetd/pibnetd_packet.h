@@ -56,11 +56,11 @@
 #define PIB_SMP_ATTR_VENDOR_MASK		(0xFF00)
 
 
-enum pib_smp_result {
-	PIB_SMP_RESULT_FAILURE  = 0,      /* (!SUCCESS is the important flag) */
-	PIB_SMP_RESULT_SUCCESS  = 1 << 0, /* MAD was successfully processed   */
-	PIB_SMP_RESULT_REPLY    = 1 << 1, /* Reply packet needs to be sent    */
-	PIB_SMP_RESULT_CONSUMED = 1 << 2  /* Packet consumed: stop processing */
+enum pib_mad_result {
+	PIB_MAD_RESULT_FAILURE  = 0,      /* (!SUCCESS is the important flag) */
+	PIB_MAD_RESULT_SUCCESS  = 1 << 0, /* MAD was successfully processed   */
+	PIB_MAD_RESULT_REPLY    = 1 << 1, /* Reply packet needs to be sent    */
+	PIB_MAD_RESULT_CONSUMED = 1 << 2  /* Packet consumed: stop processing */
 };
 
 
@@ -152,6 +152,21 @@ struct pib_packet_deth {
 } __attribute__ ((packed));
 
 
+struct pib_packet_link {
+	__be32	cmd;
+} __attribute__ ((packed));
+
+
+union pib_packet_footer {
+	struct {
+		__be16	vcrc; /* Variant CRC */
+	} native;
+	struct {
+		__be64	port_guid;
+	} pib;
+} __attribute__ ((packed));
+
+
 struct pib_mad_hdr {
 	u8	base_version;
 	u8	mgmt_class;
@@ -205,13 +220,6 @@ struct pib_smp {
 } __attribute__ ((packed));
 
 
-struct pib_pma_mad {
-	struct pib_mad_hdr mad_hdr;
-	u8 reserved[40];
-	u8 data[192];
-} __packed;
-
-
 struct pib_smp_node_info {
 	u8	base_version;
 	u8	class_version;
@@ -258,21 +266,6 @@ struct pib_smp_switch_info {
 } __attribute__ ((packed));
 
 
-struct pib_packet_link {
-	__be32	cmd;
-} __attribute__ ((packed));
-
-
-union pib_packet_footer {
-	struct {
-		__be16	vcrc; /* Variant CRC */
-	} native;
-	struct {
-		__be64	port_guid;
-	} pib;
-} __attribute__ ((packed));
-
-
 struct pib_port_info {
 	__be64 mkey;
 	__be64 gid_prefix;
@@ -307,7 +300,112 @@ struct pib_port_info {
 	__be16 max_credit_hint;
 	u8 resv;
 	u8 link_roundtrip_latency[3];
-};
+} __attribute__ ((packed));
+
+
+struct pib_pma_mad {
+	struct pib_mad_hdr mad_hdr;
+	u8 reserved[40];
+	u8 data[192];
+} __attribute__ ((packed));
+
+
+struct pib_class_port_info {
+	u8			base_version;
+	u8			class_version;
+	__be16			capability_mask;
+	u8			reserved[3];
+	u8			resp_time_value;
+	u8			redirect_gid[16];
+	__be32			redirect_tcslfl;
+	__be16			redirect_lid;
+	__be16			redirect_pkey;
+	__be32			redirect_qp;
+	__be32			redirect_qkey;
+	u8			trap_gid[16];
+	__be32			trap_tcslfl;
+	__be16			trap_lid;
+	__be16			trap_pkey;
+	__be32			trap_hlqp;
+	__be32			trap_qkey;
+} __attribute__ ((packed));
+
+
+struct pib_pma_portsamplescontrol {
+	u8 opcode;
+	u8 port_select;
+	u8 tick;
+	u8 counter_width;		/* resv: 7:3, counter width: 2:0 */
+	__be32 counter_mask0_9;		/* 2, 10 3-bit fields */
+	__be16 counter_mask10_14;	/* 1, 5 3-bit fields */
+	u8 sample_mechanisms;
+	u8 sample_status;		/* only lower 2 bits */
+	__be64 option_mask;
+	__be64 vendor_mask;
+	__be32 sample_start;
+	__be32 sample_interval;
+	__be16 tag;
+	__be16 counter_select[15];
+	__be32 reserved1;
+	__be64 samples_only_option_mask;
+	__be32 reserved2[28];
+} __attribute__ ((packed));
+
+
+struct pib_pma_portsamplesresult {
+	__be16 tag;
+	__be16 sample_status;   /* only lower 2 bits */
+	__be32 counter[15];
+} __attribute__ ((packed));
+
+
+struct pib_pma_portsamplesresult_ext {
+	__be16 tag;
+	__be16 sample_status;   /* only lower 2 bits */
+	__be32 extended_width;  /* only upper 2 bits */
+	__be64 counter[15];
+} __attribute__ ((packed));
+
+
+struct pib_pma_portcounters {
+	u8 reserved;
+	u8 port_select;
+	__be16 counter_select;
+	__be16 symbol_error_counter;
+	u8 link_error_recovery_counter;
+	u8 link_downed_counter;
+	__be16 port_rcv_errors;
+	__be16 port_rcv_remphys_errors;
+	__be16 port_rcv_switch_relay_errors;
+	__be16 port_xmit_discards;
+	u8 port_xmit_constraint_errors;
+	u8 port_rcv_constraint_errors;
+	u8 reserved1;
+	u8 link_overrun_errors; /* LocalLink: 7:4, BufferOverrun: 3:0 */
+	__be16 reserved2;
+	__be16 vl15_dropped;
+	__be32 port_xmit_data;
+	__be32 port_rcv_data;
+	__be32 port_xmit_packets;
+	__be32 port_rcv_packets;
+	__be32 port_xmit_wait;
+} __attribute__ ((packed));
+
+
+struct pib_pma_portcounters_ext {
+	u8 reserved;
+	u8 port_select;
+	__be16 counter_select;
+	__be32 reserved1;
+	__be64 port_xmit_data;
+	__be64 port_rcv_data;
+	__be64 port_xmit_packets;
+	__be64 port_rcv_packets;
+	__be64 port_unicast_xmit_packets;
+	__be64 port_unicast_rcv_packets;
+	__be64 port_multicast_xmit_packets;
+	__be64 port_multicast_rcv_packets;
+} __attribute__ ((packed)); 
 
 
 struct pib_trap {
@@ -337,6 +435,6 @@ struct pib_trap {
 			__be16	lidaddr;
 		} __attribute__ ((packed)) ntc_128;
 	} details;
-};
+} __attribute__ ((packed));
 
 #endif /* _PIBNETD_PACKET_H_ */

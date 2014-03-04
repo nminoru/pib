@@ -61,7 +61,7 @@ int pib_process_smp(struct pib_smp *smp, struct pib_switch *sw, uint8_t in_port_
 
 	case PIB_MGMT_METHOD_GET_RESP:
 		if (smp->mgmt_class == PIB_MGMT_CLASS_SUBN_LID_ROUTED)
-			return PIB_SMP_RESULT_SUCCESS | PIB_SMP_RESULT_CONSUMED;
+			return PIB_MAD_RESULT_SUCCESS | PIB_MAD_RESULT_CONSUMED;
 		/* pass through */
 
 	default:
@@ -75,9 +75,13 @@ int pib_process_smp(struct pib_smp *smp, struct pib_switch *sw, uint8_t in_port_
 
 static int process_smp_get_method(struct pib_smp *smp, struct pib_switch *sw, u8 in_port_num)
 {
+	uint16_t attr_id;
+
+	attr_id = be16_to_cpu(smp->attr_id);
+
 	memset(smp->data, 0, sizeof(smp->data));
 
-	switch (be16_to_cpu(smp->attr_id)) {
+	switch (attr_id) {
 
 	case PIB_SMP_ATTR_NODE_DESC:
 		return subn_get_nodedescription(smp, sw, in_port_num);
@@ -114,7 +118,7 @@ static int process_smp_get_method(struct pib_smp *smp, struct pib_switch *sw, u8
 
 	default:
 		pib_report_debug("pibnet: process_subn: IB_MGMT_METHOD_GET: %u",
-				 be16_to_cpu(smp->attr_id));
+				 attr_id);
 		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
@@ -123,7 +127,11 @@ static int process_smp_get_method(struct pib_smp *smp, struct pib_switch *sw, u8
 
 static int process_smp_set_method(struct pib_smp *smp, struct pib_switch *sw, u8 in_port_num)
 {
-	switch (be16_to_cpu(smp->attr_id)) {
+	uint16_t attr_id;
+
+	attr_id = be16_to_cpu(smp->attr_id);
+
+	switch (attr_id) {
 
 	case PIB_SMP_ATTR_SWITCH_INFO:
 		return subn_set_switchinfo(smp, sw, in_port_num);
@@ -154,7 +162,7 @@ static int process_smp_set_method(struct pib_smp *smp, struct pib_switch *sw, u8
 
 	default:
 		pib_report_debug("pibnetd: process_smp: IB_MGMT_METHOD_SET: %u",
-				 be16_to_cpu(smp->attr_id));
+				 attr_id);
 		smp->status |= PIB_SMP_UNSUP_METH_ATTR;
 		return reply(smp);
 	}
@@ -724,7 +732,7 @@ static int reply(struct pib_smp *smp)
 	if (smp->mgmt_class == PIB_MGMT_CLASS_SUBN_DIRECTED_ROUTE)
 		smp->status |= PIB_SMP_DIRECTION;
 
-	return PIB_SMP_RESULT_SUCCESS | PIB_SMP_RESULT_REPLY;
+	return PIB_MAD_RESULT_SUCCESS | PIB_MAD_RESULT_REPLY;
 }
 
 
@@ -735,6 +743,6 @@ static int reply_failure(struct pib_smp *smp)
 	if (smp->mgmt_class == PIB_MGMT_CLASS_SUBN_DIRECTED_ROUTE)
 		smp->status |= PIB_SMP_DIRECTION;
 
-	return PIB_SMP_RESULT_FAILURE | PIB_SMP_RESULT_REPLY;
+	return PIB_MAD_RESULT_FAILURE | PIB_MAD_RESULT_REPLY;
 }
 
