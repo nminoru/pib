@@ -1,5 +1,5 @@
 /*
- * pib_mad.h 
+ * pib_mad.h - Definitions of Management Datagram(MAD) and Subnet Management Packet(SMP)
  *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *

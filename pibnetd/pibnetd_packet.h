@@ -1,5 +1,5 @@
 /*
- * pibnetd_packet.h
+ * pibnetd_packet.h - Structures of IB Management Datagram(MAD) packets
  *
  * Copyright (c) 2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *

@@ -1,4 +1,6 @@
 /*
+ * pib_srq.c - Shared Receive Queeu(SRQ) functions
+ *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.

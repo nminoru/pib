@@ -1,5 +1,5 @@
 /*
- * pib_uc.c - Unreliable Datagram service processing
+ * pib_ud.c - Unreliable Datagram service processing
  *
  * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *

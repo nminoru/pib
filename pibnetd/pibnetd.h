@@ -1,5 +1,5 @@
 /*
- * pibnetd.h
+ * pibnetd.h - General definitions for pibnetd
  *
  * Copyright (c) 2014 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
