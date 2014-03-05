@@ -1022,8 +1022,10 @@ static int __init pib_init(void)
 err_create_debugfs:
 err_ib_add:
 	for (j=i - 1 ; 0 <= j ; j--)
-		if (pib_devs[j])
+		if (pib_devs[j]) {
 			pib_dev_remove(pib_devs[j]);
+			pib_devs[j] = NULL;
+		}
 
 	pib_release_switch(&pib_easy_sw);
 err_create_switch:
@@ -1064,8 +1066,10 @@ static void __exit pib_cleanup(void)
 	pib_unregister_debugfs();
 
 	for (i = pib_num_hca - 1 ; 0 <= i ; i--)
-		if (pib_devs[i])
+		if (pib_devs[i]) {
 			pib_dev_remove(pib_devs[i]);
+			pib_devs[i] = NULL;
+		}
 
 	if (!pib_multi_host_mode)
 		pib_release_switch(&pib_easy_sw);

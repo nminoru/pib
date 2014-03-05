@@ -230,21 +230,26 @@ static void release_socket(struct pib_dev *dev, u8 port_num)
 static int kthread_routine(void *data)
 {
 	struct pib_dev *dev;
+	u8 i, phys_port_cnt;
 	
 	dev = (struct pib_dev *)data;
 
 	BUG_ON(!dev);
+
+	phys_port_cnt = dev->ib_dev.phys_port_cnt;
 
 #if 0
 	/* Hibernation / freezing of the SRPT kernel thread is not supported. */
 	current->flags |= PF_NOFREEZE;
 #endif
 
-	if (pib_multi_host_mode) {
-		int i;
-		for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
+	if (pib_multi_host_mode)
+		for (i=0 ; i < phys_port_cnt ; i++)
 			connect_pibnetd(dev, i + 1);
-	}
+	else
+		for (i=0 ; i < phys_port_cnt ; i++)
+			pib_easy_sw.ports[1 + phys_port_cnt * dev->dev_id + i].to_udp_port
+				= ((const struct sockaddr_in*)dev->ports[i].sockaddr)->sin_port;
 
 	while (!kthread_should_stop()) {
 		unsigned long flags;
@@ -271,11 +276,13 @@ static int kthread_routine(void *data)
 		process_on_qp_scheduler(dev);
 	}
 
-	if (pib_multi_host_mode) {
-		int i;
-		for (i=0 ; i < dev->ib_dev.phys_port_cnt ; i++)
+	if (pib_multi_host_mode)
+		for (i=0 ; i < phys_port_cnt ; i++)
 			disconnect_pibnetd(dev, i + 1);
-	}
+	else
+		for (i=0 ; i < phys_port_cnt ; i++)
+			pib_easy_sw.ports[1 + phys_port_cnt * dev->dev_id + i].to_udp_port
+				= 0;
 
 	return 0;
 }

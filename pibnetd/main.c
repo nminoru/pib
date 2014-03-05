@@ -298,13 +298,6 @@ retry:
 
 	packet_size = size;
 
-	char ipaddr[64];
-	if (inet_ntop(AF_INET, &sockaddr.sin_addr, ipaddr, sizeof(ipaddr)) == NULL) {
-		int eno  = errno;
-		pib_report_err("pibnetd: inet_ntop(errno=%d)", eno);
-		exit(EXIT_FAILURE);							
-	}
-
 	void *buffer;
 	union pib_packet_footer *footer;
 
@@ -321,6 +314,12 @@ retry:
 
 	uint64_t port_guid = be64toh(footer->pib.port_guid);
 
+	if (port_guid == 0) {
+		pib_report_debug("pibnetd: wrong port_guid=0x%" PRIx64 ", sock-addr=%s",
+				 port_guid, buffer);
+		return;
+	}
+
 	int header_size;
 	struct pib_packet_lrh *lrh = NULL;
 	struct pib_grh        *grh = NULL;
@@ -328,7 +327,7 @@ retry:
 
 	header_size = parse_packet_header(buffer, size, &lrh, &grh, &bth);
 	if (header_size < 0) {
-		pib_report_debug("pibnetd: wrong drop packet(size=%u)", size);
+		pib_report_debug("pibnetd: wrong drop packet(size=%u, ret=%d)", size, header_size);
 		return;
 	}
 
@@ -658,6 +657,9 @@ send_packet:
 	msghdr.msg_iov     = &iovec;
 	msghdr.msg_iovlen  = 1;
 
+	if (msghdr.msg_name == NULL)
+		return 0;
+
 retry:
 	ret = sendmsg(sw->sockfd, &msghdr, 0);
 	if (ret < 0) {
@@ -846,9 +848,7 @@ static void send_trap_ntc128(struct pib_switch *sw)
 
 	uint8_t out_port_num = sw->ucast_fwd_table[dlid];
 
-	printf("slid=%04x dlid=%04x outgoing-port=%u\n", slid, dlid, out_port_num);
-
-	if (out_port_num == 0)
+	if ((out_port_num == 0) || (sw->port_cnt <= out_port_num))
 		return;
 
 	struct packet {
@@ -902,6 +902,9 @@ static void send_trap_ntc128(struct pib_switch *sw)
 	msghdr.msg_namelen = sw->ports[out_port_num].socklen;
 	msghdr.msg_iov     = &iovec;
 	msghdr.msg_iovlen  = 1;
+
+	if (msghdr.msg_name == NULL)
+		return;
 
 	int ret;
 retry:

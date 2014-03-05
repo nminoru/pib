@@ -48,7 +48,7 @@ static int subn_get_random_forward_table(struct ib_smp *smp, struct pib_easy_sw 
 static int subn_set_random_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
 static int subn_get_mcast_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
 static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
-static u8  get_sw_port_num(const struct sockaddr *sockaddr);
+static u8 get_sw_port_num(const struct pib_easy_sw *sw, const struct sockaddr *sockaddr);
 
 
 static int reply(struct ib_smp *smp)
@@ -353,7 +353,7 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 
 	ret -= sizeof(union pib_packet_footer);
 
-	in_sw_port_num = get_sw_port_num((const struct sockaddr*)&sockaddr_in6);
+	in_sw_port_num = get_sw_port_num(sw, (const struct sockaddr*)&sockaddr_in6);
 	if (in_sw_port_num == 0) {
 		pr_err("pib: easy switch: Can't match the sockaddr of incoming packet\n");
 		goto silently_drop;
@@ -1059,29 +1059,17 @@ static int subn_set_mcast_forward_table(struct ib_smp *smp, struct pib_easy_sw *
 }
 
 
-static u8 get_sw_port_num(const struct sockaddr *sockaddr)
+static u8 get_sw_port_num(const struct pib_easy_sw *sw, const struct sockaddr *sockaddr)
 {
-	int i, j;
-	u8 port_num = 0;
+	u8 port_num;
 	__be16 sin_port = ((const struct sockaddr_in*)sockaddr)->sin_port;
 
-	for (i=0 ; i<pib_num_hca ; i++) {
-		struct pib_dev *dev = pib_devs[i];
-		unsigned long flags;
+	for (port_num=1 ; port_num<sw->port_cnt ; port_num++) {
+		if (sw->ports[port_num].to_udp_port == 0)
+			continue;
 
-		spin_lock_irqsave(&dev->lock, flags);
-		for (j=0 ; j<pib_phys_port_cnt ; j++) {
-			port_num++;
-
-			if (!dev->ports[j].sockaddr)
-				continue;
-
-			if (sin_port == ((const struct sockaddr_in*)dev->ports[j].sockaddr)->sin_port) {
-				spin_unlock_irqrestore(&dev->lock, flags);
-				return port_num;
-			}
-		}
-		spin_unlock_irqrestore(&dev->lock, flags);
+		if (sw->ports[port_num].to_udp_port == sin_port)
+			return port_num;
 	}
 
 	return 0;

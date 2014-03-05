@@ -146,8 +146,10 @@ static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
 	case IB_MGMT_METHOD_REPORT:
 	case IB_MGMT_METHOD_REPORT_RESP:
 	case IB_MGMT_METHOD_GET_RESP:
-		if (in_mad->mad_hdr.mgmt_class == IB_MGMT_CLASS_SUBN_LID_ROUTED)
+		if (in_mad->mad_hdr.mgmt_class == IB_MGMT_CLASS_SUBN_LID_ROUTED) {
 			ret = IB_MAD_RESULT_SUCCESS;
+			break;
+		}
 		/* pass through */
 
 #if 0

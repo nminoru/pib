@@ -62,14 +62,22 @@ int pib_process_smp(struct pib_smp *smp, struct pib_switch *sw, uint8_t in_port_
 	case PIB_MGMT_METHOD_GET_RESP:
 		if (smp->mgmt_class == PIB_MGMT_CLASS_SUBN_LID_ROUTED)
 			return PIB_MAD_RESULT_SUCCESS | PIB_MAD_RESULT_CONSUMED;
-		/* pass through */
+		goto unsupported;
+
+	case PIB_MGMT_METHOD_TRAP_REPRESS:
+		if (smp->mgmt_class == PIB_MGMT_CLASS_SUBN_LID_ROUTED)
+			return PIB_MAD_RESULT_SUCCESS | PIB_MAD_RESULT_CONSUMED;
+		goto unsupported;
 
 	default:
-		pib_report_debug("pibnetd: process_smp: %u %u",
-				 smp->method, be16_to_cpu(smp->attr_id));
-		smp->status |= PIB_SMP_UNSUP_METHOD;
-		return reply(smp);
+		goto unsupported;
 	}
+
+unsupported:
+	pib_report_debug("pibnetd: process_smp: %u %u",
+			 smp->method, be16_to_cpu(smp->attr_id));
+	smp->status |= PIB_SMP_UNSUP_METHOD;
+	return reply(smp);
 }
 
 

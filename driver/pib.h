@@ -36,8 +36,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	3
-#define PIB_VERSION_REVISION	1
-#define PIB_DRIVER_VERSION 	"0.3.1"
+#define PIB_VERSION_REVISION	2
+#define PIB_DRIVER_VERSION 	"0.3.2"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -355,6 +355,9 @@ struct pib_port {
 		enum pib_link_cmd	cmd;
 		struct pib_work_struct	work;
 	} link;
+
+	__be16			to_udp_port;	/* for easy swich only */
+						/* 通信相手の UDP ポート番号 */
 };
 
 

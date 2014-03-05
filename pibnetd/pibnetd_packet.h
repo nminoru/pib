@@ -92,13 +92,13 @@ struct pib_packet_lrh {
 } __attribute__ ((packed));
 
 
-static inline u8 pib_packet_lrh_get_pktlen(const struct pib_packet_lrh *lrh)
+static inline u16 pib_packet_lrh_get_pktlen(const struct pib_packet_lrh *lrh)
 {
 	return be16_to_cpu(lrh->pktlen) & 0x7FF;
 }
 
 
-static inline void pib_packet_lrh_set_pktlen(struct pib_packet_lrh *lrh, u8 value)
+static inline void pib_packet_lrh_set_pktlen(struct pib_packet_lrh *lrh, u16 value)
 {
 	lrh->pktlen = cpu_to_be16(value & 0x7FF);
 }
