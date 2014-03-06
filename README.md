@@ -101,15 +101,23 @@ pib.ko
 libpib
 ------
 
-Source and binary packages for RHEL6 or CentOS6 are avaiable on this link http://www.nminoru.jp/~nminoru/network/infiniband/src/
+First, create libpib's source RPM from source code.
 
-To build source packages from source code
-
-    $ cd pib
-    $ cp -r libpib libpib-0.2.8
-    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.2.8.tar.gz libpib-0.2.8/
-    $ cp libpib/libpib.spec $(HOME)/rpmbuild/SPECS/
+    $ git clone https://github.com/nminoru/pib.git
+    $ cp -r pib/libpib libpib-0.0.6
+    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.0.6.tar.gz libpib-0.0.6/
+    $ cp libpib-0.0.6/libpib.spec $(HOME)/rpmbuild/SPECS/
     $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/libpib.spec
+
+Next, build the binary RPM from the source RPM.
+
+    $ rpmbuild --rebuild $(HOME)/rpmbuild/SRPMS/libpib-0.0.6-1.el6.src.rpm
+
+Finally, install the binary RPM.
+
+    # rpm -ihv libpib-0.0.6-1.el6.x86_64.rpm
+
+You can get source and binary RPMs for RHEL6 or CentOS6 on this link http://www.nminoru.jp/~nminoru/network/infiniband/src/
 
 Loading
 =======

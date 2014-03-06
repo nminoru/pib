@@ -1,7 +1,9 @@
 2014-03-05 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib, pibnetd: version 0.3.2
-           * Fix many bugs
+           * pib: Fix bug that get_sw_port_num may access the pointer of pib_devs[] as NULL during pib.ko is unloading.
+           * pib: Fix bug that process_subn fails to deliver trap responses to subnet manager.
+           * pibnetd: Fix incorrect type (u8 -> u16) in pib_packet_lrh_set/get_pktlen.
 
 2014-02-27 Minoru NAKAMURA <nminoru@nminoru.jp>
 
