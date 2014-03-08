@@ -36,8 +36,8 @@
 
 #define PIB_VERSION_MAJOR	0
 #define PIB_VERSION_MINOR	3
-#define PIB_VERSION_REVISION	2
-#define PIB_DRIVER_VERSION 	"0.3.2"
+#define PIB_VERSION_REVISION	3
+#define PIB_DRIVER_VERSION 	"0.3.3"
 
 #define PIB_DRIVER_FW_VERSION \
 	(((u64)PIB_VERSION_MAJOR << 32) | ((u64)PIB_VERSION_MINOR << 16) | PIB_VERSION_REVISION)
@@ -446,6 +446,7 @@ struct pib_dev {
 		u16		slid;
 		u16		dlid;
 		u32		src_qp_num;
+		u32		trace_id;
 		int		ready_to_send;
 	} thread;
 
@@ -465,8 +466,9 @@ struct pib_dev {
 		struct dentry  *trace;
 		void	       *trace_data;
 		atomic_t	trace_index;
+		spinlock_t	trace_lock; /* for time record */	
 		unsigned long   last_record_time;
-		int		count_records;
+		int		last_record_time_index;
 	} debugfs;
 };
 
@@ -767,6 +769,8 @@ struct pib_swqe_processing {
 struct pib_send_wqe {
 	u64			wr_id;
 	enum ib_wr_opcode	opcode;
+	u32			trace_id; /* for execution trace */
+
 	int			send_flags;
 
 	int			num_sge;

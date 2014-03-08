@@ -355,6 +355,8 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 		if (init_attr->cap.max_inline_data > 0)
 			send_wqe->inline_data_buffer = 
 				qp->requester.inline_data_buffer + (init_attr->cap.max_inline_data * i);
+
+		send_wqe->trace_id = i + 1;
 	}
 
 	for (i=0 ; i<init_attr->cap.max_recv_wr ; i++) {

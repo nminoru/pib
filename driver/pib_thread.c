@@ -361,6 +361,8 @@ restart:
 	if (time_after(send_wqe->processing.local_ack_time, now))
 		goto first_sending_wsqe;
 
+	pib_trace_retry(dev, qp->ib_qp_attr.port_num, send_wqe);
+
 	send_wqe->processing.retry_cnt--;
 	send_wqe->processing.local_ack_time = now + PIB_SCHED_TIMEOUT;
 
@@ -1324,6 +1326,7 @@ static void process_sendmsg(struct pib_dev *dev)
 	ret = kernel_sendmsg(port->socket, &msghdr, &iov, 1, iov.iov_len);
 
 done:
+	dev->thread.trace_id	  = 0;
 	dev->thread.ready_to_send = 0;
 }
 

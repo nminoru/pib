@@ -197,6 +197,7 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
 	dev->thread.slid	= slid;
 	dev->thread.dlid	= dlid;
+	dev->thread.trace_id    = send_wqe->trace_id;
 	dev->thread.ready_to_send = 1;
 
 	qp->ib_qp_attr.sq_psn++;

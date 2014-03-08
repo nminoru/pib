@@ -240,6 +240,7 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	dev->thread.slid	= slid;
 	dev->thread.dlid	= dlid;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.trace_id    = send_wqe->trace_id;
 	dev->thread.ready_to_send = 1;
 
 	if (send_wqe->opcode != IB_WR_RDMA_READ) {
@@ -1281,6 +1282,7 @@ generate_Normal_or_Atomic_acknowledge(struct pib_dev *dev, struct pib_qp *qp, u1
 	dev->thread.slid	= dev->ports[port_num - 1].ib_port_attr.lid;
 	dev->thread.dlid	= dlid;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.trace_id    = 0; /* @todo */
 	dev->thread.ready_to_send = 1;
 }
 
@@ -1353,6 +1355,7 @@ generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, st
 	dev->thread.slid	= dev->ports[port_num - 1].ib_port_attr.lid;
 	dev->thread.dlid	= dlid;
 	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.trace_id    = 0; /* @todo */
 	dev->thread.ready_to_send = 1;
 
 	ack->data.rdma_read.offset += data_size;

@@ -328,6 +328,8 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited)
 	unsigned long flags;
 	struct pib_cqe *cqe;
 
+	pib_trace_comp(to_pdev(cq->ib_cq.device), cq, wc);
+
 	spin_lock_irqsave(&cq->lock, flags);
 
 	if (cq->state != PIB_STATE_OK) {

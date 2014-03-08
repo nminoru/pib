@@ -30,6 +30,8 @@ extern void pib_trace_api(struct pib_dev *dev, int cmd, u32 oid);
 extern void pib_trace_send(struct pib_dev *dev, u8 port_num, int size);
 extern void pib_trace_recv(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, int size, u16 slid, u16 dlid, u32 dqpn);
 extern void pib_trace_recv_ok(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, u32 sqpn, u32 data);
+extern void pib_trace_retry(struct pib_dev *dev, u8 port_num, struct pib_send_wqe *send_wqe);
+extern void pib_trace_comp(struct pib_dev *dev, struct pib_cq *cq, const struct ib_wc *wc);
 extern void pib_trace_async(struct pib_dev *dev, enum ib_event_type type, u32 oid);
 
 

@@ -514,6 +514,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	INIT_LIST_HEAD(&dev->wq_sched.head);
 	INIT_LIST_HEAD(&dev->wq_sched.timer_head);
 	PIB_INIT_WORK(&dev->debugfs.inject_err_work, dev, NULL, pib_inject_err_handler);
+	spin_lock_init(&dev->debugfs.trace_lock);
 
 	dev->ib_dev_attr		= ib_dev_attr;
 

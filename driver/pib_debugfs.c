@@ -799,6 +799,8 @@ enum pib_trace_act {
 	PIB_TRACE_ACT_SEND,
 	PIB_TRACE_ACT_RECV1,
 	PIB_TRACE_ACT_RECV2,
+	PIB_TRACE_ACT_RETRY,
+	PIB_TRACE_ACT_COMP,
 	PIB_TRACE_ACT_ASYNC,
 	PIB_TRACE_ACT_TIMEDATE,
 	PIB_TRACE_ACT_BOOKMARK
@@ -806,6 +808,7 @@ enum pib_trace_act {
 
 
 struct pib_trace_entry {
+	u8	repeat;
 	u8	act;
 	u8	op;
 	u8	port;
@@ -822,6 +825,7 @@ struct pib_trace_entry {
 			u32	sqpn;
 			u32	dqpn;
 			u32	psn;
+			u32	trace_id;
 		} send;
 
 		struct {
@@ -837,6 +841,20 @@ struct pib_trace_entry {
 			u32	psn;
 			u32	data;
 		} recv2;
+
+		struct {
+			u32	sqpn;
+			u32	trace_id;
+			u8	count;
+		} retry;
+
+		struct {
+			u32	oid;
+			u32	qpn;
+			u64     wr_id;
+			enum ib_wc_status status;
+			enum ib_wc_opcode opcode;
+		} comp;
 
 		struct {
 			u32	oid;
@@ -856,6 +874,7 @@ struct pib_trace_entry {
 
 
 struct pib_trace_info {
+	struct pib_dev *dev;
 	struct pib_trace_entry *entry;
 	u32		start;
 	u32		index;
@@ -870,95 +889,128 @@ static const char *str_act[] = {
 	[PIB_TRACE_ACT_SEND]    = "SEND",
 	[PIB_TRACE_ACT_RECV1]   = "RCV1",
 	[PIB_TRACE_ACT_RECV2]   = "RCV2",
+	[PIB_TRACE_ACT_RETRY]   = "RTRY",
+	[PIB_TRACE_ACT_COMP]    = "COMP",
 	[PIB_TRACE_ACT_ASYNC]   = "ASYC",
 	[PIB_TRACE_ACT_TIMEDATE]= "TIME",
 	[PIB_TRACE_ACT_BOOKMARK]= "BOOKMARK",
 };
 
 
-static struct pib_trace_entry *alloc_new_trace(struct pib_dev *dev)
+static bool equals_trace_entries(enum pib_trace_act act1, const struct pib_trace_entry *entry1, const struct pib_trace_entry *entry2)
+{
+	if ((act1         != entry2->act) ||
+	    (entry1->op   != entry2->op)  ||
+	    (entry1->port != entry2->port))
+		return false;
+
+	return memcmp(&entry1->u, &entry2->u, sizeof(entry1->u)) == 0;
+}
+
+
+static void append_new_trace(struct pib_dev *dev, enum pib_trace_act act, const struct pib_trace_entry *entry)
 {
 	int index;
-	struct pib_trace_entry *entry;
+	struct pib_trace_entry *base, *store, *prev;
+	unsigned long last_record_time;
 
 	if (!dev->debugfs.trace_data)
-		return NULL;
+		return;
 
-	dev->debugfs.count_records--;
+	index = atomic_read(&dev->debugfs.trace_index);
 
-	if ((dev->debugfs.count_records < 0) || time_after(jiffies, dev->debugfs.last_record_time + HZ)) {
+	base = (struct pib_trace_entry *)dev->debugfs.trace_data;
+
+	prev = base + ((index - 1 + PIB_TRACE_MAX_ENTRIES) % PIB_TRACE_MAX_ENTRIES);
+
+	/* 繰り返しのレコードは挿入しない */
+	if (equals_trace_entries(act, entry, prev)) {
+		if (prev->repeat < 255)
+			prev->repeat++;
+		return;
+	}
+
+	/* 最後の挿入から 1 秒以上経過、または規定回数のレコードを挿入すると、タイムレコードを挿入する */
+	last_record_time = dev->debugfs.last_record_time;
+
+	if ((index - dev->debugfs.last_record_time_index > PIB_TRACE_MAX_ENTRIES / 16) ||
+	    time_after(jiffies, last_record_time + HZ)) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&dev->debugfs.trace_lock, flags);
+
+		if ((index != atomic_read(&dev->debugfs.trace_index)) || (dev->debugfs.last_record_time != last_record_time))
+			goto done_time_record;
 
 		index = atomic_add_return(1, &dev->debugfs.trace_index);
-		index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
 
-		entry = (struct pib_trace_entry *)dev->debugfs.trace_data + index;
+		store = base + (index - 1 + PIB_TRACE_MAX_ENTRIES) % PIB_TRACE_MAX_ENTRIES;
 
-		entry->act = PIB_TRACE_ACT_NONE;
-	
-		barrier();
-
-		getnstimeofday(&entry->u.timedate.time);
-		entry->timestamp = get_cycles();
+		store->act = PIB_TRACE_ACT_NONE;
 
 		barrier();
 
-		entry->act = PIB_TRACE_ACT_TIMEDATE;
+		getnstimeofday(&store->u.timedate.time);
+		store->timestamp = get_cycles();
+		store->repeat = 0;
 
-		dev->debugfs.count_records    = 100;
+		barrier();
+
+		store->act = PIB_TRACE_ACT_TIMEDATE;
+
 		dev->debugfs.last_record_time = jiffies;
+		dev->debugfs.last_record_time_index = index - 1;
+
+	done_time_record:
+		spin_unlock_irqrestore(&dev->debugfs.trace_lock, flags);
 	}
 
 	index = atomic_add_return(1, &dev->debugfs.trace_index);
-	index = (index - 1) % PIB_TRACE_MAX_ENTRIES;
 
-	entry = (struct pib_trace_entry *)dev->debugfs.trace_data + index;
+	store = base + ((index - 1 + PIB_TRACE_MAX_ENTRIES) % PIB_TRACE_MAX_ENTRIES);
 
-	entry->act = PIB_TRACE_ACT_NONE;
+	store->act = PIB_TRACE_ACT_NONE;
 
 	barrier();
 
-	entry->timestamp = get_cycles();
+	*store = *entry;
 
-	return entry;
+	store->timestamp = get_cycles();
+
+	barrier();
+
+	store->act = act;
 }
 
 
 void pib_trace_api(struct pib_dev *dev, int cmd, u32 oid)
 {
-	struct pib_trace_entry *entry;
+	struct pib_trace_entry entry;
 
-	entry = alloc_new_trace(dev);
+	memset(&entry, 0, sizeof(entry));
 
-	if (!entry)
-		return;
+	entry.op	= cmd;
+	entry.u.api.oid = oid;
 
-	entry->op        = cmd;
-	entry->u.api.oid = oid;
-
-	barrier();
-
-	entry->act = PIB_TRACE_ACT_API;
+	append_new_trace(dev, PIB_TRACE_ACT_API, &entry);
 }
 
 
 void pib_trace_send(struct pib_dev *dev, u8 port_num, int size)
 {
-	struct pib_trace_entry *entry;
+	struct pib_trace_entry entry;
 	void *buffer;
 	struct pib_packet_lrh *lrh;
 	struct pib_packet_bth *bth;
 
-	entry = alloc_new_trace(dev);
+	memset(&entry, 0, sizeof(entry));
 
-	if (!entry)
-		return;
-	
-	entry->port = port_num;
-
-	entry->u.send.len = size;
-	entry->u.send.slid = dev->thread.slid;
-	entry->u.send.dlid = dev->thread.dlid;
-	entry->u.send.sqpn = dev->thread.src_qp_num;
+	entry.port	= port_num;
+	entry.u.send.len = size;
+	entry.u.send.slid = dev->thread.slid;
+	entry.u.send.dlid = dev->thread.dlid;
+	entry.u.send.sqpn = dev->thread.src_qp_num;
+	entry.u.send.trace_id = dev->thread.trace_id;
 
 	buffer = dev->thread.send_buffer;
 	
@@ -970,127 +1022,100 @@ void pib_trace_send(struct pib_dev *dev, u8 port_num, int size)
 
 	bth = buffer;
 
-	entry->u.send.dqpn = be32_to_cpu(bth->destQP);
-	entry->u.send.psn  = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
-	entry->op   = bth->OpCode;
+	entry.u.send.dqpn = be32_to_cpu(bth->destQP);
+	entry.u.send.psn  = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
+	entry.op = bth->OpCode;
 
-	barrier();
-
-	entry->act  = PIB_TRACE_ACT_SEND;
+	append_new_trace(dev, PIB_TRACE_ACT_SEND, &entry);
 }
 
 
 void pib_trace_recv(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, int size, u16 slid, u16 dlid, u32 dqpn)
 {
-	struct pib_trace_entry *entry;
+	struct pib_trace_entry entry;
 
-	entry = alloc_new_trace(dev);
+	memset(&entry, 0, sizeof(entry));
 
-	if (!entry)
-		return;
+	entry.op	= opcode;
+	entry.port	= port_num;
+	entry.u.recv1.len = size;
+	entry.u.recv1.slid = slid;
+	entry.u.recv1.dlid = dlid;
+	entry.u.recv1.dqpn = dqpn;
+	entry.u.recv1.psn = psn;
 
-	entry->op   = opcode;
-	entry->port = port_num;
-	entry->u.recv1.len = size;
-	entry->u.recv1.slid = slid;
-	entry->u.recv1.dlid = dlid;
-	entry->u.recv1.dqpn = dqpn;
-	entry->u.recv1.psn  = psn;
-
-	barrier();
-
-	entry->act  = PIB_TRACE_ACT_RECV1;
+	append_new_trace(dev, PIB_TRACE_ACT_RECV1, &entry);
 }
 
 
 void pib_trace_recv_ok(struct pib_dev *dev, u8 port_num, u8 opcode, u32 psn, u32 sqpn, u32 data)
 {
-	struct pib_trace_entry *entry;
+	struct pib_trace_entry entry;
 
-	entry = alloc_new_trace(dev);
+	memset(&entry, 0, sizeof(entry));
 
-	if (!entry)
-		return;
+	entry.op	= opcode;
+	entry.port	= port_num;
+	entry.u.recv2.data = data;
+	entry.u.recv2.sqpn = sqpn;
+	entry.u.recv2.psn = psn;
 
-	entry->op   = opcode;
-	entry->port = port_num;
-	entry->u.recv2.data = data;
-	entry->u.recv2.sqpn = sqpn;
-	entry->u.recv2.psn  = psn;
+	append_new_trace(dev, PIB_TRACE_ACT_RECV2, &entry);
+}
 
-	barrier();
 
-	entry->act  = PIB_TRACE_ACT_RECV2;
+void pib_trace_retry(struct pib_dev *dev, u8 port_num, struct pib_send_wqe *send_wqe)
+{
+	struct pib_trace_entry entry;
+
+	memset(&entry, 0, sizeof(entry));
+
+	entry.port	= port_num;
+	entry.u.retry.sqpn = dev->thread.src_qp_num;
+	entry.u.retry.trace_id = send_wqe->trace_id;
+	entry.u.retry.count = send_wqe->processing.retry_cnt;
+
+	append_new_trace(dev, PIB_TRACE_ACT_RETRY, &entry);
+}
+
+
+void pib_trace_comp(struct pib_dev *dev, struct pib_cq *cq, const struct ib_wc *wc)
+{
+	struct pib_trace_entry entry;
+
+	memset(&entry, 0, sizeof(entry));
+
+	entry.u.comp.oid    = cq->cq_num;
+	entry.u.comp.qpn    = wc->qp->qp_num;
+	entry.u.comp.wr_id  = wc->wr_id;
+	entry.u.comp.status = wc->status;
+	entry.u.comp.opcode = wc->opcode;
+
+	append_new_trace(dev, PIB_TRACE_ACT_COMP, &entry);
 }
 
 
 void pib_trace_async(struct pib_dev *dev, enum ib_event_type type, u32 oid)
 {
-	struct pib_trace_entry *entry;
+	struct pib_trace_entry entry;
 
-	entry = alloc_new_trace(dev);
+	memset(&entry, 0, sizeof(entry));
 
-	if (!entry)
-		return;
+	entry.op	= type;
+	entry.u.async.oid = oid;
 
-	entry->op           = type;
-	entry->u.async.oid  = oid;
-
-	barrier();
-
-	entry->act = PIB_TRACE_ACT_ASYNC;
+	append_new_trace(dev, PIB_TRACE_ACT_ASYNC, &entry);
 }
 
 
 static void *trace_seq_start(struct seq_file *file, loff_t *ppos)
 {
-	struct pib_dev *dev = file->private;
-	struct pib_trace_info *info;
-	struct pib_trace_entry *entry;
-	struct timespec	now_timespec;
-	cycles_t	now_timestamp;
-	u64             duration_ns;
+	struct pib_trace_info *info = file->private;
 
-	if (!dev->debugfs.trace_data)
+	if (PIB_TRACE_MAX_ENTRIES <= info->index)
 		return NULL;
-
-	info = kzalloc(sizeof(struct pib_trace_info), GFP_KERNEL);
-	if (!info)
-		return NULL;
-
-	getnstimeofday(&now_timespec);
-	now_timestamp = get_cycles();
-
-	info->entry = dev->debugfs.trace_data;
-	info->start = atomic_read(&dev->debugfs.trace_index) % PIB_TRACE_MAX_ENTRIES;
-
-retry:
-	if ((*ppos < 0) || (PIB_TRACE_MAX_ENTRIES <= *ppos))
-		goto error;
-
-	info->index = *ppos;
-
-	entry = &info->entry[(info->start + info->index) % PIB_TRACE_MAX_ENTRIES];
-	
-	if (entry->act != PIB_TRACE_ACT_TIMEDATE) {
-		++*ppos;
-		goto retry;
-	}
-
-	info->base_timespec  = entry->u.timedate.time;
-	info->base_timestamp = entry->timestamp;
-
-	duration_ns = (now_timespec.tv_sec - info->base_timespec.tv_sec) * 1000000000
-		+ (now_timespec.tv_nsec - info->base_timespec.tv_nsec);
-
-	info->rate = 1.0 * duration_ns / (now_timestamp - info->base_timestamp);
 
 	return info;
-
-error:
-	kfree(info);
-
-	return NULL;
 }
 
 
@@ -1101,11 +1126,10 @@ static void *trace_seq_next(struct seq_file *file, void *iter_ptr,
 	struct pib_trace_entry *entry;
 
 	++*ppos;
+	info->index++;
 
-	if ((*ppos < 0) || (PIB_TRACE_MAX_ENTRIES <= *ppos))
+	if (PIB_TRACE_MAX_ENTRIES <= info->index)
 		return NULL;
-
-	info->index = *ppos;
 
 	entry = &info->entry[(info->start + info->index) % PIB_TRACE_MAX_ENTRIES];
 
@@ -1122,8 +1146,6 @@ static void *trace_seq_next(struct seq_file *file, void *iter_ptr,
 
 static void trace_seq_stop(struct seq_file *file, void *iter_ptr)
 {
-	/* nothing for now */
-	kfree(iter_ptr);
 }
 
 
@@ -1135,12 +1157,12 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 	char buffer[32];
 
 	timespec = info->base_timespec;
-	
+
 	entry = &info->entry[(info->start + info->index) % PIB_TRACE_MAX_ENTRIES];
 
 	timespec.tv_nsec += (entry->timestamp - info->base_timestamp) * info->rate;
 
-	if (timespec.tv_nsec >= 1000000000) {
+	while (timespec.tv_nsec >= 1000000000) {
 		timespec.tv_nsec -= 1000000000;
 		timespec.tv_sec++;
 	}
@@ -1165,12 +1187,12 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 		case IB_USER_VERBS_CMD_ATTACH_MCAST:
 		case IB_USER_VERBS_CMD_DETACH_MCAST:
 			snprintf(buffer, sizeof(buffer), "%s", pib_get_uverbs_cmd(entry->op));
-			seq_printf(file, "%-18s OID:%06x\n", buffer, entry->u.api.oid);
+			seq_printf(file, "%-18s OID:%06x", buffer, entry->u.api.oid);
 			break;
 
 		default:
 			snprintf(buffer, sizeof(buffer), "%s", pib_get_uverbs_cmd(entry->op));
-			seq_printf(file, "%-18s OID:%04x\n", buffer, entry->u.api.oid);
+			seq_printf(file, "%-18s OID:%04x", buffer, entry->u.api.oid);
 			break;
 		}
 		break;
@@ -1182,11 +1204,13 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 		else
 			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
 
-		seq_printf(file, "%-18s PORT:%u PSN:%06x LEN:%04u SLID:%04x SQPN:%06x DLID:%04x DQPN:%06x\n",
+		seq_printf(file, "%-18s PORT:%u PSN:%06x LEN:%04u SLID:%04x SQPN:%06x DLID:%04x DQPN:%06x",
 			   buffer,
 			   entry->port, entry->u.send.psn, entry->u.send.len,
 			   entry->u.send.slid, entry->u.send.sqpn,
 			   entry->u.send.dlid, entry->u.send.dqpn);
+		if (entry->u.send.trace_id > 0)
+			seq_printf(file, " #%u", entry->u.send.trace_id);
 		break;
 
 	case PIB_TRACE_ACT_RECV1:
@@ -1196,7 +1220,7 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 		else
 			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
 
-		seq_printf(file, "%-18s PORT:%u PSN:%06x LEN:%04u SLID:%04x DLID:%04x DQPN:%06x\n",
+		seq_printf(file, "%-18s PORT:%u PSN:%06x LEN:%04u SLID:%04x DLID:%04x DQPN:%06x",
 			   buffer,
 			   entry->port, entry->u.recv1.psn, entry->u.recv1.len,
 			   entry->u.recv1.slid, entry->u.recv1.dlid, entry->u.recv1.dqpn);
@@ -1209,27 +1233,46 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 		else
 			snprintf(buffer, sizeof(buffer), "UNKNOWN(%u)", entry->op);
 
-		seq_printf(file, "%-18s PORT:%u PSN:%06x DATA:%04u SQPN:%06x\n",
+		seq_printf(file, "%-18s PORT:%u PSN:%06x DATA:%04u SQPN:%06x",
 			   buffer,
 			   entry->port, entry->u.recv2.psn, entry->u.recv2.data, entry->u.recv2.sqpn);
-		break
-;
+		break;
+
+	case PIB_TRACE_ACT_RETRY:
+		seq_printf(file, "%-18s PORT:%u SQPN:%06x #%u COUNT:%u",
+			   "",  entry->port, entry->u.retry.sqpn, entry->u.retry.trace_id, entry->u.retry.count);
+		break;
+
+	case PIB_TRACE_ACT_COMP:
+		seq_printf(file, "%-18s CQ:%04x QPN:%06x STATUS=%s(%u) OPCODE=%u WRID:%016llx",
+			   "",  entry->u.comp.oid, entry->u.comp.qpn, 
+			   pib_get_wc_status(entry->u.comp.status), entry->u.comp.status,
+			   entry->u.comp.opcode,
+			   (unsigned long long)entry->u.comp.wr_id);
+		break;
+
 	case PIB_TRACE_ACT_ASYNC:
 		snprintf(buffer, sizeof(buffer), "%s", pib_get_async_event(entry->op));
-		seq_printf(file, "%-18s OID:%06x\n", buffer, entry->u.async.oid);
+		seq_printf(file, "%-18s OID:%06x", buffer, entry->u.async.oid);
 		break;
 
 	case PIB_TRACE_ACT_TIMEDATE:
-		seq_puts(file, "\n");
 		break;
 
 	case PIB_TRACE_ACT_BOOKMARK:
-		seq_printf(file, "%*s\n", -(int)sizeof(entry->u.bookmark.message), entry->u.bookmark.message);
+		seq_printf(file, "%*s", -(int)sizeof(entry->u.bookmark.message), entry->u.bookmark.message);
 		break;
 
 	default:
 		BUG();
 	}
+
+	if (entry->repeat == 0xFF)
+		seq_printf(file, " (This record is repeated 256 times or more)");
+	else if (entry->repeat > 0)
+		seq_printf(file, " (This record is repeated %u times)", entry->repeat + 1);
+
+	seq_printf(file, "\n");
 
 	return 0;
 }
@@ -1245,17 +1288,79 @@ static const struct seq_operations trace_seq_ops = {
 
 static int trace_open(struct inode *inode, struct file *file)
 {
-	int ret;
+	int ret, index;
+	struct pib_dev *dev;
 	struct seq_file *seq;
+	struct pib_trace_info *info;
+	struct pib_trace_entry *entry;
+	struct timespec	now_timespec;
+	cycles_t	now_timestamp;
+	u64             duration_ns;
+
+	dev = inode->i_private;
+
+	if (!dev->debugfs.trace_data)
+		return -ENOSYS;
+
+	info = kzalloc(sizeof(struct pib_trace_info), GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+
+	getnstimeofday(&now_timespec);
+	now_timestamp = get_cycles();
+
+	info->dev   = dev;
+	info->entry = dev->debugfs.trace_data;
+	info->start = atomic_read(&dev->debugfs.trace_index) % PIB_TRACE_MAX_ENTRIES;
+
+	index = 0;
+
+retry:
+	if (PIB_TRACE_MAX_ENTRIES <= index) {
+		kfree(info);
+		return -ENOENT;
+	}
+
+	info->index = index;
+
+	entry = &info->entry[(info->start + info->index) % PIB_TRACE_MAX_ENTRIES];
+	
+	if (entry->act != PIB_TRACE_ACT_TIMEDATE) {
+		index++;
+		goto retry;
+	}
+
+	info->base_timespec  = entry->u.timedate.time;
+	info->base_timestamp = entry->timestamp;
+
+	duration_ns = (now_timespec.tv_sec - info->base_timespec.tv_sec) * 1000000000.0
+		+ (now_timespec.tv_nsec - info->base_timespec.tv_nsec);
+
+	info->rate = 1.0 * duration_ns / (now_timestamp - info->base_timestamp);
 
 	ret = seq_open(file, &trace_seq_ops);
-	if (ret)
+	if (ret) {
+		kfree(info);
 		return ret;
+	}
 
 	seq = file->private_data;
-	seq->private = inode->i_private;
+	seq->private = info;
 
 	return 0;
+}
+
+
+static int trace_release(struct inode *inode, struct file *file)
+{
+	struct seq_file *seq;
+
+	seq = file->private_data;
+
+	kfree(seq->private);
+	seq->private = NULL;
+
+	return seq_release(inode, file);
 }
 
 
@@ -1266,35 +1371,29 @@ trace_write(struct file *file, const char __user *buf,
 	int i;
 	size_t size;
 	struct seq_file *seq;
+	struct pib_trace_info *info;
 	struct pib_dev *dev;
-	struct pib_trace_entry *entry;
-	char message[PIB_BOOKMARK_MESSAGE];
+	struct pib_trace_entry entry;
 
 	seq = file->private_data;
-	dev = seq->private;
+	info = seq->private;
+	dev = info->dev;
 
 	if (*ppos != 0)
 		goto done;
 
 	size = min_t(size_t, PIB_BOOKMARK_MESSAGE, len);
 
-	if (copy_from_user(message, buf, size))
+	memset(&entry, 0, sizeof(entry));
+
+	if (copy_from_user(&entry.u.bookmark.message, buf, size))
 		return -EFAULT;
 
-	for (i=0 ; i<sizeof(message) ; i++)
-		if (message[i] == '\n')
-			message[i] = '\0';
+	for (i=0 ; i<sizeof(entry.u.bookmark.message) ; i++)
+		if (entry.u.bookmark.message[i] == '\n')
+			entry.u.bookmark.message[i] = '\0';
 
-	entry = alloc_new_trace(dev);
-
-	if (!entry)
-		return -ENOSYS;
-
-	strncpy(entry->u.bookmark.message, message, sizeof(entry->u.bookmark.message));
-
-	barrier();
-
-	entry->act = PIB_TRACE_ACT_BOOKMARK;
+	append_new_trace(dev, PIB_TRACE_ACT_BOOKMARK, &entry);
 
 done:
 	*ppos = len;
@@ -1309,7 +1408,7 @@ static const struct file_operations trace_fops = {
 	.read    = seq_read,
 	.write   = trace_write,
 	.llseek  = seq_lseek,
-	.release = seq_release,
+	.release = trace_release,
 };
 
 
@@ -1398,6 +1497,9 @@ static int register_dev(struct dentry *root, struct pib_dev *dev)
 		pr_err("pib: failed to allocate memory of debugfs \"pib/%s/trace\"\n", dev->ib_dev.name);
 		goto err;
 	}
+
+	/* 初回は必ずタイムレコードを記録できるようにする */
+	dev->debugfs.last_record_time_index = -PIB_TRACE_MAX_ENTRIES;
 
 	/* Object inspection */
 	for (i=0 ; i<PIB_DEBUGFS_LAST ; i++) {
