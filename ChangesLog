@@ -1,3 +1,17 @@
+2014-03-08 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.3.4
+           * Fix comparison between no masked PSNs. PSN compare must use get_psn_diff().
+           * In RC service, a successful completion postpones local ACK timeout of all send WQEs in the waiting list.
+             It avoids happening timeout on the situation of outstanding RDMA READ requests.
+
+2014-03-08 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.3.3
+           * Fix bug that the execution tracer uses seq_file in an incorrect way.
+           * Enable to supress duplicate execution traces.
+           * Enable execution tracer to collect new events for completion and local ACK timer retry.
+
 2014-03-05 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib, pibnetd: version 0.3.2

@@ -70,6 +70,7 @@ static void insert_async_qp_error(struct pib_dev *dev, struct pib_qp *qp, enum i
 static void abort_active_rwqe(struct pib_dev *dev, struct pib_qp *qp);
 static struct pib_send_wqe *match_send_wqe(struct pib_qp *qp, u32 psn, int *first_send_wqe_p, int **nr_swqe_pp);
 static void issue_comm_est(struct pib_qp *qp);
+static void postpone_local_ack_timeout(struct pib_qp *qp);
 
 
 /******************************************************************************/
@@ -1143,12 +1144,17 @@ push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn, u64 vad
 	struct pib_ack *ack, *ack_next;
 
 	if (retried) {
-		/* @todo 現在の acknowledge を全部破棄する */
+		/* スケジュール中の acknowledge から、挿入するものと PSN 範囲が重なるものと、後のものを破棄する */
 		list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
-			list_del_init(&ack->list);
-			kmem_cache_free(pib_ack_cachep, ack);
+			if ((get_psn_diff(ack->expected_psn, psn) > 0) &&
+			    (get_psn_diff(ack->psn, expected_psn) >= 0)) {
+				if (ack->type == PIB_ACK_RMDA_READ || ack->type == PIB_ACK_ATOMIC)
+					qp->responder.nr_rd_atomic--;
+
+				list_del_init(&ack->list);
+				kmem_cache_free(pib_ack_cachep, ack);
+			}
 		}
-		qp->responder.nr_rd_atomic = 0;
 	}
 
 	ack = kmem_cache_zalloc(pib_ack_cachep, GFP_ATOMIC);
@@ -1308,11 +1314,11 @@ generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, st
 
 	psn_offset = ack->data.rdma_read.offset / 128U >> qp->ib_qp_attr.path_mtu;
 
-	if (ack->expected_psn - ack->psn == 1)
+	if (get_psn_diff(ack->expected_psn, ack->psn) == 1)
 		OpCode = IB_OPCODE_RC_RDMA_READ_RESPONSE_ONLY;
 	else if (psn_offset == 0)
 		OpCode = IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST;
-	else if (ack->expected_psn > ack->psn + psn_offset + 1) {
+	else if (get_psn_diff(ack->expected_psn, ack->psn + psn_offset) > 1) {
 		OpCode = IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE;
 		with_aeth = 0;
 	} else 
@@ -1454,9 +1460,11 @@ receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib
 	/* response's PSN */
 	psn = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
 
-	if (bth->OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE)
+	if (bth->OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE) {
 		/* RDMA READ response Middle packets have no AETH. */
+		pib_trace_recv_ok(dev, port_num, bth->OpCode, psn, qp->ib_qp.qp_num, syndrome);
 		goto switch_OpCode;
+	}
 
 	if (size < sizeof(*aeth))
 		/* @todo これはエラーにとらないでいいか？ */
@@ -1643,6 +1651,7 @@ receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 ps
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_waiting_swqe--;
 			pib_util_free_send_wqe(qp, send_wqe);
+			postpone_local_ack_timeout(qp);
 			break;
 
 		case RET_STOP:
@@ -1663,6 +1672,7 @@ receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 ps
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_sending_swqe--;
 			pib_util_free_send_wqe(qp, send_wqe);
+			postpone_local_ack_timeout(qp);
 			break;
 
 		case RET_STOP:
@@ -1767,11 +1777,11 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 		return 0;
 
 	if (send_wqe->opcode != IB_WR_RDMA_READ) {
-		send_wqe->processing.status = IB_WC_BAD_RESP_ERR;		
+		send_wqe->processing.status = IB_WC_BAD_RESP_ERR;
 		return 0;
 	}
 
-	if (!first_send_wqe || (send_wqe->processing.based_psn + send_wqe->processing.sent_packets != psn))
+	if (!first_send_wqe || get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.sent_packets, psn) != 0)
 		/* 前にある Send WQE を飛ばして ACK が返ってきた */
 		return 0;
 
@@ -1802,7 +1812,7 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 	}
 
 	/* ACK が受理できれば local_ack_time は延長可能 */
-	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
+	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;
 
 	send_wqe->processing.sent_packets++;
 	send_wqe->processing.ack_packets++;
@@ -1811,7 +1821,6 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 		return 0;
 
 	/* Completed RDMA READ operation */
-
 	if ((qp->ib_qp_init_attr.sq_sig_type == IB_SIGNAL_ALL_WR) || 
 	    (send_wqe->send_flags & IB_SEND_SIGNALED)) {
 		int ret;
@@ -1834,6 +1843,7 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 
 	list_del_init(&send_wqe->list);
 	pib_util_free_send_wqe(qp, send_wqe);
+	postpone_local_ack_timeout(qp);
 
 	return 0;
 }
@@ -1872,7 +1882,7 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 		return 0;
 	}
 
-	if (!first_send_wqe || (send_wqe->processing.based_psn != psn))
+	if (!first_send_wqe || get_psn_diff(send_wqe->processing.based_psn, psn) != 0)
 		/* 前にある Send WQE を飛ばして ACK が返ってきた */
 		return 0;
 
@@ -1889,9 +1899,6 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 		send_wqe->processing.status = status;
 		return 0;
 	}
-
-	/* ACK が受理できれば local_ack_time は延長可能 */
-	send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
 
 	if ((qp->ib_qp_init_attr.sq_sig_type == IB_SIGNAL_ALL_WR) || 
 	    (send_wqe->send_flags & IB_SEND_SIGNALED)) {
@@ -1915,6 +1922,7 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 
 	list_del_init(&send_wqe->list);
 	pib_util_free_send_wqe(qp, send_wqe);
+	postpone_local_ack_timeout(qp);
 
 	return 0;
 }
@@ -1999,4 +2007,22 @@ issue_comm_est(struct pib_qp *qp)
 	pib_util_insert_async_qp_event(qp, IB_EVENT_COMM_EST);
 
 	qp->issue_comm_est = 1;
+}
+
+
+/**
+ *  受信が成功した場合には waiting list に入っている SWQE の local ack timeout
+ *  を延期する
+ */
+static void
+postpone_local_ack_timeout(struct pib_qp *qp)
+{
+	unsigned long local_ack_timeout;
+	struct pib_send_wqe *send_wqe;
+
+	local_ack_timeout = jiffies + qp->local_ack_timeout;
+
+	list_for_each_entry(send_wqe, &qp->requester.waiting_swqe_head, list) {
+		send_wqe->processing.local_ack_time = local_ack_timeout;
+	}
 }
