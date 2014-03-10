@@ -700,6 +700,7 @@ struct pib_qp {
 		int                     nr_waiting_swqe;
 		struct list_head        waiting_swqe_head;
 
+		u8                      max_rd_atomic; /* これは ib_qp_attr.max_rd_atomic をベースに flow-control のために動的に調整する */
 		int			nr_rd_atomic;
 
 		struct list_head        free_swqe_head;

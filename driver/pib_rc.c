@@ -1849,7 +1849,11 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 
 	list_del_init(&send_wqe->list);
 	pib_util_free_send_wqe(qp, send_wqe);
+
 	postpone_local_ack_timeout(qp);
+
+	/* 送信が成功したので RDMA READ & Atomic 操作の同時実行数を +1 する */
+	qp->requester.max_rd_atomic = min_t(u8, qp->requester.max_rd_atomic + 1, qp->ib_qp_attr.max_rd_atomic);
 
 	return 0;
 }
@@ -1928,7 +1932,11 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 
 	list_del_init(&send_wqe->list);
 	pib_util_free_send_wqe(qp, send_wqe);
+
 	postpone_local_ack_timeout(qp);
+
+	/* 送信が成功したので RDMA READ & Atomic 操作の同時実行数を +1 する */
+	qp->requester.max_rd_atomic = min_t(u8, qp->requester.max_rd_atomic + 1, qp->ib_qp_attr.max_rd_atomic);
 
 	return 0;
 }

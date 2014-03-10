@@ -627,7 +627,7 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		qp->ib_qp_attr.en_sqd_async_notify = attr->en_sqd_async_notify;
 
 	if (attr_mask & IB_QP_MAX_QP_RD_ATOMIC)
-		qp->ib_qp_attr.max_rd_atomic = attr->max_rd_atomic;
+		qp->ib_qp_attr.max_rd_atomic = qp->requester.max_rd_atomic = attr->max_rd_atomic;
 
 	if (attr_mask & IB_QP_MAX_DEST_RD_ATOMIC)
 		qp->ib_qp_attr.max_dest_rd_atomic = attr->max_dest_rd_atomic;

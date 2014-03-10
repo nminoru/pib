@@ -363,6 +363,9 @@ restart:
 
 	pib_trace_retry(dev, qp->ib_qp_attr.port_num, send_wqe);
 
+	/* Local ACK timer のリトライが発生した場合には、max_rd_atomic を最小にする */
+	qp->requester.max_rd_atomic = min_t(u8, 1, qp->ib_qp_attr.max_rd_atomic);
+
 	send_wqe->processing.retry_cnt--;
 	send_wqe->processing.local_ack_time = now + PIB_SCHED_TIMEOUT;
 
@@ -481,7 +484,7 @@ static int process_new_send_wr(struct pib_qp *qp)
 			return 0;
 
 	if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode)) {
-		if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic)
+		if (qp->requester.max_rd_atomic <= qp->requester.nr_rd_atomic)
 			return 0;
 		qp->requester.nr_rd_atomic++;
 	}
@@ -1062,7 +1065,7 @@ void pib_util_reschedule_qp(struct pib_qp *qp)
 		send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_send_wqe, list);
 
 		if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode))
-			if (qp->ib_qp_attr.max_rd_atomic <= qp->requester.nr_rd_atomic)
+			if (qp->requester.max_rd_atomic <= qp->requester.nr_rd_atomic)
 				goto skip;
 
 		schedule_time = now;
