@@ -43,7 +43,8 @@ static int receive_RDMA_WRITE_request(struct pib_dev *dev, u8 port_num, u32 psn,
 static int receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_qp *qp, void *buffer, int siz, int new_request, int slot_index);
 static int receive_Atomic_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, struct pib_qp *qp,  void *buffer, int size);
 static void push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome);
-static void push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size, int retried);
+static void remove_overlapped_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn);
+static void push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size);
 static void push_atomic_acknowledge(struct pib_qp *qp, u32 psn, u64 res);
 
 /*
@@ -58,7 +59,7 @@ static int pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int O
  */
 static int receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 static int receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn);
-static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 ps);
+static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn);
 static void set_send_wqe_to_error(struct pib_qp *qp, u32 psn, enum ib_wc_status status);
 static int receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
 static int receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
@@ -1042,10 +1043,7 @@ receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_
 
 	/* Check */
 	if (PIB_MAX_PAYLOAD_LEN < dmalen)
-		goto legth_error_or_too_many_rdma_read;
-
-	if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)
-		goto legth_error_or_too_many_rdma_read;
+		goto length_error_or_too_many_rdma_read;
 
 	pd = to_ppd(qp->ib_qp.pd);
 
@@ -1067,7 +1065,7 @@ receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_
 		struct pib_rd_atom_slot overwrite_slot;
 
 		if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)
-			goto legth_error_or_too_many_rdma_read;
+			goto length_error_or_too_many_rdma_read;
 
 		overwrite_slot = qp->responder.slots[((unsigned int)(qp->responder.slot_index - qp->ib_qp_attr.max_dest_rd_atomic)) % PIB_MAX_RD_ATOM];
 
@@ -1079,8 +1077,6 @@ receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_
 		slot.data.rdma_read.dmalen   = dmalen;
 
 		qp->responder.slots[(qp->responder.slot_index++) % PIB_MAX_RD_ATOM] = slot;
-
-		push_rdma_read_acknowledge(qp, psn, slot.expected_psn, remote_addr, rkey, dmalen, 0);
 
 		/* rq_psn は RDMA READ response packets を投げる前に一気に進める */
 		ret = num_packets;
@@ -1098,10 +1094,15 @@ receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_
 		    (slot.data.rdma_read.dmalen   - offset != dmalen))
 		    goto nak_invalid_request;
 
-		push_rdma_read_acknowledge(qp, psn, slot.expected_psn, remote_addr, rkey, dmalen, 1);
-
 		ret = 0; /* Don't go ahead of rq_psn */
 	}
+
+	remove_overlapped_rdma_read_acknowledge(qp, psn, slot.expected_psn);
+
+	if (qp->ib_qp_attr.max_dest_rd_atomic <= qp->responder.nr_rd_atomic)
+		goto length_error_or_too_many_rdma_read;
+
+	push_rdma_read_acknowledge(qp, psn, slot.expected_psn, remote_addr, rkey, dmalen);
 
 	return ret;
 
@@ -1113,7 +1114,7 @@ nak_invalid_request:
 
 	return -1;
 
-legth_error_or_too_many_rdma_read:
+length_error_or_too_many_rdma_read:
 	push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
 	insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 
@@ -1139,23 +1140,28 @@ push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome)
 
 
 static void
-push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size, int retried)
+remove_overlapped_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn)
 {
 	struct pib_ack *ack, *ack_next;
 
-	if (retried) {
-		/* スケジュール中の acknowledge から、挿入するものと PSN 範囲が重なるものと、後のものを破棄する */
-		list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
-			if ((get_psn_diff(ack->expected_psn, psn) > 0) &&
-			    (get_psn_diff(ack->psn, expected_psn) >= 0)) {
-				if (ack->type == PIB_ACK_RMDA_READ || ack->type == PIB_ACK_ATOMIC)
-					qp->responder.nr_rd_atomic--;
+	/* スケジュール中の acknowledge から、挿入するものと PSN 範囲が重なるものと、後のものを破棄する */
+	list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
+		if ((get_psn_diff(ack->expected_psn, psn) > 0) &&
+		    (get_psn_diff(ack->psn, expected_psn) >= 0)) {
+			if (ack->type == PIB_ACK_RMDA_READ || ack->type == PIB_ACK_ATOMIC)
+				qp->responder.nr_rd_atomic--;
 
-				list_del_init(&ack->list);
-				kmem_cache_free(pib_ack_cachep, ack);
-			}
+			list_del_init(&ack->list);
+			kmem_cache_free(pib_ack_cachep, ack);
 		}
 	}
+}
+
+
+static void
+push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_psn, u64 vaddress, u32 rkey, u32 size)
+{
+	struct pib_ack *ack;
 
 	ack = kmem_cache_zalloc(pib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
