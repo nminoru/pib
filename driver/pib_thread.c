@@ -50,11 +50,11 @@ static void timer_timeout_callback(unsigned long opaque);
 static void delayed_work_timeout_callback(unsigned long data);
 
 
-static int send_buffer_size;
+static int send_buffer_size = PIB_SEND_BUFFER_SIZE;
 module_param_named(send_buffer_size, send_buffer_size, int, S_IRUGO);
 MODULE_PARM_DESC(send_buffer_size, "Bytes of send buffer");
 
-static int recv_buffer_size;
+static int recv_buffer_size = PIB_RECV_BUFFER_SIZE;
 module_param_named(recv_buffer_size, recv_buffer_size, int, S_IRUGO);
 MODULE_PARM_DESC(recv_buffer_size, "Bytes of recv buffer");
 
