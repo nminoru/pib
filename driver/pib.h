@@ -346,7 +346,7 @@ struct pib_port {
 	u8			local_phy_errors;
 	u8			overrun_errors;
 
-	struct pib_port_perf	perf;  
+	struct pib_port_perf	perf;
 
 	struct socket          *socket;
 	struct sockaddr        *sockaddr;
@@ -473,6 +473,10 @@ struct pib_dev {
 		unsigned long   last_record_time;
 		int		last_record_time_index;
 	} debugfs;
+
+	struct {
+		u32		local_ack_timeout;
+	} perf;
 };
 
 

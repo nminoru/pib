@@ -385,6 +385,8 @@ restart:
 	send_wqe->processing.retry_cnt--;
 	send_wqe->processing.local_ack_time = now + PIB_SCHED_TIMEOUT;
 
+	dev->perf.local_ack_timeout++;
+
 	/* waiting list から sending list へ戻す */
 	list_for_each_entry_safe_reverse(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		send_wqe->processing.list_type = PIB_SWQE_SENDING;

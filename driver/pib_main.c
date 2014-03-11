@@ -317,6 +317,16 @@ static ssize_t store_local_ca_ack_delay(struct device *device, struct device_att
 }
 
 
+static ssize_t show_local_ack_timeout(struct device *device, struct device_attribute *attr,
+				      char *buf)
+{
+	struct pib_dev *dev =
+		container_of(device, struct pib_dev, ib_dev.dev);
+
+	return sprintf(buf, "%u\n", dev->perf.local_ack_timeout);
+}
+
+
 #ifdef PIB_HACK_IMM_DATA_LKEY
 static ssize_t show_imm_data_lkey(struct device *device, struct device_attribute *attr,
 			     char *buf)
@@ -330,6 +340,7 @@ static ssize_t show_imm_data_lkey(struct device *device, struct device_attribute
 
 
 static DEVICE_ATTR(local_ca_ack_delay,	S_IRUGO|S_IWUGO, show_local_ca_ack_delay, store_local_ca_ack_delay);
+static DEVICE_ATTR(local_ack_timeout,	S_IRUGO,         show_local_ack_timeout,  NULL);
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
 static DEVICE_ATTR(imm_data_lkey, S_IRUGO, show_imm_data_lkey, NULL);
@@ -338,6 +349,7 @@ static DEVICE_ATTR(imm_data_lkey, S_IRUGO, show_imm_data_lkey, NULL);
 
 static struct device_attribute *pib_class_attributes[] = {
 	&dev_attr_local_ca_ack_delay,
+	&dev_attr_local_ack_timeout,
 #ifdef PIB_HACK_IMM_DATA_LKEY
 	&dev_attr_imm_data_lkey,
 #endif
