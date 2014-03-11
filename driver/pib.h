@@ -65,6 +65,7 @@
 
 #define PIB_LOCAL_DMA_LKEY		(0)
 
+#define PIB_DEFAULT_NICE		(-5)
 
 #define PIB_MAX_HCA			(4)
 #define PIB_MAX_PORTS			(32) /* In IBA Spec. Vol.1 17.2.1.3 C17-7.a1, a channel adaptor may support up to 254 ports(1-253).  */

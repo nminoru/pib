@@ -58,6 +58,10 @@ static int recv_buffer_size;
 module_param_named(recv_buffer_size, recv_buffer_size, int, S_IRUGO);
 MODULE_PARM_DESC(recv_buffer_size, "Bytes of recv buffer");
 
+static int pib_nice = PIB_DEFAULT_NICE;
+module_param_named(nice, pib_nice, int, 0644);
+MODULE_PARM_DESC(nice, "kthread priority (from -19 to 20)");
+
 
 int pib_create_kthread(struct pib_dev *dev)
 {
@@ -229,9 +233,10 @@ static void release_socket(struct pib_dev *dev, u8 port_num)
 
 static int kthread_routine(void *data)
 {
+	int nice = INT_MIN;
 	struct pib_dev *dev;
 	u8 i, phys_port_cnt;
-	
+
 	dev = (struct pib_dev *)data;
 
 	BUG_ON(!dev);
@@ -254,6 +259,17 @@ static int kthread_routine(void *data)
 	while (!kthread_should_stop()) {
 		unsigned long flags;
 		unsigned long timeout = HZ;
+
+		/* nice の設定に変更があった場合 */
+		if (nice != pib_nice) {
+			nice = pib_nice;
+			if ((-20 <= nice) && (nice <= 19))
+				set_user_nice(current, nice);
+			else {
+				pr_err("pib: nice parameter is out of range: %d\n", nice);
+				set_user_nice(current, PIB_DEFAULT_NICE);
+			}
+		}
 
 		/* 停止時間を計算。ただし1 秒以上は停止させない */
 		spin_lock_irqsave(&dev->qp_sched.lock, flags);
