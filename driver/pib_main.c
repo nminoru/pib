@@ -61,15 +61,15 @@ MODULE_PARM_DESC(phys_port_cnt, "Number of physical ports");
 
 unsigned int pib_behavior;
 module_param_named(behavior, pib_behavior, uint, 0644);
-MODULE_PARM_DESC(behavior, "behavior");
+MODULE_PARM_DESC(behavior, "Bitmap of the `behavior' capabilities");
 
 unsigned int pib_manner_warn;
 module_param_named(manner_warn, pib_manner_warn, uint, 0644);
-MODULE_PARM_DESC(manner_warn, "manner");
+MODULE_PARM_DESC(manner_warn, "Bitmap of the `manner' capabilities to report as warnings");
 
 unsigned int pib_manner_err;
 module_param_named(manner_err, pib_manner_warn, uint, 0644);
-MODULE_PARM_DESC(manner_err, "Number of physical ports");
+MODULE_PARM_DESC(manner_err, "Bitmap of the warning `manner' capabilities to report as errors");
 
 static char *server_addr;
 module_param_named(addr, server_addr, charp, S_IRUGO);
