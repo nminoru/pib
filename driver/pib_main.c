@@ -931,7 +931,7 @@ static int parse_multi_host_mode(void)
 	sockaddr = kzalloc(sizeof(*sockaddr), GFP_KERNEL);
 
 	if (!sockaddr)
-		return -1;
+		return -ENOMEM;
 
 	/* Enable multi-host-mode */
 	pib_multi_host_mode = true;
@@ -960,6 +960,12 @@ static int __init pib_init(void)
 	int i, j, err = 0;
 
 	pr_info("pib: " PIB_DRIVER_DESCRIPTION " v" PIB_DRIVER_VERSION "\n");
+
+	err = parse_multi_host_mode();
+	if (err < 0) {
+		pr_err("pib: out of memory\n");
+		return err;
+	}
 
 	if ((pib_num_hca < 1) || (PIB_MAX_HCA < pib_num_hca)) {
 		pr_err("pib: pib_num_hca(%u) out of range [1, %u]\n", pib_num_hca, PIB_MAX_HCA);
@@ -993,9 +999,6 @@ static int __init pib_init(void)
 	dummy_parent_device->dma_mask = &dummy_parent_device_dma_mask;
 
 	get_hca_guid_base();
-
-	if (parse_multi_host_mode())
-		goto err_parse_multi_host_mode;
 
 	if (pib_multi_host_mode)
 		pr_info("pib: multi-host-mode\n");
@@ -1047,7 +1050,6 @@ err_create_switch:
 		kfree(pib_netd_sockaddr);
 		pib_netd_sockaddr = NULL;
 	}
-err_parse_multi_host_mode:
 
 	pib_kmem_cache_destroy();
 err_kmem_cache_destroy:
