@@ -971,7 +971,7 @@ static int __init pib_init(void)
 		return -EINVAL;
 	}
 
-	if (pib_num_hca * pib_phys_port_cnt < 2) {
+	if (!pib_multi_host_mode && (pib_num_hca * pib_phys_port_cnt < 2)) {
 		pr_err("pib: In single-host-mode, the value of num_hca * phys_port_cn must be 2 or more.\n");
 		return -EINVAL;
 	}
