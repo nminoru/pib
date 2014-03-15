@@ -521,7 +521,6 @@ static uint8_t detect_in_port(struct pib_switch *sw, uint64_t port_guid)
 static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth, void *buffer, int size)
 {
 	int ret;
-	int self_consumed = 0;
 	uint16_t dlid;
 	uint8_t out_port_num = 0;
 	struct iovec iovec;
@@ -581,7 +580,7 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 			pib_report_err("pibnetd: process_smp: failure");
 			goto silently_drop;
 		}
-		out_port_num = in_port_num;
+		out_port_num = in_port_num; /* @todo */
 		goto send_packet;
 
 	case PIB_MGMT_CLASS_PERF_MGMT:
@@ -602,43 +601,59 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 		break;
 	}
 
-	self_consumed = 0;
-
 	if ((smp->status & PIB_SMP_DIRECTION) == 0) {
 		/* Outgoing SMP */
-		if (smp->hop_ptr == smp->hop_cnt) {
-			if (smp->dr_dlid == be16_to_cpu(PIB_LID_PERMISSIVE)) {
-				smp->hop_ptr--;
-				ret = pib_process_smp(smp, sw, in_port_num);
-				out_port_num = in_port_num;
-				self_consumed = 1;
-			} else {
+		if (smp->hop_cnt == 0) {
+			pib_report_err("pibnetd: outgoing directed route SMP mustn't be 0 in hp count.\n");
+			exit(EXIT_FAILURE);
+		}
+
+		if (smp->hop_ptr == 0) {
+			/* C14-9:1 */
+			pib_report_err("pibnetd: outgoing directed route SMP shouldn't reach C14-9:1 condition.\n");
+			exit(EXIT_FAILURE);
+		} else if (smp->hop_ptr < smp->hop_cnt) {
+			/* C14-9:2 */
+			smp->return_path[smp->hop_ptr] = in_port_num;
+			smp->hop_ptr++;
+			out_port_num = smp->initial_path[smp->hop_ptr];
+			ret = PIB_MAD_RESULT_SUCCESS;
+		} else if (smp->hop_ptr == smp->hop_cnt) {
+			/* C14-9:3 */
+			if (smp->dr_dlid != cpu_to_be16(PIB_LID_PERMISSIVE)) {
 				pib_report_err("pibnetd: packet.smp.dr_dlid = 0x%04x",
 					       be16_to_cpu(smp->dr_dlid));
 				exit(EXIT_FAILURE);
 			}
-		} else if (smp->hop_ptr == smp->hop_cnt + 1) {
-			smp->hop_ptr--;
+
+			smp->return_path[smp->hop_ptr] = in_port_num;
 			ret = pib_process_smp(smp, sw, in_port_num);
+			smp->hop_ptr--;
 			out_port_num = in_port_num;
-			self_consumed = 1;
+
+			lrh->dlid = lrh->slid;
+			if (smp->dr_slid == be16_to_cpu(PIB_LID_PERMISSIVE))
+				lrh->slid = be16_to_cpu(PIB_LID_PERMISSIVE);
+
+		} else if (smp->hop_ptr == smp->hop_cnt + 1) {
+			/* C14-9:4 */
+			pib_report_err("pibnetd: outgoing directed route SMP shouldn't reach C14-9:4 condition.\n");
+			exit(EXIT_FAILURE);
 		} else {
-			ret = PIB_MAD_RESULT_SUCCESS;
-			out_port_num = smp->initial_path[smp->hop_ptr + 1];
-			smp->hop_ptr++;
+			/* C14-9:5 */
+			pib_report_err("pibnetd: process_smp: failure");
+			goto silently_drop;
 		}
 	} else {
 		/* Returning SMP */
-		ret = PIB_MAD_RESULT_SUCCESS;
-		smp->hop_ptr--;
-		out_port_num = smp->initial_path[smp->hop_ptr];
-		smp->return_path[smp->hop_ptr] = out_port_num;
-	}
+		if (smp->hop_ptr == 0) {
+			pib_report_err("pibnetd: returning directed route SMP shouldn't reach C14-9:13 condition.\n");
+			exit(EXIT_FAILURE);
+		}
 
-	if (self_consumed) {
-		lrh->dlid = lrh->slid;
-		if (smp->dr_slid == be16_to_cpu(PIB_LID_PERMISSIVE))
-			lrh->slid = be16_to_cpu(PIB_LID_PERMISSIVE);
+		smp->hop_ptr--;
+		out_port_num = smp->return_path[smp->hop_ptr];
+		ret = PIB_MAD_RESULT_SUCCESS;
 	}
 
 	if (ret & PIB_MAD_RESULT_FAILURE) {

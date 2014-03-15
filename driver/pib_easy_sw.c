@@ -313,7 +313,7 @@ static void sock_data_ready_callback(struct sock *sk, int bytes)
 
 static int process_incoming_message(struct pib_easy_sw *sw)
 {
-	int ret, recvmsg_size, self_consumed;
+	int ret, recvmsg_size;
 	u8 in_sw_port_num, out_sw_port_num;
 	u8 dest_port_num;
 	u32 dest_qp_num;
@@ -422,7 +422,7 @@ process_mad:
 			/* DR SLID と DR DLID が指定されてない場合には未対応 */
 			pr_crit("pib: pib_easy_sw: SUBN_DIRECTED_ROUTE dr_slid=0x%04x, dr_dlid=0x%04x\n",
 				smp->dr_slid, smp->dr_dlid);
-			BUG();
+			return 0;
 		}
 		break;
 
@@ -437,7 +437,7 @@ process_mad:
 			pib_debug("pib: process_smp: failure\n");
 			goto silently_drop;
 		}
-		out_sw_port_num = in_sw_port_num;
+		out_sw_port_num = in_sw_port_num; /* @todo */
 		goto send_packet;
 
 	case IB_MGMT_CLASS_PERF_MGMT: {
@@ -461,52 +461,64 @@ process_mad:
 	default:
 		pr_crit("pib: pib_easy_sw: mgmt_class = %u\n",
 			mad->mad_hdr.mgmt_class);
-		BUG();
-		break;
+		return 0;
 	}
-
-	self_consumed = 0;
 
 	if ((smp->status & IB_SMP_DIRECTION) == 0) {
 		/* Outgoing SMP */
-		if (smp->hop_ptr == smp->hop_cnt) {
-			if (smp->dr_dlid == IB_LID_PERMISSIVE) {
-				smp->hop_ptr--;
-				ret = process_smp(smp, sw, in_sw_port_num);
-				out_sw_port_num = in_sw_port_num;
-				self_consumed = 1;
-			} else {
+		if (smp->hop_cnt == 0) {
+			pr_crit("pib: pib_easy_sw: outgoing directed route SMP mustn't be 0 in hp count.\n");
+			return 0;
+		}
+		
+		if (smp->hop_ptr == 0) {
+			/* C14-9:1 */
+			pr_crit("pib: pib_easy_sw: outgoing directed route SMP shouldn't reach C14-9:1 condition.\n");
+			return 0;
+		} else if (smp->hop_ptr < smp->hop_cnt) {
+			/* C14-9:2 */
+			smp->return_path[smp->hop_ptr] = in_sw_port_num;
+			smp->hop_ptr++;
+			out_sw_port_num = smp->initial_path[smp->hop_ptr];
+			ret = IB_MAD_RESULT_SUCCESS;
+		} else if (smp->hop_ptr == smp->hop_cnt) {
+			/* C14-9:3 */
+			if (smp->dr_dlid != IB_LID_PERMISSIVE) {
 				pr_crit("pib: packet.smp.dr_dlid = 0x%04x\n",
 					be16_to_cpu(smp->dr_dlid));
-				BUG();
+				return 0;
 			}
-		} else if (smp->hop_ptr == smp->hop_cnt + 1) {
-			smp->hop_ptr--;
+			smp->return_path[smp->hop_ptr] = in_sw_port_num;
 			ret = process_smp(smp, sw, in_sw_port_num);
+			smp->hop_ptr--;
 			out_sw_port_num = in_sw_port_num;
-			self_consumed = 1;
+
+			lrh->dlid = lrh->slid;
+			if (smp->dr_slid == IB_LID_PERMISSIVE)
+				lrh->slid = IB_LID_PERMISSIVE;
+
+		} else if (smp->hop_ptr == smp->hop_cnt + 1) {
+			/* C14-9:4 */
+			pr_crit("pib: pib_easy_sw: outgoing directed route SMP shouldn't reach C14-9:4 condition.\n");
+			return 0;
 		} else {
-			ret = IB_MAD_RESULT_SUCCESS;
-			out_sw_port_num = smp->initial_path[smp->hop_ptr + 1];
-			smp->hop_ptr++;
+			/* C14-9:5 */
+			pib_debug("pib: pib_easy_sw: process_smp: failure\n");
+			goto silently_drop;
 		}
 	} else {
 		/* Returning SMP */
-		ret = IB_MAD_RESULT_SUCCESS;
+		if (smp->hop_ptr == 0) {
+			pr_crit("pib: pib_easy_sw: returning directed route SMP shouldn't reach C14-9:13 condition.\n");
+			return 0;
+		}
 		smp->hop_ptr--;
-		out_sw_port_num = smp->initial_path[smp->hop_ptr];
-		smp->return_path[smp->hop_ptr] = out_sw_port_num;
-	}
-
-
-	if (self_consumed) {
-		lrh->dlid = lrh->slid;
-		if (smp->dr_slid == IB_LID_PERMISSIVE)
-			lrh->slid = IB_LID_PERMISSIVE;
+		out_sw_port_num = smp->return_path[smp->hop_ptr];
+		ret = IB_MAD_RESULT_SUCCESS;
 	}
 
 	if (ret & IB_MAD_RESULT_FAILURE) {
-		pib_debug("pib: process_smp: failure\n");
+		pib_debug("pib: pib_easy_sw: process_smp: failure\n");
 		goto silently_drop;
 	}
 
