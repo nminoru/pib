@@ -912,44 +912,49 @@ static void get_hca_guid_base(void)
 
 static int parse_multi_host_mode(void)
 {
-	struct sockaddr_in *sockaddr;
-	unsigned int s1, s2, s3, s4;
+	size_t str_len, socklen;
+	struct sockaddr* sockaddr;
+	struct sockaddr_in *in4;
+	struct sockaddr_in6 *in6;
 
 	if (!server_addr)
 		return 0;
 
-	/* Confirm that pib_server_addr is a valid IPv4 address */
-	if (sscanf(server_addr, "%u.%u.%u.%u", &s1, &s2, &s3, &s4) != 4)
-		return 0;
+	if ((server_port == 0) || (65536 <= server_port)) {
+		pr_err("pib: the specified value of port is out of range\n");
+		return -EINVAL;
+	}
 
-	if ((256 <= s1) || (256 <= s2) || (256 <= s3) || (256 <= s4))
-		return 0;
-
-	if ((server_port == 0) || (65536 <= server_port))
-		return 0;
-
-	sockaddr = kzalloc(sizeof(*sockaddr), GFP_KERNEL);
-
-	if (!sockaddr)
+	sockaddr = kzalloc(sizeof(struct sockaddr_in6), GFP_KERNEL);
+	if (!sockaddr) {
+		pr_err("pib: out of memory\n");
 		return -ENOMEM;
+	}
+
+	in4 = (struct sockaddr_in *)sockaddr;
+	in6 = (struct sockaddr_in6 *)sockaddr;
+
+	str_len = strlen(server_addr);
+
+	if (in4_pton(server_addr, str_len, (u8 *)&in4->sin_addr.s_addr, -1, NULL)) {
+		in4->sin_family  = AF_INET;
+		in4->sin_port    = htons(server_port);
+		socklen          = sizeof(*in4);
+	} else if (in6_pton(server_addr, str_len, (u8 *)&in6->sin6_addr.s6_addr, -1, NULL)) {
+		in6->sin6_family = AF_INET6;
+		in6->sin6_port   = htons(server_port);
+		socklen          = sizeof(*in6);
+	} else {
+		kfree(sockaddr);
+		return 0;
+	}
 
 	/* Enable multi-host-mode */
 	pib_multi_host_mode = true;
 
-	sockaddr->sin_family      = AF_INET;
-	sockaddr->sin_addr.s_addr = htonl((s1 << 24) | (s2 << 16) | (s3 << 8) | s4);
-	sockaddr->sin_port	  = htons(server_port);
-
 	pib_netd_sockaddr = (struct sockaddr *)sockaddr;
-	pib_netd_socklen  = sizeof(*sockaddr);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-	pr_info("pibnetd's IP address: %pISpc\n",
-		(const struct sockaddr*)pib_netd_sockaddr);
-#else
-	pr_info("pibnetd's IP address: %u.%u.%u.%u:%u\n",
-		s1, s2, s3, s4, server_port);
-#endif
+	pib_netd_socklen  = socklen;
+	pr_info("pibnetd's IP address: %s\n", server_addr);
 
 	return 0;
 }
@@ -962,10 +967,8 @@ static int __init pib_init(void)
 	pr_info("pib: " PIB_DRIVER_DESCRIPTION " v" PIB_DRIVER_VERSION "\n");
 
 	err = parse_multi_host_mode();
-	if (err < 0) {
-		pr_err("pib: out of memory\n");
+	if (err < 0)
 		return err;
-	}
 
 	if ((pib_num_hca < 1) || (PIB_MAX_HCA < pib_num_hca)) {
 		pr_err("pib: pib_num_hca(%u) out of range [1, %u]\n", pib_num_hca, PIB_MAX_HCA);
