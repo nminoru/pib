@@ -1210,7 +1210,7 @@ int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp)
 {
 	u8 port_num;
 	u16 dlid;
-	struct pib_ack *ack, *ack_next;
+	struct pib_ack *ack;
 
 	if (!pib_is_recv_ok(qp->state))
 		return 0;
@@ -1221,19 +1221,20 @@ int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp)
 	if (list_empty(&qp->responder.ack_head))
 		return 0;
 
-	/* IBA Spec. Vol.1 9.7.5.1.2. Coalesced Acknowledge Messages */
 	ack = list_first_entry(&qp->responder.ack_head, struct pib_ack, list);
 
 	if (ack->type == PIB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
-		struct pib_ack ack_tmp = *ack;
+		/* IBA Spec. Vol.1 9.7.5.1.2. Coalesced Acknowledge Messages */
+		struct pib_ack ack_tmp;
 
-		list_for_each_entry_safe(ack, ack_next, &qp->responder.ack_head, list) {
-			if (ack->type == PIB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
-				list_del_init(&ack->list);
-				kmem_cache_free(pib_ack_cachep, ack);
-			} else
-				break;
-		}
+		do {
+			ack_tmp = *ack;
+
+			list_del_init(&ack->list);
+			kmem_cache_free(pib_ack_cachep, ack);
+
+			ack = list_first_entry(&qp->responder.ack_head, struct pib_ack, list);
+		} while (ack->type == PIB_ACK_NORMAL && ((ack->syndrome >> 5) == 0));
 
 		generate_Normal_or_Atomic_acknowledge(dev, qp, dlid, &ack_tmp);
 
@@ -1712,7 +1713,6 @@ completion_error:
 static int
 process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, u32 psn)
 {
-	u32 no_packets;
 	s32 psn_diff;
 
 	if (send_wqe->processing.status != IB_WC_SUCCESS)
@@ -1723,10 +1723,8 @@ process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe 
 	if (psn_diff < 0)
 		/* Ignore ghost acknowledge */
 		return RET_STOP;
-
-	no_packets = send_wqe->processing.all_packets - psn_diff;
 		
-	if (no_packets < send_wqe->processing.ack_packets)
+	if (psn_diff + 1 <= send_wqe->processing.ack_packets)
 		/* Ignore duplicated acknowledge */
 		return RET_STOP;
 
@@ -1735,12 +1733,11 @@ process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe 
 		return RET_ERROR;
 	}
 
-	if (no_packets < send_wqe->processing.all_packets) {
+	if (psn_diff + 1 < send_wqe->processing.all_packets) {
 		/* Left packets to send */
-		send_wqe->processing.ack_packets = no_packets;
+		send_wqe->processing.ack_packets = psn_diff + 1;
 
-		/* ACK が受理できれば local_ack_time は延長可能 */
-		send_wqe->processing.local_ack_time = jiffies + qp->local_ack_timeout;	
+		postpone_local_ack_timeout(qp);
 
 		return RET_STOP;
 	}
@@ -1760,7 +1757,9 @@ process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe 
 		ret = pib_util_insert_wc_success(qp->send_cq, &wc, 0);
 	}
 
-	qp->requester.psn = send_wqe->processing.expected_psn;
+	qp->requester.psn = (send_wqe->processing.expected_psn & PIB_PSN_MASK);
+
+	postpone_local_ack_timeout(qp);
 
 	return RET_CONTINUE;
 }
@@ -1843,7 +1842,7 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 	qp->requester.nr_rd_atomic--;
 	BUG_ON(qp->requester.nr_rd_atomic < 0);
 
-	qp->requester.psn = send_wqe->processing.expected_psn;
+	qp->requester.psn = (send_wqe->processing.expected_psn & PIB_PSN_MASK);
 
 	(*nr_swqe_p)--;
 
@@ -1926,7 +1925,7 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 	qp->requester.nr_rd_atomic--;
 	BUG_ON(qp->requester.nr_rd_atomic < 0);
 
-	qp->requester.psn = send_wqe->processing.expected_psn;
+	qp->requester.psn = (send_wqe->processing.expected_psn & PIB_PSN_MASK);
 
 	(*nr_swqe_p)--;
 
@@ -2037,6 +2036,7 @@ postpone_local_ack_timeout(struct pib_qp *qp)
 	local_ack_timeout = jiffies + qp->local_ack_timeout;
 
 	list_for_each_entry(send_wqe, &qp->requester.waiting_swqe_head, list) {
+		send_wqe->processing.retry_cnt = qp->ib_qp_attr.retry_cnt;
 		send_wqe->processing.local_ack_time = local_ack_timeout;
 	}
 }
