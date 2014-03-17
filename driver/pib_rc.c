@@ -1134,6 +1134,7 @@ push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome)
 	ack->type		= PIB_ACK_NORMAL;
 	ack->psn		= psn;
 	ack->expected_psn	= psn + 1;
+	ack->syndrome		= syndrome;
 
 	list_add_tail(&ack->list, &qp->responder.ack_head);
 }
