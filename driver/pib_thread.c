@@ -1094,7 +1094,7 @@ skip:
 		return;
 
 	qp->sched.time = schedule_time;
-	qp->sched.tid  = dev->qp_sched.master_tid;
+	qp->sched.tid  = dev->qp_sched.master_tid++;
 
 	/************************************************************/
 	/* Red/Black tree への登録                                  */
