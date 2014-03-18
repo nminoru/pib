@@ -158,22 +158,27 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	switch (send_wqe->opcode) {
 
 	case IB_WR_SEND:
-		if (send_wqe->processing.all_packets == 1)
+		if (send_wqe->processing.all_packets == 1) {
 			bth->OpCode = IB_OPCODE_RC_SEND_ONLY;
-		else if (send_wqe->processing.sent_packets == 0)
+			qp->requester.nr_contiguos_packets = 0;
+		} else if (send_wqe->processing.sent_packets == 0) {
 			bth->OpCode = IB_OPCODE_RC_SEND_FIRST;
-		else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1)
+			qp->requester.nr_contiguos_packets = 0;
+		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
 			bth->OpCode = IB_OPCODE_RC_SEND_LAST;
-		else
+		} else {
 			bth->OpCode = IB_OPCODE_RC_SEND_MIDDLE;
+		}
 		goto send_or_rdma_write;
 
 	case IB_WR_SEND_WITH_IMM:
 		if (send_wqe->processing.all_packets == 1) {
 			bth->OpCode = IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE;
 			with_imm = 1;
+			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.sent_packets == 0) {
 			bth->OpCode = IB_OPCODE_RC_SEND_FIRST;
+			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
 			bth->OpCode = IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE;
 			with_imm = 1;
@@ -185,9 +190,11 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 		if (send_wqe->processing.all_packets == 1) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_ONLY;
 			with_reth = 1;
+			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.sent_packets == 0) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_FIRST;
 			with_reth = 1;
+			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1)
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_LAST;
 		else
@@ -199,9 +206,11 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE;
 			with_reth = 1;
 			with_imm  = 1;
+			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.sent_packets == 0) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_FIRST;
 			with_reth = 1;
+			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE;
 			with_imm  = 1;
@@ -216,22 +225,26 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	case IB_WR_RDMA_READ:
 		bth->OpCode = IB_OPCODE_RC_RDMA_READ_REQUEST;
+		qp->requester.nr_contiguos_packets = 0;
 		status = process_RDMA_READ_request(dev, qp, send_wqe, lrh, grh, bth, buffer);
 		break;
 
 	case IB_WR_ATOMIC_CMP_AND_SWP:
 		bth->OpCode = IB_OPCODE_RC_COMPARE_SWAP;
+		qp->requester.nr_contiguos_packets = 0;
 		status = process_Atomic_request(dev, qp, send_wqe, lrh, grh, bth, buffer);
 		break;
 
 	case IB_WR_ATOMIC_FETCH_AND_ADD:
 		bth->OpCode = IB_OPCODE_RC_FETCH_ADD;
+		qp->requester.nr_contiguos_packets = 0;
 		status = process_Atomic_request(dev, qp, send_wqe, lrh, grh, bth, buffer);
 		break;
 
 	default:
 		/* Unsupported Opcode */
 		status = IB_WC_LOC_QP_OP_ERR;
+		qp->requester.nr_contiguos_packets = 0;		
 		break;
 	}
 
@@ -247,6 +260,8 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	if (send_wqe->opcode != IB_WR_RDMA_READ) {
 		send_wqe->processing.sent_packets++;
+		qp->requester.nr_contiguos_packets++;
+
 		if (send_wqe->processing.sent_packets < send_wqe->processing.all_packets) {
 			/* Send WQE にはまだ送信すべきパケットが残っている。 */
 			return 0;
@@ -287,6 +302,8 @@ process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struc
 		reth->vaddr  = cpu_to_be64(send_wqe->wr.rdma.remote_addr);
 		reth->rkey   = cpu_to_be32(send_wqe->wr.rdma.rkey);
 		reth->dmalen = cpu_to_be32(send_wqe->total_length);
+
+		qp->requester.nr_contiguos_packets = 0;
 	}
 
 	if (with_imm) {
@@ -1465,6 +1482,9 @@ receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib
 	struct pib_packet_aeth *aeth;
 	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
+	/* レスポンスを受ければ連続送信はクリアできる */
+	qp->requester.nr_contiguos_packets = 0;
+
 	/* response's PSN */
 	psn = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
 
@@ -1636,14 +1656,16 @@ set_send_wqe_to_error(struct pib_qp *qp, u32 psn, enum ib_wc_status status)
 
 enum {
 	RET_ERROR        = -1,
-	RET_CONTINUE     =  0,
-	RET_STOP         =  1
+	RET_COMPLETE,
+	RET_CONTINUE,
+	RET_STOP,
 };
 
 
 static int
 receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn)
 {
+	bool is_postpone_local_ack_timeout = true;
 	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
@@ -1654,16 +1676,20 @@ receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 ps
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_waiting_swqe--;
 			goto completion_error;
-			
-		case RET_CONTINUE:
+
+		case RET_COMPLETE:
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_waiting_swqe--;
 			pib_util_free_send_wqe(qp, send_wqe);
-			postpone_local_ack_timeout(qp);
+			is_postpone_local_ack_timeout = true;
 			break;
 
+		case RET_CONTINUE:
+			is_postpone_local_ack_timeout = true;
+			goto stop;
+
 		case RET_STOP:
-			return -1;
+			goto stop;
 		}
 	}
 
@@ -1675,22 +1701,29 @@ receive_ACK_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 ps
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_sending_swqe--;
 			goto completion_error;
-			
-		case RET_CONTINUE:
+
+		case RET_COMPLETE:
 			list_del_init(&send_wqe->list);
 			qp->requester.nr_sending_swqe--;
 			pib_util_free_send_wqe(qp, send_wqe);
-			postpone_local_ack_timeout(qp);
+			is_postpone_local_ack_timeout = true;
 			break;
 
+		case RET_CONTINUE:
+			is_postpone_local_ack_timeout = true;
+			goto stop;
+
 		case RET_STOP:
-			return -1;
+			goto stop;
 		}
 	}
 
 	/* @todo check out of sequence ? */
 
 	/* @todo QP を再 enqueue する条件を考えよ */
+
+	if (is_postpone_local_ack_timeout)
+		postpone_local_ack_timeout(qp);
 
 	return -1;
 
@@ -1703,6 +1736,12 @@ completion_error:
 	qp->state = IB_QPS_ERR;
 
 	pib_util_flush_qp(qp, 0);
+
+	return -1;
+
+stop:
+	if (is_postpone_local_ack_timeout)
+		postpone_local_ack_timeout(qp);
 
 	return -1;
 }
@@ -1737,10 +1776,7 @@ process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe 
 	if (psn_diff + 1 < send_wqe->processing.all_packets) {
 		/* Left packets to send */
 		send_wqe->processing.ack_packets = psn_diff + 1;
-
-		postpone_local_ack_timeout(qp);
-
-		return RET_STOP;
+		return RET_CONTINUE;
 	}
 
 	/* Complete to send */
@@ -1760,9 +1796,7 @@ process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe 
 
 	qp->requester.psn = (send_wqe->processing.expected_psn & PIB_PSN_MASK);
 
-	postpone_local_ack_timeout(qp);
-
-	return RET_CONTINUE;
+	return RET_COMPLETE;
 }
 
 

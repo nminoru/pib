@@ -366,7 +366,7 @@ restart:
 		goto done;
 
 	/*
-	 *  Waiting listE の先頭の Send WQE が再送時刻に達していれば
+	 *  Waiting list の先頭の Send WQE が再送時刻に達していれば
 	 *  waiting list から sending list へ戻して再送信を促す。
 	 */
 	if (list_empty(&qp->requester.waiting_swqe_head))
@@ -419,6 +419,12 @@ first_sending_wsqe:
 	if (send_wqe->processing.status != IB_WC_SUCCESS)
 		if (!list_empty(&qp->requester.waiting_swqe_head))
 			goto done;
+
+	/*
+	 *  SEND & RDMA WRITE が連続送信の制限に引掛る場合は、一時停止
+	 */
+	if (PIB_MAX_CONTIGUOUS_PACKETS < qp->requester.nr_contiguos_packets)
+		goto done;
 
 	/*
 	 *  RNR NAK タイムアウト時刻の判定
@@ -1074,6 +1080,9 @@ void pib_util_reschedule_qp(struct pib_qp *qp)
 		if (send_wqe->processing.status != IB_WC_SUCCESS)
 			if (!list_empty(&qp->requester.waiting_swqe_head))
 				goto skip;
+
+		if (PIB_MAX_CONTIGUOUS_PACKETS < qp->requester.nr_contiguos_packets)
+			goto skip;
 
 		if (time_before(send_wqe->processing.schedule_time, schedule_time))
 			schedule_time = send_wqe->processing.schedule_time;

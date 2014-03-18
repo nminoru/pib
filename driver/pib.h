@@ -112,6 +112,8 @@
 
 #define PIB_LINK_WIDTH_SUPPORTED	(IB_WIDTH_1X | IB_WIDTH_4X | IB_WIDTH_8X | IB_WIDTH_12X)
 #define PIB_LINK_SPEED_SUPPORTED	(7) /* 2.5 or 5.0 or 10.0 Gbps */
+
+#define PIB_MAX_CONTIGUOUS_PACKETS	(16)
 	
 
 #define pib_debug(fmt, args...)					\
@@ -713,6 +715,8 @@ struct pib_qp {
 		struct list_head        free_swqe_head;
 
 		void		       *inline_data_buffer;
+
+		int 			nr_contiguos_packets; /* for SEND & RDMA WRITE */
 	} requester;
 
 	/* responder side */

@@ -1,9 +1,25 @@
-2014-03-08 Minoru NAKAMURA <nminoru@nminoru.jp>
+2014-03-xx Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib, pibnetd: version 0.3.5
+           * Fix the wrong path of which a DR SMP MADs returns to the source node.
+           * Fix the responder's acknowledge coalescing.
+           * Fix that the responder forgets to set a syndrome value into the acknowledge packet.
+           * Fix the requester's receiving acknowledge logic.
+           * Fix missing qp_sched.master_tid increment.
+           * Add a new flow control mechanism to prevent local ACK timeout retry by large size SEND & RDMA WRITE in RC service.
+             Under this mechanism, the sender can send only up to PIB_MAX_CONTIGUOUS_PACKETS of packets before it must wait for an acknowledgement.
+
+2014-03-11 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib: version 0.3.4
            * Fix comparison between no masked PSNs. PSN compare must use get_psn_diff().
            * In RC service, a successful completion postpones local ACK timeout of all send WQEs in the waiting list.
              It avoids happening timeout on the situation of outstanding RDMA READ requests.
+           * Add a flow control that the requester side sets the internal maximum number of outstanding RDMA READs & Atomic operations to 1 when a RDMA READ request is resend by local ACK timeout.
+           * Fix bug that check outstanding RDMA READs & Atomic operations exceed max_rd_atomic before a retired RDMA READ request remove previous RDMA READs.
+           * Enable to specify kthread's priority
+           * Expand the default size of socket buffer to 16MiB
+           * Enable to count how many times local ACK via /sys/class/infiniband/pib_X/local_ack_timeout.
 
 2014-03-08 Minoru NAKAMURA <nminoru@nminoru.jp>
 
@@ -22,7 +38,7 @@
 2014-02-27 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib, pibnetd: version 0.3.1
-           * When a node unloads pib.ko, pibnetd frees the port of which is connected to the node.
+           * When a node is unloading pib.ko, pibnetd should free the port of which is connected to the node.
 
 2014-02-25 Minoru NAKAMURA <nminoru@nminoru.jp>
 
