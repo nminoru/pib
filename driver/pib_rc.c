@@ -1134,6 +1134,7 @@ nak_invalid_request:
 
 length_error_or_too_many_rdma_read:
 	push_acknowledge(qp, psn, PIB_SYND_NAK_CODE_INV_REQ_ERR);
+
 	insert_async_qp_error(dev, qp, IB_EVENT_QP_ACCESS_ERR);
 
 	return -1;
@@ -1196,8 +1197,12 @@ remove_overlapped_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected
 
 	/* スケジュール中の acknowledge から、挿入するものと PSN 範囲が重なるものと、後のものを破棄する */
 	list_for_each_entry_safe_reverse(ack, ack_next, &qp->responder.ack_head, list) {
-		if ((get_psn_diff(ack->expected_psn, psn) > 0) &&
+		if (((get_psn_diff(ack->psn,          psn         ) >= 0) &&
+		     (get_psn_diff(ack->psn,          expected_psn) <  0)) ||
+		    ((get_psn_diff(ack->expected_psn, psn         ) >  0) &&
+		     (get_psn_diff(ack->expected_psn, expected_psn) <= 0)) ||
 		    (get_psn_diff(ack->psn, expected_psn) >= 0)) {
+
 			if (ack->type == PIB_ACK_RMDA_READ || ack->type == PIB_ACK_ATOMIC)
 				qp->responder.nr_rd_atomic--;
 
@@ -1842,18 +1847,13 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 		return 0;
 	}
 
-	if (!first_send_wqe || get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.sent_packets, psn) != 0) {
-		/* 前にある Send WQE を飛ばして ACK が返ってきた */
-		/* @todo */
-		pr_err("%s:%u\n", __FILE__, __LINE__);
+	if (!first_send_wqe || get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.sent_packets, psn) != 0)
+		/* @todo 前にある Send WQE を飛ばして ACK が返ってきた */
 		return 0;
-	}
 
-	if (get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.ack_packets, psn) != 0) {
-		/* 順序通りに PSN を受けること @todo 再送すべき */
-		pr_err("%s:%u\n", __FILE__, __LINE__);
+	if (get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.ack_packets, psn) != 0)
+		/* @todo 順序通りに PSN を受けること。再送すべき */
 		return 0;
-	}
 
 	dmalen      = send_wqe->total_length;
 	offset      = send_wqe->processing.ack_packets * 128U << qp->ib_qp_attr.path_mtu;
