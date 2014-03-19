@@ -100,9 +100,11 @@ Execution trace
 _trace_ displays execution trace.
 
 * _API_ indicates that user-land programs or kernel modules call IB API.
-* _SEND_ indicates that pib transmits an IB packet encapsulated in the UDP packet.
-* _RCV1_ indicates that pib receive an UDP packet. 
-* _RCV2_ indicates that pib accepts the receiving UDP packet as the encapsulated IB packet.
+* _SEND_ indicates that pib's socket transmits an IB packet encapsulated in the UDP packet.
+* _RCV1_ indicates that pib's socket receive an UDP packet. 
+* _RCV2_ indicates that pib's socket  accepts the receiving UDP packet as the encapsulated IB packet.
+* _RTRY_ indicates that pib's requester perform retries due to local ack timeout.
+* _COMP_ indicates that pib generates a successful completion or a completion error.
 * _ASYNC_ indicates that an asynchronous error(including an event) is caused.
 * _TIME_ is an internal entry.
 

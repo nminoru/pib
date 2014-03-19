@@ -1,3 +1,13 @@
+- RDMA READ の outstanding が requester と responder で違わないか確認せよ 
+
+- Perf Mgt (あるいは別の機能)に Local ACK timeout 情報等を挿入する。
+
+- ポート属性の
+-- bad_pkey_cntr と qkey_viol_cntr を記録。
+-- subnet_timeout、init_type_reply
+
+- pib.h のコメントをもっと書く。
+
 - SMInfo
 - Trap を受けた場合を追加。
 

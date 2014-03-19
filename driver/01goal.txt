@@ -11,8 +11,6 @@
   実際に送受信可能になるのは RTR / RTS 以降。
 - WQE も CQE も設定以上に存在数することがある。
 
-
-
 ○ Manner check
 
 - RESET 時に ibv_post_send または ibv_post_recv を実行した。

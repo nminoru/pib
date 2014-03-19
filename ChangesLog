@@ -1,4 +1,4 @@
-2014-03-xx Minoru NAKAMURA <nminoru@nminoru.jp>
+2014-03-19 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib, pibnetd: version 0.3.5
            * Fix the wrong path of which a DR SMP MADs returns to the source node.
@@ -7,7 +7,11 @@
            * Fix the requester's receiving acknowledge logic.
            * Fix missing qp_sched.master_tid increment.
            * Add a new flow control mechanism to prevent local ACK timeout retry by large size SEND & RDMA WRITE in RC service.
-             Under this mechanism, the sender can send only up to PIB_MAX_CONTIGUOUS_PACKETS of packets before it must wait for an acknowledgement.
+             Under this mechanism, the sender can send only up to PIB_MAX_CONTIG_REQUESTS of packets before it must wait for an acknowledgement.
+           * Add a new flow control mechanism to prevent local ACK timeout retry by large size RDMA READs in RC service.
+             The responder can send only up to PIB_MAX_CONTIG_READ_ACKS of packets before it must wait for Congestion Notification Packet(CNP).
+           * Fix incorrect range check to remove pib_ack when a retried RDMA READ request is received.
+           * Remove the flow control to limit the number of outstanding RDMA READS scince 0.3.4.
 
 2014-03-11 Minoru NAKAMURA <nminoru@nminoru.jp>
 
@@ -15,7 +19,7 @@
            * Fix comparison between no masked PSNs. PSN compare must use get_psn_diff().
            * In RC service, a successful completion postpones local ACK timeout of all send WQEs in the waiting list.
              It avoids happening timeout on the situation of outstanding RDMA READ requests.
-           * Add a flow control that the requester side sets the internal maximum number of outstanding RDMA READs & Atomic operations to 1 when a RDMA READ request is resend by local ACK timeout.
+           * Add a new flow control mechanism that the requester side sets the internal maximum number of outstanding RDMA READs & Atomic operations to 1 when a RDMA READ request is resend by local ACK timeout.
            * Fix bug that check outstanding RDMA READs & Atomic operations exceed max_rd_atomic before a retired RDMA READ request remove previous RDMA READs.
            * Enable to specify kthread's priority
            * Expand the default size of socket buffer to 16MiB

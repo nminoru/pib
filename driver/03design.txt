@@ -24,19 +24,18 @@
 ・HCA & switch エミュレーション
 
    pib の HCA エミュレーションは IB の定義するパケットを UDP パケットとして送受信する。
-   # CRC がない。Credit-based flow control のためのフィールドや MSN が
+   # CRC がない。Credit-based flow control のためのフィールドや MSN もない。
 
    pib のエミュレーションしている HCA 毎に 1 つのスレッドと 1 つの UDP ソケットを作成する。
 
-
-  ・SMP (Direct routing)
+  ・DR SMP                仕様通りの実装。
   ・Unicast               LID が分かれれば直接送信する。
   ・Multicast             easy switch に投げてフォワーディングする。
 
   実機の IB は HCA が接続された物理的なリンクを辿って送信を行うが、pib では通常のユニ
   キャスト通信は easy switch をバイパスして、直接通信相手のポートのソケットへ送信する。
 
-  ただしマルチキャストと Direct routing の SMP MAD は、スイッチ経由で行う。
+  ただしマルチキャストと DR SMP MAD は、pibnetd 経由で行う。
   
 ・MR
 
@@ -77,6 +76,7 @@
     これは QP が RTS または SQD の場合だけ実行する。
 
   - 1回分の送信が完了すれば sending キューのエントリは waiting キューに送る。
+    - ACK/NAK がないまま連続送信が続いた場合、waiting キューに移す。
 
   - QP が Send Drain(SQD) 属性になった場合は、submitted キューにあるのものは sending queue に移さない。
 
@@ -87,5 +87,10 @@
 
 ・輻輳制御
 
-  輻輳制御はまったく未実装である。
+  ・Requester は一定数以上のリクエストパケットを送信した後は、ACK が返るまで送信を停止する。
 
+  ・RDMA READ、Atomic 操作に関しては、いったんリトライがかかると retry_cnt を内部的に最小値にする
+    という輻輳制御が入っている。以降の RDMA READ、Atomic 操作が成功される度に retry_cnt は +1 され
+    る。
+ 
+  ・RDMA READ はもう一つ工夫が必要。
