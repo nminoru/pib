@@ -14,10 +14,23 @@
 #include <rdma/ib_smi.h>
 
 
+enum {
+	PIB_OPCODE_CNP                   = 0x80,
+	PIB_OPCODE_CNP_SEND_NOTIFY       = 0x80
+};
+
+
 /* NAK Codes */
 enum pib_syndrome {
+	/* Major code (bit[7:5]) */
 	PIB_SYND_ACK_CODE                = 0x00, /* ACK                      */
 	PIB_SYND_RNR_NAK_CODE            = 0x20, /* RNR NAK                  */
+	PIB_SYND_NAK_CODE                = 0x60, /* General NAK except RNR   */
+
+	/* Major code mask */
+	PIB_SYND_CODE_MASK		 = 0xE0,
+
+	/* Subcode */
 	PIB_SYND_NAK_CODE_PSN_SEQ_ERR    = 0x60, /* PSN Sequence Error       */
 	PIB_SYND_NAK_CODE_INV_REQ_ERR    = 0x61, /* Invalid Request          */
 	PIB_SYND_NAK_CODE_REM_ACCESS_ERR = 0x62, /* Remote Access Error      */

@@ -360,10 +360,11 @@ const char *pib_get_service_type(int op)
 		return "RD";
 	case IB_OPCODE_UD:
 		return "UD";
+	case PIB_OPCODE_CNP:
+		return "CNP";
 	default:
 		return "UNKNOWN";
 	}
-
 }
 
 

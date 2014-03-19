@@ -138,6 +138,10 @@ void pib_util_flush_qp(struct pib_qp *qp, int send_only)
 	}
 
 	pib_util_reschedule_qp(qp);
+
+	qp->requester.nr_contig_requests = 0;
+	qp->requester.nr_contig_read_acks = 0;
+	qp->responder.nr_contig_read_acks = 0;
 }
 
 
@@ -198,6 +202,10 @@ static int reset_qp(struct pib_qp *qp)
 	reset_qp_attr(qp);
 
 	pib_util_reschedule_qp(qp);
+
+	qp->requester.nr_contig_requests = 0;
+	qp->requester.nr_contig_read_acks = 0;
+	qp->responder.nr_contig_read_acks = 0;
 
 	return count;
 }
@@ -1238,6 +1246,11 @@ void pib_util_free_recv_wqe(struct pib_qp *qp, struct pib_recv_wqe *recv_wqe)
 static void get_ready_to_send(struct pib_dev *dev, struct pib_qp *qp)
 {
 	pib_util_reschedule_qp(qp);
+
+	qp->requester.nr_contig_requests = 0;
+	qp->requester.nr_contig_read_acks = 0;
+	qp->responder.nr_contig_read_acks = 0;
+
 	complete(&dev->thread.completion);
 }
 

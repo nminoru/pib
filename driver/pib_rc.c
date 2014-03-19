@@ -48,7 +48,7 @@ static void push_rdma_read_acknowledge(struct pib_qp *qp, u32 psn, u32 expected_
 static void push_atomic_acknowledge(struct pib_qp *qp, u32 psn, u64 res);
 
 /*
- * Responder: Generating Acknowledge Packets
+ *  Responder: Generating Acknowledge Packets
  */
 static void generate_Normal_or_Atomic_acknowledge(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, struct pib_ack *ack);
 static int generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, struct pib_ack *ack);
@@ -63,6 +63,12 @@ static int process_acknowledge(struct pib_dev *dev, struct pib_qp *qp, struct pi
 static void set_send_wqe_to_error(struct pib_qp *qp, u32 psn, enum ib_wc_status status);
 static int receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
 static int receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32 psn, void *buffer, int size);
+
+/*
+ *  Congestion Notification Packet
+ */
+static void process_cnp_notify_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
+static void receive_cnp_notify(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 
 /*
  *  Helper functions
@@ -84,7 +90,7 @@ static s32 get_psn_diff(u32 psn, u32 based_psn)
 
 static enum pib_syndrome get_resources_not_ready(struct pib_qp *qp)
 {
-	return PIB_SYND_RNR_NAK_CODE | (qp->ib_qp_attr.min_rnr_timer & 0x1F);
+	return PIB_SYND_RNR_NAK_CODE | (qp->ib_qp_attr.min_rnr_timer & ~PIB_SYND_CODE_MASK);
 }
 
 
@@ -158,27 +164,22 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	switch (send_wqe->opcode) {
 
 	case IB_WR_SEND:
-		if (send_wqe->processing.all_packets == 1) {
+		if (send_wqe->processing.all_packets == 1)
 			bth->OpCode = IB_OPCODE_RC_SEND_ONLY;
-			qp->requester.nr_contiguos_packets = 0;
-		} else if (send_wqe->processing.sent_packets == 0) {
+		else if (send_wqe->processing.sent_packets == 0)
 			bth->OpCode = IB_OPCODE_RC_SEND_FIRST;
-			qp->requester.nr_contiguos_packets = 0;
-		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
+		else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1)
 			bth->OpCode = IB_OPCODE_RC_SEND_LAST;
-		} else {
+		else
 			bth->OpCode = IB_OPCODE_RC_SEND_MIDDLE;
-		}
 		goto send_or_rdma_write;
 
 	case IB_WR_SEND_WITH_IMM:
 		if (send_wqe->processing.all_packets == 1) {
 			bth->OpCode = IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE;
 			with_imm = 1;
-			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.sent_packets == 0) {
 			bth->OpCode = IB_OPCODE_RC_SEND_FIRST;
-			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
 			bth->OpCode = IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE;
 			with_imm = 1;
@@ -190,11 +191,9 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 		if (send_wqe->processing.all_packets == 1) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_ONLY;
 			with_reth = 1;
-			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.sent_packets == 0) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_FIRST;
 			with_reth = 1;
-			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1)
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_LAST;
 		else
@@ -206,11 +205,9 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_ONLY_WITH_IMMEDIATE;
 			with_reth = 1;
 			with_imm  = 1;
-			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.sent_packets == 0) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_FIRST;
 			with_reth = 1;
-			qp->requester.nr_contiguos_packets = 0;
 		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_LAST_WITH_IMMEDIATE;
 			with_imm  = 1;
@@ -225,26 +222,22 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	case IB_WR_RDMA_READ:
 		bth->OpCode = IB_OPCODE_RC_RDMA_READ_REQUEST;
-		qp->requester.nr_contiguos_packets = 0;
 		status = process_RDMA_READ_request(dev, qp, send_wqe, lrh, grh, bth, buffer);
 		break;
 
 	case IB_WR_ATOMIC_CMP_AND_SWP:
 		bth->OpCode = IB_OPCODE_RC_COMPARE_SWAP;
-		qp->requester.nr_contiguos_packets = 0;
 		status = process_Atomic_request(dev, qp, send_wqe, lrh, grh, bth, buffer);
 		break;
 
 	case IB_WR_ATOMIC_FETCH_AND_ADD:
 		bth->OpCode = IB_OPCODE_RC_FETCH_ADD;
-		qp->requester.nr_contiguos_packets = 0;
 		status = process_Atomic_request(dev, qp, send_wqe, lrh, grh, bth, buffer);
 		break;
 
 	default:
 		/* Unsupported Opcode */
 		status = IB_WC_LOC_QP_OP_ERR;
-		qp->requester.nr_contiguos_packets = 0;		
 		break;
 	}
 
@@ -260,7 +253,7 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	if (send_wqe->opcode != IB_WR_RDMA_READ) {
 		send_wqe->processing.sent_packets++;
-		qp->requester.nr_contiguos_packets++;
+		qp->requester.nr_contig_requests++;
 
 		if (send_wqe->processing.sent_packets < send_wqe->processing.all_packets) {
 			/* Send WQE にはまだ送信すべきパケットが残っている。 */
@@ -303,7 +296,7 @@ process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struc
 		reth->rkey   = cpu_to_be32(send_wqe->wr.rdma.rkey);
 		reth->dmalen = cpu_to_be32(send_wqe->total_length);
 
-		qp->requester.nr_contiguos_packets = 0;
+		qp->requester.nr_contig_requests = 0;
 	}
 
 	if (with_imm) {
@@ -447,6 +440,11 @@ void pib_receive_rc_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct
 	if (qp->ib_qp_attr.port_num != port_num)
 		/* silently drop */
 		return;
+
+	if (bth->OpCode == PIB_OPCODE_CNP_SEND_NOTIFY) {
+		receive_cnp_notify(dev, port_num, qp, lrh, grh, bth, buffer, size);
+		return;
+	}
 
 	if (pib_opcode_is_acknowledge(bth->OpCode))
 		/* Acknowledge to requester */
@@ -1121,6 +1119,9 @@ receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_
 
 	push_rdma_read_acknowledge(qp, psn, slot.expected_psn, remote_addr, rkey, dmalen);
 
+	/* RDMA READ ACK の連続送信回数をクリア */ 
+	qp->responder.nr_contig_read_acks = 0;
+
 	return ret;
 
 nak_invalid_request:
@@ -1144,8 +1145,35 @@ push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome)
 {
 	struct pib_ack *ack;
 
+	if (!list_empty(&qp->responder.ack_head)) {
+		struct pib_ack *ack_last;
+
+#ifdef list_last_entry
+		ack_last = list_last_entry(&qp->responder.ack_head, struct pib_ack, list);
+#else
+		ack_last = list_entry(qp->responder.ack_head.prev, struct pib_ack, list);
+#endif
+
+		if (ack_last->type == PIB_ACK_NORMAL) {
+			if (((syndrome & PIB_SYND_CODE_MASK)           == PIB_SYND_RNR_NAK_CODE) &&
+			    ((ack_last->syndrome & PIB_SYND_CODE_MASK) == PIB_SYND_RNR_NAK_CODE)) {
+				/* RNR NAK を二度投げる必要はない */
+				return;
+			}
+
+			if (((syndrome & PIB_SYND_CODE_MASK)           == PIB_SYND_ACK_CODE) &&
+			    ((ack_last->syndrome & PIB_SYND_CODE_MASK) == PIB_SYND_ACK_CODE)) {
+				/* IBA Spec. Vol.1 9.7.5.1.2. Coalesced Acknowledge Messages */
+				ack_last->psn          = psn;
+				ack_last->expected_psn = psn + 1;
+				return;
+			}
+		}
+	}
+
 	ack = kmem_cache_zalloc(pib_ack_cachep, GFP_ATOMIC);
 	if (!ack)
+		/* @todo */
 		return;
 
 	ack->type		= PIB_ACK_NORMAL;
@@ -1154,6 +1182,10 @@ push_acknowledge(struct pib_qp *qp, u32 psn, enum pib_syndrome syndrome)
 	ack->syndrome		= syndrome;
 
 	list_add_tail(&ack->list, &qp->responder.ack_head);
+
+	if ((syndrome & PIB_SYND_CODE_MASK) != PIB_SYND_ACK_CODE)
+		/* RDMA READ ACK の連続送信回数をクリア */ 
+		qp->responder.nr_contig_read_acks = 0;
 }
 
 
@@ -1233,31 +1265,13 @@ int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp)
 	if (!pib_is_recv_ok(qp->state))
 		return 0;
 
-	port_num = qp->ib_qp_attr.port_num;
-	dlid     = qp->ib_qp_attr.ah_attr.dlid;
-
 	if (list_empty(&qp->responder.ack_head))
 		return 0;
 
 	ack = list_first_entry(&qp->responder.ack_head, struct pib_ack, list);
 
-	if (ack->type == PIB_ACK_NORMAL && ((ack->syndrome >> 5) == 0)) {
-		/* IBA Spec. Vol.1 9.7.5.1.2. Coalesced Acknowledge Messages */
-		struct pib_ack ack_tmp;
-
-		do {
-			ack_tmp = *ack;
-
-			list_del_init(&ack->list);
-			kmem_cache_free(pib_ack_cachep, ack);
-
-			ack = list_first_entry(&qp->responder.ack_head, struct pib_ack, list);
-		} while (ack->type == PIB_ACK_NORMAL && ((ack->syndrome >> 5) == 0));
-
-		generate_Normal_or_Atomic_acknowledge(dev, qp, dlid, &ack_tmp);
-
-		return 1;
-	}
+	port_num = qp->ib_qp_attr.port_num;
+	dlid     = qp->ib_qp_attr.ah_attr.dlid;
 
 	/* Other acknowledges */
 
@@ -1273,6 +1287,9 @@ int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp)
 		break;
 
 	case PIB_ACK_RMDA_READ:
+		if (PIB_MAX_CONTIG_READ_ACKS < qp->responder.nr_contig_read_acks)
+			return 0;
+
 		generate_RDMA_READ_response(dev, qp, dlid, ack);
 
 		if (ack->data.rdma_read.offset < ack->data.rdma_read.size)
@@ -1391,6 +1408,9 @@ generate_RDMA_READ_response(struct pib_dev *dev, struct pib_qp *qp, u16 dlid, st
 
 	ack->data.rdma_read.offset += data_size;
 
+	/* RDMA READ ACK の連続送信回数をカウントアップ */ 
+	qp->responder.nr_contig_read_acks++;
+
 	return IB_WC_SUCCESS;
 }
 
@@ -1483,7 +1503,7 @@ receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib
 	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
 	/* レスポンスを受ければ連続送信はクリアできる */
-	qp->requester.nr_contiguos_packets = 0;
+	qp->requester.nr_contig_requests = 0;
 
 	/* response's PSN */
 	psn = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
@@ -1506,17 +1526,18 @@ receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib
 
 	pib_trace_recv_ok(dev, port_num, bth->OpCode, psn, qp->ib_qp.qp_num, syndrome);
 
-	switch (syndrome >> 5) {
-	case 0:
+	switch (syndrome & PIB_SYND_CODE_MASK) {
+
+	case PIB_SYND_ACK_CODE:
 		/* ACK */
 		break;
 
-	case 1:
+	case PIB_SYND_RNR_NAK_CODE:
 		/* RNR NAK */
 		rnr_nak_timeout = pib_get_rnr_nak_time(syndrome & 0x1F);
 		goto retry_send;
 
-	case 3:
+	case PIB_SYND_NAK_CODE:
 		/* NAK */
 		switch (syndrome) {
 
@@ -1821,13 +1842,18 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 		return 0;
 	}
 
-	if (!first_send_wqe || get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.sent_packets, psn) != 0)
+	if (!first_send_wqe || get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.sent_packets, psn) != 0) {
 		/* 前にある Send WQE を飛ばして ACK が返ってきた */
+		/* @todo */
+		pr_err("%s:%u\n", __FILE__, __LINE__);
 		return 0;
+	}
 
-	if (get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.ack_packets, psn) != 0)
+	if (get_psn_diff(send_wqe->processing.based_psn + send_wqe->processing.ack_packets, psn) != 0) {
 		/* 順序通りに PSN を受けること @todo 再送すべき */
+		pr_err("%s:%u\n", __FILE__, __LINE__);
 		return 0;
+	}
 
 	dmalen      = send_wqe->total_length;
 	offset      = send_wqe->processing.ack_packets * 128U << qp->ib_qp_attr.path_mtu;
@@ -1857,6 +1883,12 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 	send_wqe->processing.sent_packets++;
 	send_wqe->processing.ack_packets++;
 
+	/* RDMA READ ACK に対して定期的に CNP を送信する */
+	if ((PIB_MAX_CONTIG_READ_ACKS / 3) < ++qp->requester.nr_contig_read_acks) {
+		process_cnp_notify_request(dev, qp, send_wqe);
+		qp->requester.nr_contig_read_acks = 0;
+	}
+
 	if (send_wqe->processing.sent_packets < send_wqe->processing.all_packets)
 		return 0;
 
@@ -1885,9 +1917,6 @@ receive_RDMA_READ_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, 
 	pib_util_free_send_wqe(qp, send_wqe);
 
 	postpone_local_ack_timeout(qp);
-
-	/* 送信が成功したので RDMA READ & Atomic 操作の同時実行数を +1 する */
-	qp->requester.max_rd_atomic = min_t(u8, qp->requester.max_rd_atomic + 1, qp->ib_qp_attr.max_rd_atomic);
 
 	return 0;
 }
@@ -1969,10 +1998,87 @@ receive_Atomic_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, u32
 
 	postpone_local_ack_timeout(qp);
 
-	/* 送信が成功したので RDMA READ & Atomic 操作の同時実行数を +1 する */
-	qp->requester.max_rd_atomic = min_t(u8, qp->requester.max_rd_atomic + 1, qp->ib_qp_attr.max_rd_atomic);
-
 	return 0;
+}
+
+
+/******************************************************************************/
+/* Congestion Notification Packet                                             */
+/******************************************************************************/
+
+static void
+process_cnp_notify_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe)
+{
+	void *buffer;
+	u8 port_num;
+	struct ib_ah_attr ah_attr;
+	u16 slid, dlid;
+	struct pib_packet_lrh *lrh;
+	struct ib_grh         *grh;
+	struct pib_packet_bth *bth;
+	u32 lnh;
+	u32 psn;
+
+	port_num = qp->ib_qp_attr.port_num;
+	ah_attr  = qp->ib_qp_attr.ah_attr;
+
+	buffer = dev->thread.send_buffer;
+
+	slid = dev->ports[port_num - 1].ib_port_attr.lid;
+	dlid = ah_attr.dlid;
+
+	memset(buffer, 0, sizeof(*lrh) + sizeof(*grh) + sizeof(*bth));
+
+	/* write IB Packet Header (LRH, GRH, BTH) */
+	lrh = (struct pib_packet_lrh*)buffer; 
+	buffer += sizeof(*lrh);
+	if (ah_attr.ah_flags & IB_AH_GRH) {
+		grh = (struct ib_grh*)buffer;
+		pib_fill_grh(dev, port_num, grh, &ah_attr.grh);
+		buffer += sizeof(*grh);
+		lnh = 0x3;
+	} else {
+		grh = NULL;
+		lnh = 0x2;
+	}
+	bth = (struct pib_packet_bth*)buffer;
+	buffer += sizeof(*bth);
+
+	lrh->sl_rsv_lnh = (ah_attr.sl << 4) | lnh; /* Transport: IBA & Next Header: BTH */
+	lrh->dlid   = cpu_to_be16(dlid);
+	lrh->slid   = cpu_to_be16(slid);
+
+	pib_packet_lrh_set_pktlen(lrh, (buffer - dev->thread.send_buffer + 4) / 4); /* add ICRC size */
+
+	psn = send_wqe->processing.based_psn + send_wqe->processing.sent_packets;
+
+	bth->OpCode = PIB_OPCODE_CNP_SEND_NOTIFY;
+	bth->pkey   = cpu_to_be16(qp->ib_qp_attr.pkey_index);
+	bth->destQP = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
+	bth->psn    = cpu_to_be32(qp->responder.psn & PIB_PSN_MASK); /* A-bit is 0 */
+
+	dev->thread.port_num	= port_num;
+	dev->thread.slid	= slid;
+	dev->thread.dlid	= dlid;
+	dev->thread.src_qp_num	= qp->ib_qp.qp_num;
+	dev->thread.trace_id    = send_wqe->trace_id;
+	dev->thread.ready_to_send = 1;
+}
+
+
+static void
+receive_cnp_notify(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size)
+{
+	int OpCode;
+	u32 psn;
+
+	OpCode = bth->OpCode;
+	psn    = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
+
+	pib_trace_recv_ok(dev, port_num, OpCode, psn, qp->ib_qp.qp_num, size);
+
+	/* RDMA READ ACK の連続送信回数をクリア */ 
+	qp->responder.nr_contig_read_acks = 0;
 }
 
 

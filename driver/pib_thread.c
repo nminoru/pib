@@ -379,9 +379,6 @@ restart:
 
 	pib_trace_retry(dev, qp->ib_qp_attr.port_num, send_wqe);
 
-	/* Local ACK timer のリトライが発生した場合には、max_rd_atomic を最小にする */
-	qp->requester.max_rd_atomic = min_t(u8, 1, qp->ib_qp_attr.max_rd_atomic);
-
 	send_wqe->processing.retry_cnt--;
 	send_wqe->processing.local_ack_time = now + PIB_SCHED_TIMEOUT;
 
@@ -423,7 +420,7 @@ first_sending_wsqe:
 	/*
 	 *  SEND & RDMA WRITE が連続送信の制限に引掛る場合は、一時停止
 	 */
-	if (PIB_MAX_CONTIGUOUS_PACKETS < qp->requester.nr_contiguos_packets)
+	if (PIB_MAX_CONTIG_REQUESTS < qp->requester.nr_contig_requests)
 		goto done;
 
 	/*
@@ -922,7 +919,7 @@ silently_drop:
 
 
 /******************************************************************************/
-/*                                                                            */
+/* Raw Packet                                                                 */
 /******************************************************************************/
 
 static void connect_pibnetd(struct pib_dev *dev, u8 port_num)
@@ -1059,7 +1056,8 @@ void pib_util_reschedule_qp(struct pib_qp *qp)
 	schedule_time = now + PIB_SCHED_TIMEOUT;
 
 	if ((qp->qp_type == IB_QPT_RC) && pib_is_recv_ok(qp->state))
-		if (!list_empty(&qp->responder.ack_head)) {
+		if (!list_empty(&qp->responder.ack_head) &&
+		    (qp->responder.nr_contig_read_acks < PIB_MAX_CONTIG_READ_ACKS)) {
 			schedule_time = now;
 			goto skip;
 		}
@@ -1081,7 +1079,7 @@ void pib_util_reschedule_qp(struct pib_qp *qp)
 			if (!list_empty(&qp->requester.waiting_swqe_head))
 				goto skip;
 
-		if (PIB_MAX_CONTIGUOUS_PACKETS < qp->requester.nr_contiguos_packets)
+		if (PIB_MAX_CONTIG_REQUESTS < qp->requester.nr_contig_requests)
 			goto skip;
 
 		if (time_before(send_wqe->processing.schedule_time, schedule_time))

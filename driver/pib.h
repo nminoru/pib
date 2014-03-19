@@ -57,10 +57,19 @@
  *  Linux kernels less than 3.13 have the bug that ib_uverbs_post_send() in
  *  uverbs_cmd.c don't set imm_data from ib_uverbs_send_wr to ib_send_wr when 
  *  sending UD messages.
+ *
+ *  This hack avoids the bug by propagating imm_data via the special s/g entry
+ *  with the L_Key as IMM_DATA_LKEY. pib.ko shows the value of IMM_DATA_LKEY
+ *  through /sys/class/infiniband/pib_%d/imm_data_lkey for libpib-rdmav2.so.
  */
 #define PIB_HACK_IMM_DATA_LKEY
 #endif
 
+/*
+ *  ib_ipoib.ko has the bug that leaks AH objects when IB device is unregistered.
+ *
+ *  This hack forces to deallocate remaining AH objects.
+ */
 #define PIB_HACK_IPOIB_LEAK_AH
 
 #define PIB_LOCAL_DMA_LKEY		(0)
@@ -113,7 +122,8 @@
 #define PIB_LINK_WIDTH_SUPPORTED	(IB_WIDTH_1X | IB_WIDTH_4X | IB_WIDTH_8X | IB_WIDTH_12X)
 #define PIB_LINK_SPEED_SUPPORTED	(7) /* 2.5 or 5.0 or 10.0 Gbps */
 
-#define PIB_MAX_CONTIGUOUS_PACKETS	(16)
+#define PIB_MAX_CONTIG_REQUESTS		(64)
+#define PIB_MAX_CONTIG_READ_ACKS	(64)
 	
 
 #define pib_debug(fmt, args...)					\
@@ -716,7 +726,8 @@ struct pib_qp {
 
 		void		       *inline_data_buffer;
 
-		int 			nr_contiguos_packets; /* for SEND & RDMA WRITE */
+		int 			nr_contig_requests; /* 連続して RC Request を送信した回数 */
+		int 			nr_contig_read_acks; /* 連続して RDMA READ ACK を受信した回数  */
 	} requester;
 
 	/* responder side */
@@ -743,6 +754,8 @@ struct pib_qp {
 
 		int			slot_index;
 		struct pib_rd_atom_slot slots[PIB_MAX_RD_ATOM];
+
+		int 			nr_contig_read_acks; /* 連続して RDMA READ ACK を送信した回数  */
 	} responder;
 
 	struct list_head	mcast_head;
