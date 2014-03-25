@@ -27,12 +27,16 @@
 #include "pibnetd_packet.h"
 
 
+struct pib_control pib_control;
 uint64_t pib_hca_guid_base;
 
 static int verbose;
+static int is_daemon;
 static uint32_t port_num = PIB_NETD_DEFAULT_PORT;
 
-static struct pib_switch *init_switch(void);
+static void init_control(struct pib_control *control);
+static void finish_control(struct pib_control *control);
+static struct pib_switch *init_switch(struct pib_control *control);
 static void finish_switch(struct pib_switch *sw);
 static void construct_hca_guid_base(int sockfd);
 static void do_work(struct pib_switch *sw);
@@ -51,16 +55,41 @@ static int pib_is_permissive_lid(uint16_t lid);
 static void parse_sockaddr(struct sockaddr *sockaddr, char *buffer, size_t size, socklen_t *socklen_p);
 
 
+static void usage(void)
+{
+	printf(
+		PIB_SWITCH_DESCRIPTION " v" PIB_DRIVER_VERSION "\n"
+		"Usage: pibnetd [options]\n"
+		"Options:\n"
+		"\n"
+		"--daemon, -B\n"
+		"\tRun in daemon mode\n"
+		"\n"
+		"--port, -p=<port-number>\n"
+		"\tSpecify the number of UDP (default: %u)\n"
+		"\n"
+		"--verbose, -v\n"
+		"\tIncrease the log verbosity level.\n"
+		"\n"
+		"--help, -h\n"
+		"\tDisplay this usage\n",
+
+		PIB_NETD_DEFAULT_PORT);
+}
+
+
 int main(int argc, char** argv)
 {
 	struct option longopts[] = {
 		{"port",     required_argument, NULL, 'p' },
+		{"daemon",   no_argument,       NULL, 'B' },
 		{"verbose",  no_argument,       NULL, 'v' },
+		{"hep",      no_argument,       NULL, 'h' },
 	};
 
 	int ch, option_index;
 
-	while ((ch = getopt_long(argc, argv, "p:v", longopts, &option_index)) != -1) {
+	while ((ch = getopt_long(argc, argv, "p:Bhv", longopts, &option_index)) != -1) {
 		switch (ch) {
 
 		case 'p':
@@ -68,60 +97,88 @@ int main(int argc, char** argv)
 			assert((0 < port_num) && (port_num < 65536));
 			break;
 
+		case 'B':
+			is_daemon = 1;
+			break;
+
 		case 'v': // verbose
 			verbose = 1;
 			break;
 
+		case 'h':
 		default:
-			break;
+			usage();
+			exit(EXIT_FAILURE);
 		}
 	}
 
+	init_control(&pib_control);
+
 	struct pib_switch *sw;
-	sw = init_switch();
+	sw = init_switch(&pib_control);
 	pib_report_info("pibnetd: " PIB_SWITCH_DESCRIPTION " v" PIB_DRIVER_VERSION);
+
+	if (is_daemon)
+		daemon(0, 0);
+
 	do_work(sw);
 
 	return 0;
 }
 
 
-static struct pib_switch *init_switch(void)
+static void init_control(struct pib_control *control)
 {
-	int i, j, ret;
+	int ret;
 	struct sockaddr_in sockaddr;
-	struct pib_switch *sw;
 
-	sw = calloc(1, sizeof(*sw));
-	assert(sw);
+	memset(control, 0, sizeof(*control));
 
-	sw->buffer = malloc(PIB_PACKET_BUFFER);
-	assert(sw->buffer);
+	control->buffer = malloc(PIB_PACKET_BUFFER);
+	assert(control->buffer);
 
-	sw->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (sw->sockfd < 0) {
+	control->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (control->sockfd < 0) {
 		int eno = errno;
 		pib_report_err("pibnetd: socket(ret=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
 
-	construct_hca_guid_base(sw->sockfd);
+	construct_hca_guid_base(control->sockfd);
 
 	memset(&sockaddr, 0, sizeof(sockaddr));
 	sockaddr.sin_family      = AF_INET;
 	sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	sockaddr.sin_port        = htons(port_num);
 
-	ret = bind(sw->sockfd, (struct sockaddr*)&sockaddr, (socklen_t)sizeof(sockaddr));
+	ret = bind(control->sockfd, (struct sockaddr*)&sockaddr, (socklen_t)sizeof(sockaddr));
 	if (ret != 0) {
 		int eno  = errno;
 		pib_report_err("pibnetd: bind(ret=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
 
-	sw->sockaddr = calloc(1, sizeof(sockaddr));
+	control->sockaddr = calloc(1, sizeof(sockaddr));
 
-	memcpy(sw->sockaddr, &sockaddr, sizeof(sockaddr));
+	memcpy(control->sockaddr, &sockaddr, sizeof(sockaddr));
+}
+
+
+static void finish_control(struct pib_control *control)
+{
+	close(control->sockfd);
+}
+
+
+static struct pib_switch *init_switch(struct pib_control *control)
+{
+	int i, j;
+	struct pib_switch *sw;
+
+	sw = calloc(1, sizeof(*sw));
+	assert(sw);
+
+	sw->control = control;
 
 	sw->port_cnt = PIB_MAX_PORTS;
 
@@ -179,7 +236,6 @@ static struct pib_switch *init_switch(void)
 
 static void finish_switch(struct pib_switch *sw)
 {
-	close(sw->sockfd);
 }
 
 
@@ -241,10 +297,10 @@ static void do_work(struct pib_switch *sw)
 		fd_set rfds;
 
 		FD_ZERO(&rfds);
-		FD_SET(sw->sockfd, &rfds);
+		FD_SET(sw->control->sockfd, &rfds);
 
-		if (max < sw->sockfd + 1)
-			max = sw->sockfd + 1;
+		if (max < sw->control->sockfd + 1)
+			max = sw->control->sockfd + 1;
     
 		struct timeval tv;
 		tv.tv_sec  = 10;
@@ -259,7 +315,7 @@ static void do_work(struct pib_switch *sw)
 			pib_report_err("pibnetd: select(errno=%d)", eno);
 			exit(EXIT_FAILURE);
 		} else if (ret > 0) {
-			if (FD_ISSET(sw->sockfd, &rfds))
+			if (FD_ISSET(sw->control->sockfd, &rfds))
 				receive_packet(sw);
 		}
 	}
@@ -275,7 +331,7 @@ static void receive_packet(struct pib_switch *sw)
 	memset(&msghdr,   0, sizeof(msghdr));
 	memset(&sockaddr, 0, sizeof(sockaddr));
 
-	iovec.iov_base     = sw->buffer;
+	iovec.iov_base     = sw->control->buffer;
 	iovec.iov_len      = PIB_PACKET_BUFFER;
 
 	msghdr.msg_name    = &sockaddr;
@@ -286,7 +342,7 @@ static void receive_packet(struct pib_switch *sw)
 	ssize_t size, packet_size;
 
 retry:
-	size = recvmsg(sw->sockfd, &msghdr, 0);
+	size = recvmsg(sw->control->sockfd, &msghdr, 0);
 	if (size < 0) {
 		int eno  = errno;
 		if (eno == EINTR)
@@ -301,14 +357,14 @@ retry:
 	void *buffer;
 	union pib_packet_footer *footer;
 
-	buffer = sw->buffer;
+	buffer = sw->control->buffer;
 
 	if (size < sizeof(*footer)) {
 		pib_report_debug("pibnetd: no packet footer(size=%u)", size);
 		return;
 	}
 
-	footer = sw->buffer + size - sizeof(*footer);
+	footer = sw->control->buffer + size - sizeof(*footer);
 
 	size -= sizeof(*footer);
 
@@ -481,7 +537,7 @@ static void resend_ack(struct pib_switch *sw, int size, uint8_t port_num)
 	memset(&msghdr, 0, sizeof(msghdr));
 	memset(&iovec,  0, sizeof(iovec));
 
-	iovec.iov_base     = sw->buffer;
+	iovec.iov_base     = sw->control->buffer;
 	iovec.iov_len      = sizeof(struct pib_packet_lrh) + size + sizeof(union pib_packet_footer);
 				
 	msghdr.msg_name    = sw->ports[port_num].sockaddr;
@@ -491,7 +547,7 @@ static void resend_ack(struct pib_switch *sw, int size, uint8_t port_num)
 
 	int ret;
 retry:
-	ret = sendmsg(sw->sockfd, &msghdr, 0);
+	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno  = errno;
 		if (eno == EINTR)
@@ -664,7 +720,7 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 send_packet:
 	memset(&msghdr,   0, sizeof(msghdr));
 
-	iovec.iov_base	   = sw->buffer;
+	iovec.iov_base	   = sw->control->buffer;
 	iovec.iov_len	   = pib_packet_lrh_get_pktlen(lrh) * 4 + sizeof(union pib_packet_footer);
 
 	msghdr.msg_name    = sw->ports[out_port_num].sockaddr;
@@ -676,7 +732,7 @@ send_packet:
 		return 0;
 
 retry:
-	ret = sendmsg(sw->sockfd, &msghdr, 0);
+	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno = errno;
 		if (eno == EINTR)
@@ -712,7 +768,7 @@ static void relay_unicast_packet(struct pib_switch *sw, uint8_t in_port_num, uin
 
 	memset(&msghdr,   0, sizeof(msghdr));
 
-	iovec.iov_base	   = sw->buffer;
+	iovec.iov_base	   = sw->control->buffer;
 	iovec.iov_len	   = size + sizeof(union pib_packet_footer);
 
 	msghdr.msg_name    = sw->ports[out_port_num].sockaddr;
@@ -721,7 +777,7 @@ static void relay_unicast_packet(struct pib_switch *sw, uint8_t in_port_num, uin
 	msghdr.msg_iovlen  = 1;
 
 retry:
-	ret = sendmsg(sw->sockfd, &msghdr, 0);
+	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno = errno;
 		if (eno == EINTR)
@@ -759,7 +815,7 @@ static void relay_multicast_packet(struct pib_switch *sw, uint8_t in_port_num, u
 
 		memset(&msghdr,   0, sizeof(msghdr));
 
-		iovec.iov_base	   = sw->buffer;
+		iovec.iov_base	   = sw->control->buffer;
 		iovec.iov_len	   = size + sizeof(union pib_packet_footer);
 
 		msghdr.msg_name    = sw->ports[out_port_num].sockaddr;
@@ -768,7 +824,7 @@ static void relay_multicast_packet(struct pib_switch *sw, uint8_t in_port_num, u
 		msghdr.msg_iovlen  = 1;
 
 	retry:
-		ret = sendmsg(sw->sockfd, &msghdr, 0);
+		ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 		if (ret < 0) {
 			int eno = errno;
 			if (eno == EINTR)
@@ -871,7 +927,7 @@ static void send_trap_ntc128(struct pib_switch *sw)
 		struct pib_packet_bth  bth;
 		struct pib_packet_deth deth;
 		struct pib_smp         smp;
-	} *packet = sw->buffer;
+	} *packet = sw->control->buffer;
 
 	memset(packet, 0, sizeof(*packet));
 
@@ -910,7 +966,7 @@ static void send_trap_ntc128(struct pib_switch *sw)
 	memset(&msghdr, 0, sizeof(msghdr));
 	memset(&iovec,  0, sizeof(iovec));
 
-	iovec.iov_base     = sw->buffer;
+	iovec.iov_base     = sw->control->buffer;
 	iovec.iov_len      = sizeof(*packet) + sizeof(union pib_packet_footer);
 				
 	msghdr.msg_name    = sw->ports[out_port_num].sockaddr;
@@ -923,7 +979,7 @@ static void send_trap_ntc128(struct pib_switch *sw)
 
 	int ret;
 retry:
-	ret = sendmsg(sw->sockfd, &msghdr, 0);
+	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno  = errno;
 		if (eno == EINTR)

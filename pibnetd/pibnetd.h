@@ -207,11 +207,15 @@ struct pib_port_bits {
 };
 
 
-struct pib_switch {
+struct pib_control {
 	void                   *buffer; /* buffer for sendmsg/recvmsg */
 	int 			sockfd;
 	struct sockaddr        *sockaddr;
+};
 
+
+struct pib_switch {
+	struct pib_control     *control;
 	uint8_t                 port_cnt; /* include port 0 */
 	struct pib_port	        ports[PIB_MAX_PORTS];
 
@@ -227,6 +231,7 @@ struct pib_switch {
 };
 
 
+extern struct pib_control pib_control;
 extern uint64_t pib_hca_guid_base;
 
 struct pib_smp;
