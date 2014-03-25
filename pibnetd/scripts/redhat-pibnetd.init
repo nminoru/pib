@@ -1,0 +1,225 @@
+#!/bin/bash
+#
+# Bring up/down pibnetd
+#
+# chkconfig: - 15 84
+# description: Pseudo InfiniBand HCA switch
+#
+### BEGIN INIT INFO
+# Provides:       pibnetd
+### END INIT INFO
+#
+# Copyright (c) 2014 Minoru NAKAMURA <nminoru@nminoru.jp>
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+# processname: ${exec_prefix}/sbin/pibnetd
+# config: ${prefix}/etc/sysconfig/pibnetd
+# pidfile: /var/run/pibnetd.pid
+
+prefix=/usr/local
+exec_prefix=${prefix}
+
+. /etc/rc.d/init.d/functions
+
+CONFIG=${prefix}/etc/sysconfig/pibnetd
+if [ -f $CONFIG ]; then
+    . $CONFIG
+fi
+
+prog=${exec_prefix}/sbin/pibnetd
+bin=${prog##*/}
+
+ACTION=$1
+
+# Setting pibnetd start parameters
+PID_FILE=/var/run/${bin}.pid
+touch $PID_FILE
+
+#########################################################################
+
+start()
+{
+    local OSM_PID=
+
+    pid=""
+
+    if [ -f $PID_FILE ]; then
+            local line p
+            read line < $PID_FILE
+            for p in $line ; do
+                    [ -z "${p//[0-9]/}" -a -d "/proc/$p" ] && pid="$pid $p"
+            done
+    fi
+
+    if [ -z "$pid" ]; then
+        pid=`pidof -o $$ -o $PPID -o %PPID -x $bin`
+    fi
+
+    if [ -n "${pid:-}" ] ; then
+        echo $"${bin} (pid $pid) is already running..."
+    else
+
+        # Start pibnetd
+	echo -n "Starting Pseudo InfiniBand HCA switch"
+        $prog --daemon ${OPTIONS} > /dev/null
+        cnt=0; alive=0
+        while [ $cnt -lt 6 -a $alive -ne 1 ]; do
+		echo -n ".";
+		sleep 1
+		alive=0
+                OSM_PID=`pidof $prog`
+                if [ "$OSM_PID" != "" ]; then
+                        alive=1
+                fi
+		let cnt++;
+	done
+
+        echo $OSM_PID > $PID_FILE
+        checkpid $OSM_PID
+        RC=$?
+        [ $RC -eq 0 ] && echo_success || echo_failure
+        [ $RC -eq 0 ] && touch /var/lock/subsys/pibnetd
+	echo
+
+    fi
+return $RC
+}
+
+stop()
+{
+    local pid=
+    local pid1=
+    local pid2=
+
+    if [ -f $PID_FILE ]; then
+            local line p
+            read line < $PID_FILE
+            for p in $line ; do
+                    [ -z "${p//[0-9]/}" -a -d "/proc/$p" ] && pid1="$pid1 $p"
+            done
+    fi
+
+    pid2=`pidof -o $$ -o $PPID -o %PPID -x $bin`
+
+    pid=`echo "$pid1 $pid2" | sed -e 's/\ /\n/g' | sort -n | uniq | sed -e 's/\n/\ /g'`
+
+    if [ -n "${pid:-}" ] ; then
+        # Kill pibnetd
+	echo -n "Stopping Pseudo InfiniBand HCA switch"
+        kill -15 $pid > /dev/null 2>&1
+		cnt=0; alive=1
+        while [ $cnt -lt 6 -a $alive -ne 0 ]; do
+		echo -n ".";
+		alive=0
+		for p in $pid; do
+			if checkpid $p ; then alive=1; echo -n "-"; fi
+		done
+		let cnt++;
+		sleep $alive
+	done
+
+        for p in $pid
+        do
+            while checkpid $p ; do
+                kill -KILL $p > /dev/null 2>&1
+                echo -n "+"
+                sleep 1
+            done
+        done
+        checkpid $pid
+        RC=$?
+        [ $RC -eq 0 ] && echo_failure || echo_success
+	echo
+        RC=$((! $RC))
+    else
+	echo -n "Stopping Pseudo InfiniBand HCA switch"
+        echo_failure
+	echo
+        RC=1
+    fi
+
+    # Remove pid file if any.
+    rm -f $PID_FILE
+    rm -f /var/lock/subsys/pibnetd
+    return $RC
+}
+
+status()
+{
+    local pid
+
+    # First try "pidof"
+    pid=`pidof -o $$ -o $PPID -o %PPID -x ${bin}`
+    if [ -n "$pid" ]; then
+            echo $"${bin} (pid $pid) is running..."
+            return 0
+    fi
+
+     # Next try "/var/run/pibnetd.pid" files
+     if [ -f $PID_FILE ] ; then
+             read pid < $PID_FILE
+             if [ -n "$pid" ]; then
+                     echo $"${bin} dead but pid file $PID_FILE exists"
+                     return 1
+             fi
+     fi
+     echo $"${bin} is stopped"
+     return 3
+}
+
+
+
+case $ACTION in
+	start)
+                start
+		;;
+	stop)
+		stop
+		;;
+	restart)
+		stop
+                start
+		;;
+	status)
+		status
+		;;
+	condrestart)
+		pid=`pidof -o $$ -o $PPID -o %PPID -x $bin`
+		if [ -n "$pid" ]; then
+			stop
+			sleep 1
+			start
+		fi
+		;;
+	*)
+		echo
+		echo "Usage: `basename $0` {start|stop|restart|status}"
+		echo
+		exit 1
+		;;
+esac
+
+RC=$?
+exit $RC
