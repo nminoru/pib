@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <getopt.h>
+#include <signal.h>
 #include <inttypes.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -33,6 +34,7 @@ uint64_t pib_hca_guid_base;
 static int verbose;
 static int is_daemon;
 static uint32_t port_num = PIB_NETD_DEFAULT_PORT;
+static sig_atomic_t signal_flags;
 
 static void init_control(struct pib_control *control);
 static void finish_control(struct pib_control *control);
@@ -75,6 +77,34 @@ static void usage(void)
 		"\tDisplay this usage\n",
 
 		PIB_NETD_DEFAULT_PORT);
+}
+
+
+static void signal_handler(int signum, siginfo_t *info, void * data)
+{
+	signal_flags |= (1U << signum);
+}
+
+
+static void setup_signal_mask(void)
+{
+	struct sigaction act;
+
+	memset(&act, 0, sizeof(act));
+
+	act.sa_flags     = SA_SIGINFO;
+	act.sa_sigaction = signal_handler;
+
+	sigemptyset(&act.sa_mask);
+	sigaddset(&act.sa_mask, SIGTERM);
+	sigaddset(&act.sa_mask, SIGHUP);
+	sigaddset(&act.sa_mask, SIGINT);
+	sigaddset(&act.sa_mask, SIGQUIT);
+
+	sigaction(SIGTERM, &act, NULL);
+	sigaction(SIGHUP,  &act, NULL);
+	sigaction(SIGINT,  &act, NULL);
+	sigaction(SIGQUIT, &act, NULL);
 }
 
 
@@ -121,7 +151,11 @@ int main(int argc, char** argv)
 	if (is_daemon)
 		daemon(0, 0);
 
+	setup_signal_mask();
+
 	do_work(sw);
+
+	pib_report_info("pibnetd: stop");
 
 	return 0;
 }
@@ -292,7 +326,11 @@ done:
 
 static void do_work(struct pib_switch *sw)
 {
-	for (;;) {
+	sigset_t empty_mask;
+
+	sigemptyset(&empty_mask);
+
+	while (!signal_flags) {
 		int ret, max = 0;
 		fd_set rfds;
 
@@ -302,16 +340,19 @@ static void do_work(struct pib_switch *sw)
 		if (max < sw->control->sockfd + 1)
 			max = sw->control->sockfd + 1;
     
-		struct timeval tv;
+		struct timespec tv;
 		tv.tv_sec  = 10;
-		tv.tv_usec = 0;
+		tv.tv_nsec =  0;
 
 	retry:
-		ret = select(max, &rfds, NULL, NULL, &tv);
+		ret = pselect(max, &rfds, NULL, NULL, &tv, &empty_mask);
 		if (ret < 0) {
 			int eno = errno;
-			if (eno == EINTR)
+			if (eno == EINTR) {
+				if (signal_flags)
+					break;
 				goto retry;
+			}
 			pib_report_err("pibnetd: select(errno=%d)", eno);
 			exit(EXIT_FAILURE);
 		} else if (ret > 0) {
@@ -345,8 +386,11 @@ retry:
 	size = recvmsg(sw->control->sockfd, &msghdr, 0);
 	if (size < 0) {
 		int eno  = errno;
-		if (eno == EINTR)
+		if (eno == EINTR) {
+			if (signal_flags)
+				return;
 			goto retry;
+		}
 		pib_report_err("pibnetd: recvmsg(errno=%d)", eno);
 		exit(EXIT_FAILURE);
 		return;
@@ -550,8 +594,11 @@ retry:
 	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno  = errno;
-		if (eno == EINTR)
+		if (eno == EINTR) {
+			if (signal_flags)
+				return;
 			goto retry;
+		}
 		pib_report_err("pibnetd: sendmsg(errno=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
@@ -735,8 +782,11 @@ retry:
 	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno = errno;
-		if (eno == EINTR)
+		if (eno == EINTR) {
+			if (signal_flags)
+				return 0;
 			goto retry;
+		}
 		pib_report_err("pibnetd: sendmsg(ret=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
@@ -780,8 +830,11 @@ retry:
 	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno = errno;
-		if (eno == EINTR)
+		if (eno == EINTR) {
+			if (signal_flags)
+				return;
 			goto retry;
+		}
 		pib_report_err("pibnetd: sendmsg(ret=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
@@ -827,8 +880,11 @@ static void relay_multicast_packet(struct pib_switch *sw, uint8_t in_port_num, u
 		ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 		if (ret < 0) {
 			int eno = errno;
-			if (eno == EINTR)
+			if (eno == EINTR) {
+				if (signal_flags)
+					return;
 				goto retry;
+			}
 			pib_report_err("pibnetd: sendmsg(ret=%d)", eno);
 			exit(EXIT_FAILURE);
 		}
@@ -982,8 +1038,11 @@ retry:
 	ret = sendmsg(sw->control->sockfd, &msghdr, 0);
 	if (ret < 0) {
 		int eno  = errno;
-		if (eno == EINTR)
+		if (eno == EINTR) {
+			if (signal_flags)
+				return;
 			goto retry;
+		}
 		pib_report_err("pibnetd: sendmsg(errno=%d)", eno);
 		exit(EXIT_FAILURE);
 	}
