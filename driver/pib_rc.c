@@ -1507,21 +1507,15 @@ receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib
 	struct pib_packet_aeth *aeth;
 	struct pib_send_wqe *send_wqe, *next_send_wqe;
 
+	if (size < sizeof(*aeth))
+		/* @todo これはエラーにとらないでいいか？ */
+		return 0;
+
 	/* レスポンスを受ければ連続送信はクリアできる */
 	qp->requester.nr_contig_requests = 0;
 
 	/* response's PSN */
 	psn = be32_to_cpu(bth->psn) & PIB_PSN_MASK;
-
-	if (bth->OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE) {
-		/* RDMA READ response Middle packets have no AETH. */
-		pib_trace_recv_ok(dev, port_num, bth->OpCode, psn, qp->ib_qp.qp_num, syndrome);
-		goto switch_OpCode;
-	}
-
-	if (size < sizeof(*aeth))
-		/* @todo これはエラーにとらないでいいか？ */
-		return 0;
 
 	aeth       = (struct pib_packet_aeth*)buffer;
 	buffer    += sizeof(*aeth);
@@ -1530,6 +1524,10 @@ receive_response(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib
 	syndrome =  be32_to_cpu(aeth->syndrome_msn) >> 24;
 
 	pib_trace_recv_ok(dev, port_num, bth->OpCode, psn, qp->ib_qp.qp_num, syndrome);
+
+	if (bth->OpCode == IB_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE)
+		/* RDMA READ response Middle packets have no AETH. */
+		goto switch_OpCode;
 
 	switch (syndrome & PIB_SYND_CODE_MASK) {
 
