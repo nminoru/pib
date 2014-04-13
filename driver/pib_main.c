@@ -14,6 +14,7 @@
 #include <linux/netdevice.h>
 #include <linux/inetdevice.h>
 #include <linux/rtnetlink.h>
+#include <linux/inet.h>
 #include <rdma/ib_user_verbs.h>
 
 #include "pib.h"
