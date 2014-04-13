@@ -866,6 +866,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u1
 	}
 
 	if (qp == NULL) {
+		dev->ports[port_num - 1].ib_port_attr.qkey_viol_cntr++;
 		spin_unlock_irqrestore(&dev->lock, flags);
 		pib_debug("pib: drop packet: not found qp (qpn=0x%06x)\n", dest_qp_num);
 		goto silently_drop;
