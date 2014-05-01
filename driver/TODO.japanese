@@ -1,9 +1,10 @@
+- Memory Windows
+
 - RDMA READ の outstanding が requester と responder で違わないか確認せよ 
 
 - Perf Mgt (あるいは別の機能)に Local ACK timeout 情報等を挿入する。
 
 - ポート属性の
--- bad_pkey_cntr と qkey_viol_cntr を記録。
 -- subnet_timeout、init_type_reply
 
 - pib.h のコメントをもっと書く。
@@ -26,8 +27,6 @@
 - infiniband-diags のコマンドで落ちないようにする。
 
 - LOCAL_DMA_LKEY 対応を
-
-- ポートが ACTIVE でない場合、MAD 以外のパケットは破棄する処理。
 
 - RNR タイマーの見直し。
 

@@ -76,6 +76,12 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 		goto completion_error;
 	}
 
+	/* Check P_Key index */
+	if (PIB_PKEY_TABLE_LEN <= send_wqe->wr.ud.pkey_index) {
+		status = IB_WC_LOC_QP_OP_ERR;
+		goto completion_error;
+	}
+
 	if (qp->ib_qp.pd != ah->ib_ah.pd) {
 		/* @todo PIB_BEHAVIOR_AH_PD_VIOLATOIN_COMP_ERR が立っていればここにはこない */
 		status = IB_WC_LOC_QP_OP_ERR;
@@ -130,7 +136,7 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	lrh->dlid   = cpu_to_be16(ah->ib_ah_attr.dlid);
 	lrh->slid   = cpu_to_be16(slid);
 
-	bth->pkey   = cpu_to_be16(send_wqe->wr.ud.pkey_index); /* @todo from QP for UD/RC QP */
+	bth->pkey   = dev->ports[port_num - 1].pkey_table[send_wqe->wr.ud.pkey_index];
 	bth->destQP = cpu_to_be32(send_wqe->wr.ud.remote_qpn);
 	bth->psn    = cpu_to_be32(qp->ib_qp_attr.sq_psn & PIB_PSN_MASK); /* A-bit is 0 */
 

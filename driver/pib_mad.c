@@ -736,7 +736,7 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 
  	spin_lock_irqsave(&dev->lock, flags);
 	for (i=0; i<PIB_PKEY_PER_BLOCK; i++)
-		pkey_table[i] = cpu_to_be16(dev->ports[in_port_num - 1].pkey_table[i]);
+		pkey_table[i] = dev->ports[in_port_num - 1].pkey_table[i];
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 bail:
@@ -765,19 +765,19 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_dev *dev, u8 in_po
 
  	spin_lock_irqsave(&dev->lock, flags);
 	for (i=0; i<PIB_PKEY_PER_BLOCK; i++) {
-		u16 key  = be16_to_cpu(pkey_table[i]);
-		u16 okey = dev->ports[in_port_num - 1].pkey_table[i];
+		__be16 nkey = pkey_table[i];
+		__be16 okey = dev->ports[in_port_num - 1].pkey_table[i];
 
-		if (key == okey)
+		if (nkey == okey)
 			continue;
 
-		if (okey & 0x7FFF)
+		if (okey & cpu_to_be16(0x7FFF))
 			changed = 1;
 
-		if (key & 0x7FFF)
+		if (nkey & cpu_to_be16(0x7FFF))
 			changed = 1;
 
-		dev->ports[in_port_num - 1].pkey_table[i] = key;
+		dev->ports[in_port_num - 1].pkey_table[i] = nkey;
 	}
 	spin_unlock_irqrestore(&dev->lock, flags);
 

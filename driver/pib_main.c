@@ -195,7 +195,7 @@ static int pib_query_pkey(struct ib_device *ibdev, u8 port_num, u16 index, u16 *
 	dev = to_pdev(ibdev);
 
 	spin_lock_irqsave(&dev->lock, flags);
-	if (index < PIB_PKEY_PER_BLOCK)
+	if (index < PIB_PKEY_TABLE_LEN)
 		*pkey = be16_to_cpu(dev->ports[port_num - 1].pkey_table[index]);
 	else
 		*pkey = 0;
@@ -663,8 +663,8 @@ static int init_port(struct pib_dev *dev, u8 port_num)
 	port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
 	port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
 
-	for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
-		port->pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
+	for (j=0 ; j < PIB_PKEY_TABLE_LEN ; j++)
+		port->pkey_table[j] = IB_DEFAULT_PKEY_FULL;
 
 	if (pib_multi_host_mode) {
 		port->is_connected = false;

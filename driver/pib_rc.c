@@ -157,7 +157,7 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	psn = send_wqe->processing.based_psn + send_wqe->processing.sent_packets;
 
-	bth->pkey   = cpu_to_be16(qp->ib_qp_attr.pkey_index);
+	bth->pkey   = dev->ports[port_num - 1].pkey_table[qp->ib_qp_attr.pkey_index];
 	bth->destQP = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
 	bth->psn    = cpu_to_be32(psn & PIB_PSN_MASK); /* A-bit is 0 */
 
@@ -1463,7 +1463,7 @@ pack_acknowledge_packet(struct pib_dev *dev, struct pib_qp *qp, int OpCode, u32 
 	lrh->slid       = cpu_to_be16(dev->ports[port_num - 1].ib_port_attr.lid);
 
 	bth->OpCode     = OpCode;
-	bth->pkey       = cpu_to_be16(qp->ib_qp_attr.pkey_index);
+	bth->pkey       = dev->ports[port_num - 1].pkey_table[qp->ib_qp_attr.pkey_index];
 	bth->destQP     = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
 	bth->psn        = cpu_to_be32(psn & PIB_PSN_MASK); /* A-bit is 0 */ 
 
@@ -2051,7 +2051,7 @@ process_cnp_notify_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_se
 	psn = send_wqe->processing.based_psn + send_wqe->processing.sent_packets;
 
 	bth->OpCode = PIB_OPCODE_CNP_SEND_NOTIFY;
-	bth->pkey   = cpu_to_be16(qp->ib_qp_attr.pkey_index);
+	bth->pkey   = dev->ports[port_num - 1].pkey_table[qp->ib_qp_attr.pkey_index];
 	bth->destQP = cpu_to_be32(qp->ib_qp_attr.dest_qp_num);
 	bth->psn    = cpu_to_be32(qp->responder.psn & PIB_PSN_MASK); /* A-bit is 0 */
 

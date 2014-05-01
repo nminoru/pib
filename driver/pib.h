@@ -364,7 +364,7 @@ struct pib_port {
 	struct sockaddr        *sockaddr;
 	union ib_gid		gid[PIB_GID_PER_PORT];
 	struct pib_qp	       *qp_info[PIB_MAD_QPS_CORE];
-	u16			pkey_table[PIB_PKEY_TABLE_LEN];
+	__be16			pkey_table[PIB_PKEY_TABLE_LEN];
 
 	struct {
 		enum pib_link_cmd	cmd;

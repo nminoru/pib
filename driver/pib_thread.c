@@ -844,8 +844,11 @@ skip_grh:
 
 static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u16 dlid, u32 dest_qp_num, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size)
 {
+	struct pib_port *port;
 	unsigned long flags;
 	struct pib_qp *qp;
+
+	port = &dev->ports[port_num - 1];
 
 	spin_lock_irqsave(&dev->lock, flags);
 
@@ -853,7 +856,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u1
 
 	case PIB_QP0:
 	case PIB_QP1:
-		qp = dev->ports[port_num - 1].qp_info[dest_qp_num];
+		qp = port->qp_info[dest_qp_num];
 		break;
 
 	case IB_MULTICAST_QPN:
@@ -866,7 +869,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u1
 	}
 
 	if (qp == NULL) {
-		dev->ports[port_num - 1].ib_port_attr.qkey_viol_cntr++;
+		port->ib_port_attr.qkey_viol_cntr++;
 		spin_unlock_irqrestore(&dev->lock, flags);
 		pib_debug("pib: drop packet: not found qp (qpn=0x%06x)\n", dest_qp_num);
 		goto silently_drop;
@@ -877,12 +880,37 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u1
 		;
 	else if (!pib_is_unicast_lid(dlid))
 		;
-	else if (dlid != dev->ports[port_num - 1].ib_port_attr.lid) {
+	else if (dlid != port->ib_port_attr.lid) {
 		spin_unlock_irqrestore(&dev->lock, flags);
 		pib_debug("pib: drop packet: differ packet's dlid from port lid (0x%04x, 0x%04x)\n",
 			  dlid, dev->ports[port_num - 1].ib_port_attr.lid);
 		goto silently_drop;
 	}
+
+	/* Check P_Key */ 
+	if (dest_qp_num == PIB_QP0) {
+		/* C9-41: In the destination QP is QP0, the P_Key shall not
+		   be checkd. */
+	} else if (dest_qp_num == PIB_QP1) {
+		/* C9-42: In the destination QP is QP1, the P_Key shall be
+		   compared to the set of P_Keys associated with the port. */
+		int i;
+		for (i=0 ; i<PIB_PKEY_TABLE_LEN ; i++) {
+			__be16 pkey = port->pkey_table[i];
+			if (pkey == bth->pkey)
+				goto pass_pkey_checking;
+		}
+		port->ib_port_attr.bad_pkey_cntr++;
+		goto silently_drop;
+	} else {
+		/* C9-43: */
+		__be16 pkey = port->pkey_table[qp->ib_qp_attr.pkey_index];
+		if (pkey != bth->pkey) {
+			port->ib_port_attr.bad_pkey_cntr++;
+			goto silently_drop;			
+		}
+	}
+pass_pkey_checking:
 
 	/* @notice ロックの入れ子関係を一部崩している */
 	spin_lock(&qp->lock);

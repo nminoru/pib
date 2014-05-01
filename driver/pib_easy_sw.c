@@ -128,8 +128,8 @@ int pib_create_switch(struct pib_easy_sw *sw)
 		port->link_width_enabled = PIB_LINK_WIDTH_SUPPORTED;
 		port->link_speed_enabled = PIB_LINK_SPEED_SUPPORTED;
 
-		for (j=0 ; j < PIB_PKEY_PER_BLOCK ; j++)
-			port->pkey_table[j] = cpu_to_be16(IB_DEFAULT_PKEY_FULL);
+		for (j=0 ; j < PIB_PKEY_TABLE_LEN ; j++)
+			port->pkey_table[j] = IB_DEFAULT_PKEY_FULL;
 	}
 
 	sw->buffer = vmalloc(PIB_PACKET_BUFFER);
@@ -891,7 +891,7 @@ static int subn_get_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in
 	}
 
 	for (i=0; i<PIB_PKEY_PER_BLOCK; i++)
-		pkey_table[i] = cpu_to_be16(sw->ports[sw_port_index].pkey_table[i]);
+		pkey_table[i] = sw->ports[sw_port_index].pkey_table[i];
 
 bail:
 	return reply(smp);
@@ -920,7 +920,7 @@ static int subn_set_pkey_table(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in
 	}
 
 	for (i=0; i<PIB_PKEY_PER_BLOCK; i++)
-		sw->ports[sw_port_index].pkey_table[i] = be16_to_cpu(pkey_table[i]);
+		sw->ports[sw_port_index].pkey_table[i] = pkey_table[i];
 
 bail:
 	return reply(smp);

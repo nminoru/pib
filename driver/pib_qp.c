@@ -841,6 +841,13 @@ static bool modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, 
 			return false;
 	}
 
+	if (attr_mask & IB_QP_PKEY_INDEX) {
+		if (PIB_PKEY_TABLE_LEN <= attr->pkey_index) {
+			pib_debug("pib: wrong pkey_index=%u in modify_qp_is_ok\n", attr->pkey_index);
+			return false;
+		}
+	}
+
 	/* IB_QP_PATH_MIG_STATE */
 	/*  */
 	/* IB_QP_ALT_PATH */
