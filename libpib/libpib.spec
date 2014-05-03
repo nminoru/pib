@@ -11,13 +11,14 @@ BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 Provides: libpib-devel = %{version}-%{release}
 Requires: libibverbs > 1.1.4
 BuildRequires: libibverbs-devel > 1.1.4
-# BuildArch: x86_64 
-ExcludeArch: s390 s390x
+BuildArch: x86_64 
+# ExcludeArch: s390 s390x
 
 %description
 InfiniBand HCAs for use with the libibverbs library.
 
 %prep
+
 %setup -q
 
 %build

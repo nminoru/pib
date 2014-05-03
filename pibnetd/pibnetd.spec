@@ -10,12 +10,13 @@ BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 Provides: libpib-devel = %{version}-%{release}
 Requires: libibverbs > 1.1.4
 BuildRequires: libibverbs-devel > 1.1.4
-ExcludeArch: s390 s390x
+# ExcludeArch: s390 s390x
 
 %description
 pibnetd is the Pseudo InfiniBand Fabric emulation daemon for pib.
 
 %prep
+
 %setup -q
 
 %build

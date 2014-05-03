@@ -97,6 +97,7 @@ pib.ko
 
     $ cd pib/driver/
     $ make
+    # make modules_install
 
 libpib
 ------
@@ -105,7 +106,7 @@ First, create libpib's source RPM from source code.
 
     $ git clone https://github.com/nminoru/pib.git
     $ cp -r pib/libpib libpib-0.0.6
-    $ tar czvft $(HOME)/rpmbuild/SOURCES/libpib-0.0.6.tar.gz libpib-0.0.6/
+    $ tar czvf $(HOME)/rpmbuild/SOURCES/libpib-0.0.6.tar.gz libpib-0.0.6/
     $ cp libpib-0.0.6/libpib.spec $(HOME)/rpmbuild/SPECS/
     $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/libpib.spec
 
@@ -128,7 +129,7 @@ First, load some modules which pib.ko is depenent on.
 
 Next, load pib.ko.
 
-    # insmod ./pib.ko
+    # modprobe pib
 
 Finally, run opensm
 
