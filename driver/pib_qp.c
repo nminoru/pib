@@ -437,26 +437,21 @@ static bool qp_init_attr_is_ok(const struct pib_dev *dev, const struct ib_qp_ini
 
 static bool qp_cap_is_ok(const struct pib_dev *dev, const struct ib_qp_cap *cap, int use_srq)
 {
-	if ((cap->max_send_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_send_wr)) {
+	if (dev->ib_dev_attr.max_qp_wr < cap->max_send_wr) {
 		pib_debug("pib: wrong max_send_wr=%u in qp_cap_is_ok\n", cap->max_send_wr);
 		return false;
 	}
 
-	if ((cap->max_send_sge < 1) || (dev->ib_dev_attr.max_sge < cap->max_send_sge)) {
+	if (dev->ib_dev_attr.max_sge < cap->max_send_sge) {
 		pib_debug("pib: wrong max_send_sge=%u in qp_cap_is_ok\n", cap->max_send_sge);
 		return false;
 	}
 
 	if (use_srq) {
-		if (cap->max_recv_wr != 0) {
-			pib_debug("pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
-			return false;
-		}
-		
-		if (cap->max_recv_sge != 0) {
-			pib_debug("pib: wrong max_recv_sge=%u in qp_cap_is_ok\n", cap->max_recv_sge);
-			return false;
-		}
+		/*
+		 * If the QP is to be associated with an SRQ, the attributes max_recv_wr 
+		 * and max_recv_sge are ignored.
+		 */
 	} else {
 		if ((cap->max_recv_wr < 1) || (dev->ib_dev_attr.max_qp_wr < cap->max_recv_wr)) {
 			pib_debug("pib: wrong max_recv_wr=%u in qp_cap_is_ok\n", cap->max_recv_wr);
