@@ -578,10 +578,17 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		}
 
 	/* @todo IB_QP_CAP は常にエラーになる */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
+	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask, IB_LINK_LAYER_INFINIBAND)) {
+		ret = -EINVAL;
+		goto done;
+	}
+#else
 	if (!ib_modify_qp_is_ok(cur_state, new_state, ibqp->qp_type, attr_mask)) {
 		ret = -EINVAL;
 		goto done;
 	}
+#endif
 
 	if (!modify_qp_is_ok(dev, qp, cur_state, attr, attr_mask)) {
 		ret = -EINVAL;
