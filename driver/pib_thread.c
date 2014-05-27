@@ -282,7 +282,11 @@ static int kthread_routine(void *data)
 		spin_unlock_irqrestore(&dev->qp_sched.lock, flags);
 
 		wait_for_completion_interruptible_timeout(&dev->thread.completion, timeout);
-		init_completion(&dev->thread.completion);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0)
+		INIT_COMPLETION(dev->thread.completion);
+#else
+		reinit_completion(&dev->thread.completion);
+#endif
 
 		while (dev->thread.flags) {
 			cond_resched();

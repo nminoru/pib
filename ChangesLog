@@ -1,3 +1,8 @@
+2014-05-27 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * pib: version 0.4.2
+           * Fix bug that the incorrect reinitialization of dev->thread.completion causes deadlock.
+
 2014-05-03 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib: version 0.4.1
