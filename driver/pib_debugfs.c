@@ -17,6 +17,7 @@
 
 
 #define PIB_BOOKMARK_MESSAGE (16)
+#define PIB_TSC_RATIO_BIAS (65536)
 
 
 static struct dentry *debugfs_root;
@@ -880,7 +881,7 @@ struct pib_trace_info {
 	u32		index;
 	struct timespec	base_timespec;
 	cycles_t	base_timestamp;
-	double		rate;
+	u64		tsc_ratio; /* nsec per 65536 clocks */
 };
 
 
@@ -1160,7 +1161,7 @@ static int trace_seq_show(struct seq_file *file, void *iter_ptr)
 
 	entry = &info->entry[(info->start + info->index) % PIB_TRACE_MAX_ENTRIES];
 
-	timespec.tv_nsec += (entry->timestamp - info->base_timestamp) * info->rate;
+	timespec.tv_nsec += (entry->timestamp - info->base_timestamp) * info->tsc_ratio / PIB_TSC_RATIO_BIAS;
 
 	while (timespec.tv_nsec >= 1000000000) {
 		timespec.tv_nsec -= 1000000000;
@@ -1333,10 +1334,10 @@ retry:
 	info->base_timespec  = entry->u.timedate.time;
 	info->base_timestamp = entry->timestamp;
 
-	duration_ns = (now_timespec.tv_sec - info->base_timespec.tv_sec) * 1000000000.0
+	duration_ns = (now_timespec.tv_sec - info->base_timespec.tv_sec) * 1000000000ULL
 		+ (now_timespec.tv_nsec - info->base_timespec.tv_nsec);
 
-	info->rate = 1.0 * duration_ns / (now_timestamp - info->base_timestamp);
+	info->tsc_ratio = PIB_TSC_RATIO_BIAS * duration_ns / (now_timestamp - info->base_timestamp);
 
 	ret = seq_open(file, &trace_seq_ops);
 	if (ret) {
