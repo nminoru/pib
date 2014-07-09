@@ -93,7 +93,7 @@ static void pib_dma_unmap_sg(struct ib_device *dev,
 {
 }
 
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0)
 static u64 pib_dma_address(struct ib_device *dev, struct scatterlist *sg)
 {
 	u64 addr;
@@ -111,6 +111,7 @@ static unsigned int pib_dma_len(struct ib_device *dev,
 {
 	return sg->length;
 }
+#endif
 
 static void pib_dma_sync_single_for_cpu(struct ib_device *dev, u64 addr,
 					size_t size, enum dma_data_direction dir)
@@ -153,8 +154,10 @@ struct ib_dma_mapping_ops pib_dma_mapping_ops = {
 	.unmap_page	= pib_dma_unmap_page,
 	.map_sg		= pib_dma_map_sg,
 	.unmap_sg	= pib_dma_unmap_sg,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0)
 	.dma_address	= pib_dma_address,
 	.dma_len	= pib_dma_len,
+#endif
 	.sync_single_for_cpu	= pib_dma_sync_single_for_cpu,
 	.sync_single_for_device	= pib_dma_sync_single_for_device,
 	.alloc_coherent	= pib_dma_alloc_coherent,

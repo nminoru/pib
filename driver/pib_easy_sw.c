@@ -23,7 +23,11 @@ static int kthread_routine(void *data);
 
 static int create_socket(struct pib_easy_sw *sw);
 static void release_socket(struct pib_easy_sw *sw);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+static void sock_data_ready_callback(struct sock *sk);
+#else
 static void sock_data_ready_callback(struct sock *sk, int bytes);
+#endif
 static int process_incoming_message(struct pib_easy_sw *sw);
 static int process_smp(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
 static int process_smp_get_method(struct ib_smp *smp, struct pib_easy_sw *sw, u8 in_port_num);
@@ -302,6 +306,15 @@ static int kthread_routine(void *data)
 }
 
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+static void sock_data_ready_callback(struct sock *sk)
+{
+	struct pib_easy_sw* sw = (struct pib_easy_sw*)sk->sk_user_data;
+
+	set_bit(PIB_THREAD_READY_TO_RECV, &sw->flags);
+	complete(&sw->completion);
+}
+#else
 static void sock_data_ready_callback(struct sock *sk, int bytes)
 {
 	struct pib_easy_sw* sw = (struct pib_easy_sw*)sk->sk_user_data;
@@ -309,6 +322,7 @@ static void sock_data_ready_callback(struct sock *sk, int bytes)
 	set_bit(PIB_THREAD_READY_TO_RECV, &sw->flags);
 	complete(&sw->completion);
 }
+#endif
 
 
 static int process_incoming_message(struct pib_easy_sw *sw)

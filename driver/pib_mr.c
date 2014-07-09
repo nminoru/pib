@@ -381,7 +381,12 @@ mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u6
 {
 	u64 addr, res;
 	struct ib_umem *umem;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+	struct scatterlist *sg;
+	int entry;
+#else
 	struct ib_umem_chunk *chunk;
+#endif
 
 	if (mr->is_dma)
 		goto dma;
@@ -395,6 +400,56 @@ mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u6
 
 	addr = 0;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+	for_each_sg(umem->sg_head.sgl, sg, umem->nmap, entry) {
+		void *vaddr;
+
+		vaddr = page_address(sg_page(sg));
+		if (!vaddr)
+			return -EINVAL;
+
+		if ((addr <= offset) && (offset < addr + umem->page_size)) {
+			u64 range;
+			void *target_vaddr;
+
+			range = min_t(u64, (addr + umem->page_size - offset), size);
+
+			target_vaddr = vaddr + (offset & (umem->page_size - 1));
+
+			switch (direction) {
+
+			case PIB_MR_COPY_FROM:
+				memcpy(buffer, target_vaddr, range);
+				break;
+
+			case PIB_MR_COPY_TO:
+				memcpy(target_vaddr, buffer, range);
+				break;
+
+			case PIB_MR_CAS:
+				*(u64*)buffer = atomic64_cmpxchg((atomic64_t*)target_vaddr, compare, swap);
+				return 0;
+
+			case PIB_MR_FETCHADD:
+				res = atomic64_add_return(compare, (atomic64_t*)target_vaddr);
+				*(u64*)buffer = res - compare;
+				return 0;
+
+			default:
+				BUG();
+			}
+
+			offset += range;
+			buffer += range;
+			size   -= range;
+		}
+
+		if (size == 0)
+			return 0;
+
+		addr  += umem->page_size;
+	}
+#else
 	list_for_each_entry(chunk, &umem->chunk_list, list) {
 		int i;
 		for (i = 0; i < chunk->nents; i++) {
@@ -446,6 +501,7 @@ mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u6
 			addr  += umem->page_size;
 		}
 	}
+#endif
 
 	return 0;
 

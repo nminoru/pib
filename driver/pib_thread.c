@@ -45,7 +45,11 @@ static void process_raw_packet(struct pib_dev *dev, u8 port_num, struct pib_pack
 static void process_on_wq_scheduler(struct pib_dev *dev);
 static void process_sendmsg(struct pib_dev *dev);
 static struct sockaddr *get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dlid);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+static void sock_data_ready_callback(struct sock *sk);
+#else
 static void sock_data_ready_callback(struct sock *sk, int bytes);
+#endif
 static void timer_timeout_callback(unsigned long opaque);
 static void delayed_work_timeout_callback(unsigned long data);
 
@@ -1428,6 +1432,15 @@ get_sockaddr_from_dlid(struct pib_dev *dev, u8 port_num, u32 src_qp_num, u16 dli
 /*                                                                            */
 /******************************************************************************/
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+static void sock_data_ready_callback(struct sock *sk)
+{
+	struct pib_dev* dev  = (struct pib_dev*)sk->sk_user_data;
+
+	set_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags);
+	complete(&dev->thread.completion);
+}
+#else
 static void sock_data_ready_callback(struct sock *sk, int bytes)
 {
 	struct pib_dev* dev  = (struct pib_dev*)sk->sk_user_data;
@@ -1435,6 +1448,7 @@ static void sock_data_ready_callback(struct sock *sk, int bytes)
 	set_bit(PIB_THREAD_READY_TO_RECV, &dev->thread.flags);
 	complete(&dev->thread.completion);
 }
+#endif
 
 
 static void timer_timeout_callback(unsigned long opaque)
