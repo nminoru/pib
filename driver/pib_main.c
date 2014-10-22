@@ -340,7 +340,7 @@ static ssize_t show_imm_data_lkey(struct device *device, struct device_attribute
 #endif
 
 
-static DEVICE_ATTR(local_ca_ack_delay,	S_IRUGO|S_IWUGO, show_local_ca_ack_delay, store_local_ca_ack_delay);
+static DEVICE_ATTR(local_ca_ack_delay,	S_IRUGO|S_IWUSR, show_local_ca_ack_delay, store_local_ca_ack_delay);
 static DEVICE_ATTR(local_ack_timeout,	S_IRUGO,         show_local_ack_timeout,  NULL);
 
 #ifdef PIB_HACK_IMM_DATA_LKEY
