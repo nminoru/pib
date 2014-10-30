@@ -381,7 +381,7 @@ mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u6
 {
 	u64 addr, res;
 	struct ib_umem *umem;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+#if PIB_IB_DMA_MAPPING_VERSION >= 1 
 	struct scatterlist *sg;
 	int entry;
 #else
@@ -400,7 +400,7 @@ mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u6
 
 	addr = 0;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+#if PIB_IB_DMA_MAPPING_VERSION >= 1
 	for_each_sg(umem->sg_head.sgl, sg, umem->nmap, entry) {
 		void *vaddr;
 

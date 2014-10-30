@@ -93,7 +93,7 @@ static void pib_dma_unmap_sg(struct ib_device *dev,
 {
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0)
+#if PIB_IB_DMA_MAPPING_VERSION < 1
 static u64 pib_dma_address(struct ib_device *dev, struct scatterlist *sg)
 {
 	u64 addr;
@@ -154,7 +154,7 @@ struct ib_dma_mapping_ops pib_dma_mapping_ops = {
 	.unmap_page	= pib_dma_unmap_page,
 	.map_sg		= pib_dma_map_sg,
 	.unmap_sg	= pib_dma_unmap_sg,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0)
+#if PIB_IB_DMA_MAPPING_VERSION < 1
 	.dma_address	= pib_dma_address,
 	.dma_len	= pib_dma_len,
 #endif
