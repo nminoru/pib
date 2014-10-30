@@ -1,5 +1,5 @@
 Name: pib
-Version: 0.4.2
+Version: 0.4.4
 Release: 1%{?dist}
 Summary: Pseudo InfiniBand (pib) HCA Kernel Driver
 Group: System/Kernel
@@ -45,6 +45,12 @@ install -m 644 -D %{SOURCE2} $RPM_BUILD_ROOT/etc/depmod.d/%{name}.conf
 rm -rf $RPM_BUILD_ROOT
 
 %changelog
+* Tue Oct 30 2014 Minoru NAKAMURA <nminoru@nminoru.jp> - 0.4.4
+- Update codes for kernel 3.17
+
+* Tue Jul 09 2014 Minoru NAKAMURA <nminoru@nminoru.jp> - 0.4.3
+- Update codes for kernel 3.15
+
 * Tue May 27 2014 Minoru NAKAMURA <nminoru@nminoru.jp> - 0.4.2
 - Fix bug that the incorrect reinitialization of dev->thread.completion causes deadlock.
 
