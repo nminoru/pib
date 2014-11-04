@@ -37,8 +37,8 @@ Debugging support features:
 * Inspect IB objects (ucontext, PD, MR, SRQ, CQ, AH, QP)
 * Trace API invocations, packet sending/receiving, async events/errors
 * Inject a specified error (QP/CQ/SRQ Error)
-* Select some implementation dependent behaviours and enforce error checking.
-* Show a warning of pithalls that IB programs should avoid. 
+* Select some implementation dependent behaviour and enforce error checking.
+* Show a warning of pitfalls that IB programs should avoid.
 
 Other features:
 
@@ -47,13 +47,13 @@ Other features:
 Limitation
 ==========
 
-The current version is EXPERIMETNAL.
+The current version is EXPERIMENTAL.
 
-The follwing features are not supported:
+The following features are not supported:
 
-- Unreliable Datagram (UD)
+- Unreliable Connected (UC)
 - Fast Memory Region (FMR)
-- Memory Windows (MR)
+- Memory Windows (MW)
 - SEND Invalidate operation
 - Virtual Lane (VL)
 - Flow control
@@ -72,7 +72,7 @@ Mustn't install an environment to deploy Mellanox OFED.
 Preparation
 ===========
 
-The following software packeages are required for building pib:
+The following software packages are required for building pib:
 
 * rdma
 * libibverbs
@@ -123,7 +123,7 @@ You can get source and binary RPMs for RHEL6 or CentOS6 on this link http://www.
 Loading
 =======
 
-First, load some modules which pib.ko is depenent on.
+First, load some modules which pib.ko is dependent on.
 
     # /etc/rc.d/init.d/rdma start
 
@@ -170,7 +170,7 @@ Performance counter
 Debugging support
 =================
 
-pib provieds some debugging functions via debugfs to help developing IB programs.
+pib provides some debugging functions via debugfs to help developing IB programs.
 
 First ensure that debugfs is mounted.
 
