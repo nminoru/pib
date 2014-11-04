@@ -549,6 +549,11 @@ static int subn_set_portinfo(struct ib_smp *smp, struct pib_dev *dev, u8 in_port
 	event.device           = &dev->ib_dev;
 	event.element.port_num = port_num;
 
+	if (port_info->clientrereg_resv_subnetto & 0x80) {
+		event.event = IB_EVENT_CLIENT_REREGISTER;
+		ib_dispatch_event(&event);
+	}
+
 	if ((port->ib_port_attr.state != IB_PORT_ACTIVE) && (old_state == IB_PORT_ACTIVE)) {
 		event.event = IB_EVENT_PORT_ERR;
 		ib_dispatch_event(&event);
