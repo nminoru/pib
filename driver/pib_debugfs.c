@@ -180,7 +180,7 @@ static void *inspection_seq_start(struct seq_file *file, loff_t *pos)
 		break;
 
 	case PIB_DEBUGFS_MR:
-		seq_printf(file, "%-4s %-16s %-16s %-8s %-8s DMA AC\n", "PD", "STATRT", "LENGTH", "LKEY", "RKEY");
+		seq_printf(file, "%-4s %-16s %-16s %-8s %-8s DMA AC\n", "PD", "START", "LENGTH", "LKEY", "RKEY");
 		break;
 
 	case PIB_DEBUGFS_SRQ:

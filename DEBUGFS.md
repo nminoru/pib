@@ -59,7 +59,7 @@ _pd_ displays a list of protection domain(s).
 
 _mr_ displays a list of memory region(s).
 
-    OID  UCTX UHWD  CREATIONTIME                      PD   STATRT           LENGTH           LKEY     RKEY     DMA AC
+    OID  UCTX UHWD  CREATIONTIME                      PD   START            LENGTH           LKEY     RKEY     DMA AC
     0001 KERN NOHWD [2014-02-08 02:46:03.058,035,303] 0001 0000000000000000 ffffffffffffffff 63a43000 63a44000 DMA 1
     0002 KERN NOHWD [2014-02-08 02:46:03.061,804,672] 0001 0000000000000000 ffffffffffffffff 28840001 38843001 DMA 1
     0013    7     0 [2014-02-08 02:59:05.631,362,956] 000b 0000000001e4d000 0000000000001000 0bd78000 7bd7b000 USR 1
