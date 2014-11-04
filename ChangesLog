@@ -37,7 +37,7 @@
            * Add a new flow control mechanism to prevent local ACK timeout retry by large size RDMA READs in RC service.
              The responder can send only up to PIB_MAX_CONTIG_READ_ACKS of packets before it must wait for Congestion Notification Packet(CNP).
            * Fix incorrect range check to remove pib_ack when a retried RDMA READ request is received.
-           * Remove the flow control to limit the number of outstanding RDMA READS scince 0.3.4.
+           * Remove the flow control to limit the number of outstanding RDMA READS since 0.3.4.
 
 2014-03-11 Minoru NAKAMURA <nminoru@nminoru.jp>
 
@@ -55,7 +55,7 @@
 
            * pib: version 0.3.3
            * Fix bug that the execution tracer uses seq_file in an incorrect way.
-           * Enable to supress duplicate execution traces.
+           * Enable to suppress duplicate execution traces.
            * Enable execution tracer to collect new events for completion and local ACK timer retry.
 
 2014-03-05 Minoru NAKAMURA <nminoru@nminoru.jp>
@@ -78,7 +78,7 @@
 2014-02-11 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib: version 0.2.9
-           * Hack that ib_ipoib leak adress handles when IB driver is unregistered
+           * Hack that ib_ipoib leak address handles when IB driver is unregistered
 
 2014-02-05 Minoru NAKAMURA <nminoru@nminoru.jp>
 
@@ -95,7 +95,7 @@
 
            * pib: version 0.2.6
            * Add debugfs feature to inspect internal objects
-           * Add solicted event processing
+           * Add solicited event processing
            * Change dev->lock locking
 
 2014-01-25 Minoru NAKAMURA <nminoru@nminoru.jp>
