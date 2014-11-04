@@ -814,7 +814,13 @@ void pib_print_mad(const char *direct, const struct ib_mad_hdr *hdr)
 void pib_print_smp(const char *direct, const struct ib_smp *smp)
 {
 	int i, j = 0;
-	char buffer[1024];
+	char *buffer;
+
+	buffer = kmalloc(1024, GFP_KERNEL);
+	if (!buffer) {
+		pr_err("Failed to allocate memory, ignoring SMP dump\n");
+		return;
+	}
 
 	pr_info("%s: base_version   %u\n",     direct, smp->base_version);
 	pr_info("%s: mgmt_class     %s(0x%02x)\n", direct,
@@ -857,4 +863,5 @@ void pib_print_smp(const char *direct, const struct ib_smp *smp)
 		pr_info("%s: %s\n", direct, buffer);
 	}
 #endif
+	kfree(buffer);
 }
