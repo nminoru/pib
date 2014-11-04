@@ -509,19 +509,19 @@ dma:
 	switch (direction) {
 					
 	case PIB_MR_COPY_FROM:
-		memcpy(buffer, (void*)offset, size);
+		memcpy(buffer, (void*)(uintptr_t)offset, size);
 		break;
 
 	case PIB_MR_COPY_TO:
-		memcpy((void*)offset, buffer, size);
+		memcpy((void*)(uintptr_t)offset, buffer, size);
 		break;
 
 	case PIB_MR_CAS:
-		*(u64*)buffer = atomic64_cmpxchg((atomic64_t*)offset, compare, swap);
+		*(u64*)buffer = atomic64_cmpxchg((atomic64_t*)(uintptr_t)offset, compare, swap);
 		return 0;
 
 	case PIB_MR_FETCHADD:
-		res = atomic64_add_return(compare, (atomic64_t*)offset);
+		res = atomic64_add_return(compare, (atomic64_t*)(uintptr_t)offset);
 		*(u64*)buffer = res - compare;
 		return 0;
 

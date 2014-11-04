@@ -30,7 +30,7 @@ static int pib_dma_mapping_error(struct ib_device *dev, u64 dma_addr)
 static u64 pib_dma_map_single(struct ib_device *dev, void *cpu_addr,
 			      size_t size, enum dma_data_direction direction)
 {
-	return (u64)cpu_addr;
+	return (u64)(uintptr_t)cpu_addr;
 }
 
 
@@ -51,7 +51,7 @@ static u64 pib_dma_map_page(struct ib_device *dev, struct page *page,
 		goto done;
 	}
 
-	addr = (u64)page_address(page);
+	addr = (u64)(uintptr_t)page_address(page);
 	if (addr)
 		addr += offset;
 
@@ -76,7 +76,7 @@ static int pib_dma_map_sg(struct ib_device *dev, struct scatterlist *sgl,
 	int ret = nents;
 
 	for_each_sg(sgl, sg, nents, i) {
-		addr = (u64) page_address(sg_page(sg));
+		addr = (u64)(uintptr_t) page_address(sg_page(sg));
 		/* TODO: handle highmem pages */
 		if (!addr) {
 			ret = 0;
@@ -98,7 +98,7 @@ static u64 pib_dma_address(struct ib_device *dev, struct scatterlist *sg)
 {
 	u64 addr;
 
-	addr = (u64) page_address(sg_page(sg));
+	addr = (u64)(uintptr_t) page_address(sg_page(sg));
 
 	if (addr)
 		addr += sg->offset;
@@ -134,7 +134,7 @@ static void *pib_dma_alloc_coherent(struct ib_device *dev, size_t size,
 	if (p)
 		addr = page_address(p);
 	if (dma_handle)
-		*dma_handle = (u64) addr;
+		*dma_handle = (u64)(uintptr_t) addr;
 
 	return addr;
 }
