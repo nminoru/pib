@@ -374,7 +374,7 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 		.device_cap_flags    = PIB_DEVICE_CAP_FLAGS,
 
 		.max_sge             = PIB_MAX_SGE,
-		.max_sge_rd          =       8,
+		.max_sge_rd          =       0,
 		.max_cq              = PIB_MAX_CQ - 1,
 		.max_cqe             = 4194303,
 		.max_mr              = PIB_MAX_MR - 1,
