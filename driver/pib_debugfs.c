@@ -10,6 +10,7 @@
 #include <linux/seq_file.h>
 #include <linux/debugfs.h>
 #include <linux/export.h>
+#include <linux/math64.h>
 
 #include "pib.h"
 #include "pib_packet.h"
@@ -1336,8 +1337,7 @@ retry:
 	duration_ns = (now_timespec.tv_sec - info->base_timespec.tv_sec) * 1000000000ULL
 		+ (now_timespec.tv_nsec - info->base_timespec.tv_nsec);
 
-	info->tsc_ratio = PIB_TSC_RATIO_BIAS * duration_ns;
-	do_div(info->tsc_ratio, (now_timestamp - info->base_timestamp));
+	info->tsc_ratio = div64_u64(PIB_TSC_RATIO_BIAS * duration_ns, (now_timestamp - info->base_timestamp));
 
 	ret = seq_open(file, &trace_seq_ops);
 	if (ret) {
