@@ -329,6 +329,7 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 {
 	int ret, recvmsg_size;
 	u8 in_sw_port_num, out_sw_port_num;
+	u8 dest_dev_id; 
 	u8 dest_port_num;
 	u32 dest_qp_num;
 	u16 dlid;
@@ -344,6 +345,7 @@ static int process_incoming_message(struct pib_easy_sw *sw)
 	struct pib_packet_deth *deth = NULL;
 	struct ib_mad	      *mad = NULL;
 	struct ib_smp         *smp = NULL;
+	u64 dividend_tmp;
 
 	msghdr.msg_name    = &sockaddr_in6;
 	msghdr.msg_namelen = sizeof(sockaddr_in6);
@@ -539,9 +541,11 @@ process_mad:
 send_packet:
 	BUG_ON((out_sw_port_num == 0) || (sw->port_cnt <= out_sw_port_num));
 
-	dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
+	dividend_tmp	= out_sw_port_num - 1;
+	dest_port_num	= do_div(dividend_tmp, pib_phys_port_cnt) + 1;
+	dest_dev_id	= dividend_tmp;
 
-	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
+	dev = pib_devs[dest_dev_id];
 
 	spin_lock_irqsave(&dev->lock, flags);
 	if (dev->ports[dest_port_num - 1].sockaddr)
@@ -570,9 +574,11 @@ relay_ucast:
 	if ((out_sw_port_num == 0) || (sw->port_cnt <= out_sw_port_num))
 		return 0;
 
-	dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
+	dividend_tmp	= out_sw_port_num - 1;
+	dest_port_num	= do_div(dividend_tmp, pib_phys_port_cnt) + 1;
+	dest_dev_id	= dividend_tmp;
 
-	dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
+	dev = pib_devs[dest_dev_id];
 
 	spin_lock_irqsave(&dev->lock, flags);
 	if (dev->ports[dest_port_num - 1].sockaddr)
@@ -608,9 +614,11 @@ relay_mcast:
 		if ((pm_block & (1U << (out_sw_port_num % 16))) == 0)
 			continue;
 
-		dev = pib_devs[(out_sw_port_num - 1) / pib_phys_port_cnt];
+		dividend_tmp	= out_sw_port_num - 1;
+		dest_port_num	= do_div(dividend_tmp, pib_phys_port_cnt) + 1;
+		dest_dev_id	= dividend_tmp;
 
-		dest_port_num = ((out_sw_port_num - 1)  % pib_phys_port_cnt) + 1;
+		dev = pib_devs[dest_dev_id];
 
 		spin_lock_irqsave(&dev->lock, flags);
 		if (dev->ports[dest_port_num - 1].sockaddr)

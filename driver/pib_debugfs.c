@@ -29,20 +29,19 @@ static void unregister_dev(struct pib_dev *dev);
 
 void show_timespec(struct seq_file *file, const struct timespec *time_p)
 {
-	unsigned int value, msec, usec, nsec;
+	u64 value;
+	u32 msec, usec, nsec;
 	struct timespec	time;
 	struct tm tm;
 
 	time = *time_p;
 	time_to_tm(time.tv_sec, 0, &tm);
 
-	value    = time.tv_nsec;
+	value	= time.tv_nsec;
 
-	nsec   = value % 1000;
-	value /= 1000;
-	usec   = value % 1000;
-	value /= 1000;
-	msec   = value;
+	nsec	= do_div(value, 1000);
+	usec	= do_div(value, 1000);
+	msec	= value;
 
 	seq_printf(file, "[%04ld-%02d-%02d %02d:%02d:%02d.%03u,%03u,%03u]",
 		   tm.tm_year + 1900, tm.tm_mon  + 1, tm.tm_mday,
@@ -1337,7 +1336,8 @@ retry:
 	duration_ns = (now_timespec.tv_sec - info->base_timespec.tv_sec) * 1000000000ULL
 		+ (now_timespec.tv_nsec - info->base_timespec.tv_nsec);
 
-	info->tsc_ratio = PIB_TSC_RATIO_BIAS * duration_ns / (now_timestamp - info->base_timestamp);
+	info->tsc_ratio = PIB_TSC_RATIO_BIAS * duration_ns;
+	do_div(info->tsc_ratio, (now_timestamp - info->base_timestamp));
 
 	ret = seq_open(file, &trace_seq_ops);
 	if (ret) {
