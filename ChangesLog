@@ -1,3 +1,26 @@
+2014-10-06 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * Update README.md
+
+2014-10-05 Dotan Barak <dotanb@rdmamojo.com>
+           
+           * Fix 64 bit divide operation
+           * Return zero in dev_cap.max_sge_rd
+           * Add IB_EVENT_CLIENT_REREGISTER support to the port's cap flags
+
+2014-10-05 Minoru NAKAMURA <nminoru@nminoru.jp>
+
+           * Fix build errors on 32-bit x86
+           * Fix compile errors CentOS 7 and Fedora 20
+
+2014-10-04 Dotan Barak <dotanb@rdmamojo.com>
+
+           * Add IB_EVENT_CLIENT_REREGISTER support
+           * Changed static allocation to dynamic allocation
+           * Fixed casting problems in pointer <-> 64 bit variables
+           * Add .gitignore to ignore all compilation products
+           * Fixed typos
+           
 2014-10-29 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib: version 0.4.4
@@ -136,7 +159,7 @@
 
            * pib: version 0.0.5 
            * libpib: version 0.0.5
-           * Hack for the IB/core bug to pas imm_data from ib_uverbs_send_wr to ib_send_wr correctly when sending UD messages.
+           * Hack for the IB/core bug to pass imm_data from ib_uverbs_send_wr to ib_send_wr correctly when sending UD messages.
 
 2013-10-30 Minoru NAKAMURA <nminoru@nminoru.jp>
            

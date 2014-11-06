@@ -92,36 +92,78 @@ The following packages are recommended:
 Building
 ========
 
+First, acquire the source code by cloning the git repository.
+
+    $ git clone https://github.com/nminoru/pib.git
+
 pib.ko
 ------
+
+If you want to compile the pib.ko kernel module from source code, input the following commands.
 
     $ cd pib/driver/
     $ make
     # make modules_install
 
+If you want to create binary RPM file, input the following commands.
+
+1. Create libpib's source RPM from source code.
+
+    $ cp -r pib/driver pib-0.4.4
+    $ tar czvf $(HOME)/rpmbuild/SOURCES/pib-0.4.4.tar.gz pib-0.4.4/
+    $ cp pib/driver/pib.spec $(HOME)/rpmbuild/SPECS/
+    $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/pib.spec
+
+2. Build the binary RPM from the source RPM.
+
+    $ rpmbuild --rebuild $(HOME)/rpmbuild/SRPMS/pib-0.4.4-1.el6.src.rpm
+
+3. Install the built binary RPM.
+
+    # rpm -ihv $(HOME)/rpmbuild/RPMS/x86_64/kmod-pib-0.4.4-1.el6.x86_64.rpm
+
 libpib
 ------
 
-First, create libpib's source RPM from source code.
+The libpib userspace plug-in module will be installed from the binary RPM. 
 
-    $ git clone https://github.com/nminoru/pib.git
     $ cp -r pib/libpib libpib-0.0.6
     $ tar czvf $(HOME)/rpmbuild/SOURCES/libpib-0.0.6.tar.gz libpib-0.0.6/
-    $ cp libpib-0.0.6/libpib.spec $(HOME)/rpmbuild/SPECS/
+    $ cp pib/libpib/libpib.spec $(HOME)/rpmbuild/SPECS/
     $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/libpib.spec
-
-Next, build the binary RPM from the source RPM.
 
     $ rpmbuild --rebuild $(HOME)/rpmbuild/SRPMS/libpib-0.0.6-1.el6.src.rpm
 
-Finally, install the binary RPM.
+    # rpm -ihv $(HOME)/rpmbuild/RPMS/x86_64/libpib-0.0.6-1.el6.x86_64.rpm
 
-    # rpm -ihv libpib-0.0.6-1.el6.x86_64.rpm
+pibnetd
+-------
+
+If you want to compile the pibnetd daemon from source code, input the following commands.
+
+    $ cd pib/pibnet/
+    $ make
+    # install -m 755 -D pibnetd                     /usr/sbin/pibnetd
+    # install -m 755 -D scripts/redhat-pibnetd.init /etc/rc.d/init.d/pibnetd
+
+If you want to create binary RPM file, input the following commands.
+
+    $ cp -r pib/pibnetd pibnetd-0.4.0
+    $ tar czvf $(HOME)/rpmbuild/SOURCES/pibnetd-0.4.0.tar.gz pibnetd-0.4.0/
+    $ cp pib/pibnetd/pibnetd.spec $(HOME)/rpmbuild/SPECS/
+    $ rpmbuild -bs $(HOME)/rpmbuild/SPECS/pibnetd.spec
+
+    $ rpmbuild --rebuild $(HOME)/rpmbuild/SRPMS/pibnetd-0.4.0-1.el6.src.rpm
+
+    # rpm -ihv $(HOME)/rpmbuild/RPMS/x86_64/pibnetd-0.4.0-1.el6.x86_64.rpm
+
+Download
+--------
 
 You can get source and binary RPMs for RHEL6 or CentOS6 on this link http://www.nminoru.jp/~nminoru/network/infiniband/src/
 
-Loading
-=======
+Loading (single-host-mode)
+==========================
 
 First, load some modules which pib.ko is dependent on.
 
@@ -145,6 +187,40 @@ pib.ko options
 * manner_warn
 * manner_err
 * addr
+
+Loading (multi-host-mode)
+=========================
+
+In multi-host-mode mode, pib enables to connect up to 32 hosts (To be precise, up to 32 ports).
+
+       Host A           Host X           Host B
+     (10.0.0.1)       (10.0.0.2)       (10.0.0.3)
+    +----------+     +-----------+     +----------+
+    | +------+ |     | +-------+ |     | +------+ |
+    | |pib.ko| |-----| |pibnetd| |-----| |pib.ko| |
+    | +------+ |     | +-------+ |     | +------+ |
+    |          |     |           |     | +------+ |
+    |          |     |           |     | |opensm| |
+    |          |     |           |     | +------+ | 
+    +----------+     +-----------+     +----------+ 
+
+First, run pibnetd on a host.
+
+    # /etc/rc.d/init.d/pibnetd start
+
+Next, load pib.ko by running modprobe command with the _addr_ parameter specified by the pibnetd's IP address.
+
+    # /etc/rc.d/init.d/rdma start
+    # modprobe pib addr=10.0.0.2
+
+On th default parameters, pib creates 2 IB devices of 2 ports.
+You had better limit 1 IB device of 1 port by specifying the _num_hca_ and _phys_port_cnt_ parameters in multi-host-mode.
+
+    # modprobe pib addr=10.0.0.2 num_hca=1 phys_port_cnt=1
+
+Finally, run opensm on one of hosts that load pib.ko.
+
+    # /etc/rc.d/init.d/opensm start
 
 Running
 =======
@@ -187,10 +263,12 @@ Future work
 IB functions
 ------------
 
+* Fast Memory Registration(FMR)
+* Peer-Direct
+* Alternate path
 * Unreliable Connection(UC)
 * Extended Reliable Connected (XRC)
 * Memory Window
-* Alternate path
 
 Debugging support
 -----------------
@@ -208,6 +286,7 @@ Software components
 Other
 -----
 
+* Systemd init script support
 * Other Linux distributions support
 * Kernel update package
 * IPv6 support
