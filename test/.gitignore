@@ -1,0 +1,7 @@
+*.o
+comp_vector
+show_mem_reg
+qp-roundrobin
+query_pkey
+test-ib_reg_mr-01
+test-ipoib-01
