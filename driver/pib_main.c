@@ -369,16 +369,16 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 		.vendor_id           = 1U,
 		.vendor_part_id      = 1U,
 		.hw_ver              = 0U,
-		.max_qp              = PIB_MAX_QP - 1,
+		.max_qp              = PIB_MAX_QP,
 		.max_qp_wr           = 16351,
 		.device_cap_flags    = PIB_DEVICE_CAP_FLAGS,
 
 		.max_sge             = PIB_MAX_SGE,
 		.max_sge_rd          =       0,
-		.max_cq              = PIB_MAX_CQ - 1,
+		.max_cq              = PIB_MAX_CQ - 1, /* CQ0 is invalid */
 		.max_cqe             = 4194303,
-		.max_mr              = PIB_MAX_MR - 1,
-		.max_pd              = PIB_MAX_PD - 1,
+		.max_mr              = PIB_MAX_MR - 1, /* MR0 is invalid */
+		.max_pd              = PIB_MAX_PD - 1, /* PD0 is invalid */
 		.max_qp_rd_atom      = PIB_MAX_RD_ATOM,
 		.max_ee_rd_atom      =       0,
 		.max_res_rd_atom     = 2096128,
@@ -394,12 +394,12 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 		.max_mcast_grp       =    8192,
 		.max_mcast_qp_attach = PIB_MCAST_QP_ATTACH,
 		.max_total_mcast_qp_attach = 2031616,
-		.max_ah              = PIB_MAX_AH - 1,
+		.max_ah              = PIB_MAX_AH - 1, /* AH0 is invalid */
 		.max_fmr             =       0, 
 		.max_map_per_fmr     =       0,
-		.max_srq             = PIB_MAX_SRQ - 1,
+		.max_srq             = PIB_MAX_SRQ - 1, /* SRQ0 is invalid */
 		.max_srq_wr          =   16383,
-		.max_srq_sge         = PIB_MAX_SGE -1, /* for Mellanox HCA simulation */
+		.max_srq_sge         = PIB_MAX_SGE -1, /* For Mellanox HCA simulation, max_srq_sge is set to max_sge - 1. */
 		.max_fast_reg_page_list_len = 0,
 		.max_pkeys           =     125,
 		.local_ca_ack_delay  = pib_get_local_ca_ack_delay(),
