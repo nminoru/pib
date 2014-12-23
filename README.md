@@ -264,17 +264,16 @@ Failed to call ibv_reg_mr() with more than 64 KB
 
 pib permits an unprivileged program to use InfiniBand userspace verbs.
 However Linux operating system limits the maximum memory size that an unprivileged process may lock via mlock() and ibv_reg_mr() calls mlock() internally.
-This default max locked memory is only 64 K bytes.
+This default max-locked-memory is only 64 K bytes.
 
-There are two solutions to avoid this trouble:
+To avoid this trouble, run your program under privileged mode or increase max-locked-memory limit for unprivileged user.
 
-* Your program runs under privileged mode.
-* Increase max locked memory limit for unprivileged user.
-** `ulimit -l unlimited`
-** Add the following two lines in the file /etc/security/limits.conf and then reboot.
+If you choose the latter, add the following two lines in the file /etc/security/limits.conf and then reboot.
 
     * soft memlock unlimited
     * hard memlock unlimited
+
+Or you can also set it temporarily to do `ulimit -l unlimited`.
 
 Future work
 ===========
