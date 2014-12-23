@@ -256,6 +256,26 @@ A list of available debugging functions can be found in /sys/kernel/debug/pib/pi
 See detailed information on DEBUGFS.md.
 
 
+FAQ
+===
+
+Failed to call ibv_reg_mr() with more than 64 KB
+------------------------------------------------
+
+pib permits an unprivileged program to use InfiniBand userspace verbs.
+However Linux operating system limits the maximum memory size that an unprivileged process may lock via mlock() and ibv_reg_mr() calls mlock() internally.
+This default max locked memory is only 64 K bytes.
+
+There are two solutions to avoid this trouble:
+
+* Your program runs under privileged mode.
+* Increase max locked memory limit for unprivileged user.
+** `ulimit -l unlimited`
+** Add the following two lines in the file /etc/security/limits.conf and then reboot.
+
+    * soft memlock unlimited
+    * hard memlock unlimited
+
 Future work
 ===========
 
@@ -290,3 +310,15 @@ Other
 * Kernel update package
 * IPv6 support
 * Translate Japanese into English in comments of source codes :-)
+
+Contact
+=======
+
+[https://twitter.com/nminoru_jp](https://twitter.com/nminoru_jp)
+
+<nminoru1975@gmail.com>
+
+License
+=======
+
+GPL version 2 or BSD license
