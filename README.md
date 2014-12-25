@@ -148,13 +148,13 @@ If you want to compile the pibnetd daemon from source code, input the following 
 
 If you want to create binary RPM file, input the following commands.
 
-    $ cp -r pib/pibnetd pibnetd-0.4.0
-    $ tar czvf $(HOME)/rpmbuild/SOURCES/pibnetd-0.4.0.tar.gz pibnetd-0.4.0/
+    $ cp -r pib/pibnetd pibnetd-0.4.1
+    $ tar czvf $(HOME)/rpmbuild/SOURCES/pibnetd-0.4.1.tar.gz pibnetd-0.4.1/
     $ rpmbuild -bs pib/pibnetd/pibnetd.spec
 
-    $ rpmbuild --rebuild $(HOME)/rpmbuild/SRPMS/pibnetd-0.4.0-1.el6.src.rpm
+    $ rpmbuild --rebuild $(HOME)/rpmbuild/SRPMS/pibnetd-0.4.1-1.el6.src.rpm
 
-    # rpm -ihv $(HOME)/rpmbuild/RPMS/x86_64/pibnetd-0.4.0-1.el6.x86_64.rpm
+    # rpm -ihv $(HOME)/rpmbuild/RPMS/x86_64/pibnetd-0.4.1-1.el6.x86_64.rpm
 
 Download
 --------

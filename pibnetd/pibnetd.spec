@@ -1,5 +1,5 @@
 Name: pibnetd
-Version: 0.4.0
+Version: 0.4.1
 Release: 1%{?dist}
 Summary: Pseudo InfiniBand Fabric emulation daemon
 Group: System Environment/Daemons
@@ -36,3 +36,8 @@ rm -rf $RPM_BUILD_ROOT
 %{_initddir}/pibnetd
 
 %changelog
+* Tue Nov 06 2014 Minoru NAKAMURA <nminoru1975@gmail.com> - 0.4.1
+- Fix the wrong path for pibnetd in /etc/rc.d/init.d/pibnetd
+
+* Mon Apr 07 2014 Minoru NAKAMURA <nminoru@nminoru.jp> - 0.4.0
+- Initial spec file
