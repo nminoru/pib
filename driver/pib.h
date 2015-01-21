@@ -1,7 +1,7 @@
 /*
  * pib.h - General definitions for pib
  *
- * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -163,20 +163,36 @@ enum pib_behavior {
 	PIB_BEHAVIOR_RDMA_WRITE_WITH_IMM_ALWAYS_ASYNC_ERR =  2,
 
 	/*
-	 *  SRQ の登録順と取り出し順をシャッフルする
+	 *  An shared receive queue isn't guaranteed to work in a FIFO manner.
+	 *
+	 *  If this bit flag is set to 1, pib ensures to shuffle WRs of an SRQ.
+	 *  (Default: in a FIFO manner.)
 	 *
 	 *  IBA Spec. Vol.1 10.8.3.2 SHARED RECEIVE QUEUE ORDERING RULES
 	 */
 	PIB_BEHAVIOR_SRQ_SHUFFLE                          =  3,
 
 	/*
-	 *  WC_SUCCESS しない場合に無効なパラメータを乱数値で設定する。
+	 *  If a work request whose status is other than WC_SUCCESS, only the
+	 *  following attributes are valid: wr_id, status, qp_num and vendor_err.
+	 *  The rest attributes of the WC arent't guaranteed to set 0.
+	 *
+	 *  If this bit flag is set to 1, random values are placed into the
+	 *  following invalid attributes intentionally.
 	 *  (opcode, byte_len, imm_data, src_qp, wc_flags, pke_index, slid, sl, did_path_bits)
 	 */
 	PIB_BEHAVIOR_CORRUPT_INVALID_WC_ATTRS             =  4,
 
 	/*
-	 *  空いている若い QPN を再利用する。
+	 *  The QP number reuse occurs serial troubles in an IB program.
+	 *  To avoid such a fault, some real IB HCAs adopt the policy to
+	 *  allocate the QP number in a round robin fashion or in a randomness.
+	 *
+	 *  If this bit flag is set to 1, ibv_create_qp() allocates the lowest
+	 *  QP number available to raise the probability of the occurrence of
+	 *  incidents about QP nubmer reuse.
+	 *
+	 *  (Default: round-robin)
 	 */
 	PIB_BEHAVIOR_QPN_REALLOCATION			  =  5,
 

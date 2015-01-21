@@ -1,41 +1,21 @@
-- Memory Windows
+TODO
 
-- RDMA READ の outstanding が requester と responder で違わないか確認せよ 
+- Unify WQ scheduler and QP scheduler
+- Discard lid_table[] table in single-host-mode
+- Investigate AH objects leak by ib_ipoib.ko
 
-- Perf Mgt (あるいは別の機能)に Local ACK timeout 情報等を挿入する。
+- ICRC & VCRC, PktLen conform to the IBA specification
+- speed up unloading of pib.ko
 
-- ポート属性の
--- subnet_timeout、init_type_reply
+- Message Sequence Number(MSN)
+- LID Mask Control (LMC)
+- LOCAL_DMA_LKEY
 
-- pib.h のコメントをもっと書く。
+- redesign RNR timer.
 
-- SMInfo
-- Trap を受けた場合を追加。
+- redesing recevie_acknowledge
 
-- Single-host-mode の lid_table を廃止する。
-
-- WQ scheduler と QP scheduler の統合
-
-- ib_ipoib.ko のバグを解析すること
-
-- ICRC & VCRC と PktLen を規格に合致させること。
-
-- pib.ko のアンロードの高速化
-
-- MSN
-
-- infiniband-diags のコマンドで落ちないようにする。
-
-- LOCAL_DMA_LKEY 対応を
-
-- RNR タイマーの見直し。
-
-- UC 対応のために pib_rc.c の見直しを。
-
-- recevie_acknowledge の見直し。
-  - 勝手に破棄するのはダメ
-
-- 非同期エラー・イベント
+- Asynchronous events/errors
   - QP event 
     - IBV_EVENT_PATH_MIG
     - IBV_EVENT_PATH_MIG_ERR
@@ -44,12 +24,8 @@
   - CA event
     - IBV_EVENT_DEVICE_FATAL
 
-- RESET 時に送信した場合の挙動
-
-- RESET 時に受信した場合の挙動
-
-- LMC
-
-- Protection domain のチェック(QP、SRQ、MR、AH)
-  - QP と SRQ のチェック ← ibv_post_send 内でやっている
-  - UD-QP と AH のチェック ← ibv_post_send 内でやっている
+- Add verification of protection domain(QP、SRQ、MR、AH)
+  - QP and SRQ
+    verify in ibv_post_send().
+  - UD-QP and AH
+    verify in ibv_post_send()

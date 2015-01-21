@@ -1,6 +1,6 @@
-・ロックの優先順位
+* Lock priority
 
-  dev(lock) → qp → dev(schedule) → srq → pd → cq → dev(wq)
+  dev(lock) -> qp -> dev(schedule) -> srq -> pd -> cq -> dev(wq)
 
   mad.c の中で ib_post_send の外側で spin_lock_irqsave している。
   セマフォではなく spin_lock を使う必要がある。
@@ -21,7 +21,7 @@
 	}
 	spin_unlock_irqrestore(&qp_info->send_queue.lock, flags);
 
-・HCA & switch エミュレーション
+* HCA & switch エミュレーション
 
    pib の HCA エミュレーションは IB の定義するパケットを UDP パケットとして送受信する。
    # CRC がない。Credit-based flow control のためのフィールドや MSN もない。
@@ -37,13 +37,13 @@
 
   ただしマルチキャストと DR SMP MAD は、pibnetd 経由で行う。
   
-・MR
+* MR
 
   MR の L_Key と R_Key は PD に設けられた mr_table[] のインデックス値とする。
   ただし配列のインデックスとして使うのは下位ビットで、上位ビットは PD ごと
   に設定する乱数値とする。
 
-・GID
+* GID
 
   IB は 64-bit のユニークアドレス (EUI-64) が必要。
 
@@ -60,7 +60,9 @@
                  - yy は 3 から始まる HCA 番号
                  - zz は 0 なら NodeGUID で、1 以上は PortGUID
 
-・送信処理は Send Queue は submitted(未送信)、sending(送信中)、waiting(ACK待ち) の 3 つのキューで処理する。
+* Queue
+
+  送信処理は Send Queue は submitted(未送信)、sending(送信中)、waiting(ACK待ち) の 3 つのキューで処理する。
 
   - ibv_post_send は submitted queue につなげる。
 
@@ -85,7 +87,7 @@
 
   - ACK は sending キューと waiting キューにある場合の二通りが考えられる。
 
-・輻輳制御
+* Congestion controls
 
   ・Requester は一定数以上のリクエストパケットを送信した後は、ACK が返るまで送信を停止する。
 
