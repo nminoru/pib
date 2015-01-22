@@ -439,7 +439,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 		struct pib_mr_record *records;
 
 		control = vzalloc(sizeof(struct pib_record_control) +
-				  dev->nr_ucontext * sizeof(struct pib_mr_record));
+				  dev->nr_mr * sizeof(struct pib_mr_record));
 		if (!control)
 			return -ENOMEM;
 
@@ -472,7 +472,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 		struct pib_srq_record *records;
 
 		control = vzalloc(sizeof(struct pib_record_control) +
-				  dev->nr_ucontext * sizeof(struct pib_srq_record));
+				  dev->nr_srq * sizeof(struct pib_srq_record));
 		if (!control)
 			return -ENOMEM;
 
@@ -502,7 +502,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 		struct pib_ah_record *records;
 
 		control = vzalloc(sizeof(struct pib_record_control) +
-				  dev->nr_ucontext * sizeof(struct pib_ah_record));
+				  dev->nr_ah * sizeof(struct pib_ah_record));
 		if (!control)
 			return -ENOMEM;
 
@@ -532,7 +532,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 		struct pib_cq_record *records;
 
 		control = vzalloc(sizeof(struct pib_record_control) +
-				  dev->nr_ucontext * sizeof(struct pib_cq_record));
+				  dev->nr_cq * sizeof(struct pib_cq_record));
 		if (!control)
 			return -ENOMEM;
 
@@ -561,7 +561,7 @@ static int inspection_open(struct inode *inode, struct file *file)
 		struct pib_qp_record *records;
 
 		control = vzalloc(sizeof(struct pib_record_control) +
-				  dev->nr_ucontext * sizeof(struct pib_qp_record));
+				  dev->nr_qp * sizeof(struct pib_qp_record));
 		if (!control)
 			return -ENOMEM;
 
