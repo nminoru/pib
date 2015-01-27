@@ -1,7 +1,7 @@
 /*
  * pib_qp.c - Queue Pair(QP) functions
  *
- * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -1036,8 +1036,9 @@ next_wr:
 			send_wqe->wr.atomic.rkey        = ibwr->wr.atomic.rkey;
 			break;
 		default:
-			break;
-		}		
+			ret = -EINVAL;
+			goto done;
+		}
 		break;
 
 	case IB_QPT_UD:
@@ -1058,12 +1059,14 @@ next_wr:
 			send_wqe->wr.ud.port_num	= ibwr->wr.ud.port_num;
 			break;
 		default:
-			break;
+			ret = -EINVAL;
+			goto done;
 		}
 		break;
 
 	default:
-		break;
+		ret = -EINVAL;
+		goto done;
 	}
 
 	send_wqe->processing.list_type = PIB_SWQE_SUBMITTED;
