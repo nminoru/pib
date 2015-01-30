@@ -110,8 +110,33 @@
 #define PIB_PSN_MASK			(0xFFFFFF)
 #define PIB_LOCAL_ACK_TIMEOUT_MASK	(0x1F)
 #define PIB_MIN_RNR_NAK_TIMER_MASK	(0x1F)
+
 #define PIB_MAX_MR_PER_PD		(4096)
-#define PIB_MR_INDEX_MASK		(PIB_MAX_MR_PER_PD - 1)
+
+/*
+ * The L_Key and R_Key format consists of the following figure:
+ *
+ *   31           20 19       8 7    0
+ *  +---------------+----------+------+
+ *  |      key1     |  index   | key2 |
+ *  +---------------+----------+------+
+ *
+ * - The key1 is 12 bits system key.
+ *   When memory registration, pib allocate the key1 value.
+ *   This value cannt be changed.
+ *
+ * - The index is 12 bits index field.
+ *   This index indicates the mr_table[] of the protection domain.
+ *
+ * - The key2 is 8 bits programmable key.
+ *   This key can be changed by ib_update_fast_reg_key().
+ *
+ * @see IBA Spec. Vol.1 10.6.3.3 LOCAL ACCESS KEYS
+ */
+
+#define PIB_MR_INDEX_SHIFT		(8)
+#define PIB_MR_INDEX_MASK		((PIB_MAX_MR_PER_PD - 1) << PIB_MR_INDEX_SHIFT)
+
 #define PIB_PACKET_BUFFER		(8192)
 #define PIB_GID_PER_PORT		(16)
 #define PIB_MAX_PAYLOAD_LEN	        (0x40000000)
@@ -597,9 +622,6 @@ struct pib_mr {
 	u32			mr_num;
 	struct timespec		creation_time;
 
-	u32                     lkey_prefix;
-	u32                     rkey_prefix;
- 
 	int                     is_dma;
 	u64                     start;
 	u64                     length;

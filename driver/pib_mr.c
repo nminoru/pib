@@ -34,11 +34,8 @@ static int reg_mr(struct pib_pd *pd, struct pib_mr *mr)
 	return -1;
 
 found:
-	mr->lkey_prefix = pib_random() * PIB_MAX_MR_PER_PD;
-	mr->rkey_prefix = pib_random() * PIB_MAX_MR_PER_PD;
-
-	mr->ib_mr.lkey = (u32)i | mr->lkey_prefix;
-	mr->ib_mr.rkey = (u32)i | mr->rkey_prefix;
+	mr->ib_mr.lkey = (i + pib_random() * PIB_MAX_MR_PER_PD) << PIB_MR_INDEX_SHIFT;
+	mr->ib_mr.rkey = (i + pib_random() * PIB_MAX_MR_PER_PD) << PIB_MR_INDEX_SHIFT;
 
 	if (mr->ib_mr.lkey == PIB_LOCAL_DMA_LKEY)
 		goto found;
@@ -190,7 +187,7 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 	pib_trace_api(dev, IB_USER_VERBS_CMD_DEREG_MR, mr->mr_num);
 
 	spin_lock_irqsave(&pd->lock, flags);
-	lkey = (mr->ib_mr.lkey & PIB_MR_INDEX_MASK);
+	lkey = (mr->ib_mr.lkey & PIB_MR_INDEX_MASK) >> PIB_MR_INDEX_SHIFT;
 	mr_comp = pd->mr_table[lkey];
 	if (mr == mr_comp) {
 		pd->mr_table[lkey] = NULL;
@@ -219,7 +216,7 @@ int pib_dereg_mr(struct ib_mr *ibmr)
 
 struct ib_mr *
 pib_alloc_fast_reg_mr(struct ib_pd *ibpd,
-			 int max_page_list_len)
+		      int max_page_list_len)
 {
 	pr_err("pib: Not supported for alloc_fast_reg_mr callback\n");
 	return ERR_PTR(-ENOMEM);
@@ -228,7 +225,7 @@ pib_alloc_fast_reg_mr(struct ib_pd *ibpd,
 
 struct ib_fast_reg_page_list *
 pib_alloc_fast_reg_page_list(struct ib_device *ibdev,
-				int page_list_len)
+			     int page_list_len)
 {
 	pr_err("pib: Not supported for alloc_fast_reg_page_list\n");
 	return ERR_PTR(-ENOMEM);
@@ -253,12 +250,12 @@ pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, 
 		struct pib_mr *mr;
 		u64 range, mr_base, offset_tmp;
 
-		mr = pd->mr_table[sge.lkey & PIB_MR_INDEX_MASK];
+		mr = pd->mr_table[(sge.lkey & PIB_MR_INDEX_MASK) >> PIB_MR_INDEX_SHIFT];
 
 		if (!mr)
 			return IB_WC_LOC_PROT_ERR;
 
-		if ((sge.lkey & ~PIB_MR_INDEX_MASK) != mr->lkey_prefix)
+		if (sge.lkey != mr->ib_mr.lkey)
 			return IB_WC_LOC_PROT_ERR;
 
 		if ((mr->access_flags & access_flags) != access_flags)
@@ -314,12 +311,12 @@ copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 
 	if (PIB_MAX_PAYLOAD_LEN < size)
 		return IB_WC_LOC_LEN_ERR;
 
-	mr = pd->mr_table[rkey & PIB_MR_INDEX_MASK];
+	mr = pd->mr_table[(rkey & PIB_MR_INDEX_MASK) >> PIB_MR_INDEX_SHIFT];
 
 	if (!mr)
 		return IB_WC_LOC_PROT_ERR;
 
-	if ((rkey & ~PIB_MR_INDEX_MASK) != mr->rkey_prefix)
+	if (rkey != mr->ib_mr.rkey)
 		return IB_WC_LOC_PROT_ERR;
 
 	if ((mr->access_flags & access_flags) != access_flags)
@@ -348,12 +345,12 @@ pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compa
 {
 	struct pib_mr *mr;
 
-	mr = pd->mr_table[rkey & PIB_MR_INDEX_MASK];
+	mr = pd->mr_table[(rkey & PIB_MR_INDEX_MASK) >> PIB_MR_INDEX_SHIFT];
 
 	if (!mr)
 		return IB_WC_LOC_PROT_ERR;
 
-	if ((rkey & ~PIB_MR_INDEX_MASK) != mr->rkey_prefix)
+	if (rkey != mr->ib_mr.rkey)
 		return IB_WC_LOC_PROT_ERR;
 
 	if ((mr->access_flags & IB_ACCESS_REMOTE_ATOMIC) != IB_ACCESS_REMOTE_ATOMIC)
