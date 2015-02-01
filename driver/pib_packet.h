@@ -12,11 +12,20 @@
 #include <linux/init.h>
 #include <rdma/ib_mad.h>
 #include <rdma/ib_smi.h>
+#include <rdma/ib_pack.h>
 
 
 enum {
 	PIB_OPCODE_CNP                   = 0x80,
 	PIB_OPCODE_CNP_SEND_NOTIFY       = 0x80
+};
+
+enum {
+	IB_OPCODE_SEND_LAST_WITH_INVALIDATE	    = 0x16,
+	IB_OPCODE_SEND_ONLY_WITH_INVALIDATE         = 0x17,
+
+	IB_OPCODE(RC, SEND_LAST_WITH_INVALIDATE),
+	IB_OPCODE(RC, SEND_ONLY_WITH_INVALIDATE),
 };
 
 
@@ -160,6 +169,12 @@ struct pib_packet_aeth {
 /* Atomic ACK Extended Transport Header */
 struct pib_packet_atomicacketh {
 	__u64	orig_rem_dt;	/* Virtual Address */
+} __attribute__ ((packed));
+
+
+/* Invalidate Extended Transport */
+struct pib_packet_ieth {
+	__u32	rkey;	/* Remote Key */
 } __attribute__ ((packed));
 
 

@@ -373,15 +373,55 @@ restart:
 	if ((qp->state != IB_QPS_RTS) && (qp->state != IB_QPS_SQD))
 		goto done;
 
-	/*
-	 *  Waiting list の先頭の Send WQE が再送時刻に達していれば
-	 *  waiting list から sending list へ戻して再送信を促す。
-	 */
+	/* Waiting list の先頭の Send WQE があれば取り出す */
 	if (list_empty(&qp->requester.waiting_swqe_head))
 		goto first_sending_wsqe;
 
 	send_wqe = list_first_entry(&qp->requester.waiting_swqe_head, struct pib_send_wqe, list);
 
+	/*
+	 * Waiting list の先頭の Send WQE が Local Invalidate か Fast Reg PMR 
+	 * なら、直ちに処理を行う。
+	 *
+	 * これは Strong Invalidation Ordering のパターン
+	 */
+	if (send_wqe->local_only_request) {
+		/* @todo 冗長なので書き直せ */
+		int ret = 0;
+
+		if (!pib_get_behavior(PIB_BEHAVIOR_RELAXED_INVALIDATION_ORDERING))
+			ret = pib_process_local_only_request(dev, qp, send_wqe);
+
+		if (ret != 0) {
+			pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
+						 send_wqe->processing.status, send_wqe->opcode);
+
+			switch (qp->qp_type) {
+
+			case IB_QPT_RC:
+				qp->state = IB_QPS_ERR;
+				pib_util_flush_qp(qp, 0);
+				break;
+				
+			default:
+				pr_emerg("pib: Error qp_type=%s in %s at %s:%u\n",
+					 pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
+				BUG();
+			}
+		}
+
+		list_del_init(&send_wqe->list);
+		qp->requester.nr_waiting_swqe--;
+		send_wqe->processing.list_type = PIB_SWQE_FREE;
+
+		pib_util_free_send_wqe(qp, send_wqe);
+		goto done;
+	}
+
+	/*
+	 *  Waiting list の先頭の Send WQE が再送時刻に達していれば
+	 *  waiting list から sending list へ戻して再送信を促す。
+	 */
 	if (time_after(send_wqe->processing.local_ack_time, now))
 		goto first_sending_wsqe;
 
@@ -503,14 +543,23 @@ static int process_new_send_wr(struct pib_qp *qp)
 
 	send_wqe = list_first_entry(&qp->requester.submitted_swqe_head, struct pib_send_wqe, list);
 
-	/*
-	 *  A work request with the fence attribute set shall block
-	 *  until all prior RDMA READ and Atomic WRs have completed.
-	 *  
-	 */
 	if (send_wqe->send_flags & IB_SEND_FENCE)
+	{
+		/*
+		 * A work request with the fence attribute set shall block
+		 * until all prior RDMA READ and Atomic WRs have completed.
+		 */
 		if (0 < qp->requester.nr_rd_atomic)
 			return 0;
+		
+		/*
+		 * An invalidate operation shall block until all preceding
+		 * WQEs have completed.
+		 */
+		if ((send_wqe->opcode == IB_WR_LOCAL_INV) &&
+		    ((0 < qp->requester.nr_sending_swqe) || (0 < qp->requester.nr_waiting_swqe)))
+			return 0;
+	}
 
 	if (pib_is_wr_opcode_rd_atomic(send_wqe->opcode)) {
 		if (qp->requester.max_rd_atomic <= qp->requester.nr_rd_atomic)
@@ -585,8 +634,6 @@ static int process_send_wr(struct pib_dev *dev, struct pib_qp *qp, struct pib_se
 			 pib_get_qp_type(qp->qp_type), __FUNCTION__, __FILE__, __LINE__);
 		BUG();
 	}
-
-	return -1;
 
 completion_error:
 	pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,

@@ -1,7 +1,7 @@
 /*
  * pib_rc.c - Reliable Connection service processing
  *
- * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -30,9 +30,12 @@
 /*
  *  Requester: Generating Request Packets
  */
-static enum ib_wc_status process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int with_reth, int with_imm);
+static enum ib_wc_status process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int with_reth, int with_imm, int with_inv);
 static enum ib_wc_status process_RDMA_READ_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer);
 static enum ib_wc_status process_Atomic_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer);
+
+static enum ib_wc_status process_LOCAL_INVALIDATE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
+static enum ib_wc_status process_FAST_REGISTER_PMR_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
 
 /*
  *  Responder: Receiving Inbound Request Packets
@@ -102,7 +105,7 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 {
 	int with_reth = 0;
 	int with_imm = 0;
-	struct pib_pd *pd;
+	int with_inv = 0;
 	void *buffer;
 	u8 port_num;
 	struct ib_ah_attr ah_attr;
@@ -113,6 +116,17 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	u32 lnh;
 	u32 psn;
 	enum ib_wc_status status;
+
+	if (send_wqe->local_only_request) {
+		if (pib_get_behavior(PIB_BEHAVIOR_RELAXED_INVALIDATION_ORDERING)) {
+			int ret = pib_process_local_only_request(dev, qp, send_wqe);
+
+			if (ret != 0)
+				return ret;
+		}
+
+		goto skip_to_send_packet;
+	}
 
 	if (send_wqe->processing.retry_cnt < 0) {
 		status = IB_WC_RETRY_EXC_ERR;
@@ -126,8 +140,6 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 
 	port_num = qp->ib_qp_attr.port_num;
 	ah_attr  = qp->ib_qp_attr.ah_attr;
-
-	pd = to_ppd(qp->ib_qp.pd);
 
 	buffer = dev->thread.send_buffer;
 
@@ -187,6 +199,19 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 			bth->OpCode = IB_OPCODE_RC_SEND_MIDDLE;
 		goto send_or_rdma_write;
 
+	case IB_WR_SEND_WITH_INV:
+		if (send_wqe->processing.all_packets == 1) {
+			bth->OpCode = IB_OPCODE_RC_SEND_ONLY_WITH_INVALIDATE;
+			with_inv = 1;
+		} else if (send_wqe->processing.sent_packets == 0) {
+			bth->OpCode = IB_OPCODE_RC_SEND_FIRST;
+		} else if (send_wqe->processing.all_packets == send_wqe->processing.sent_packets + 1) {
+			bth->OpCode = IB_OPCODE_RC_SEND_LAST_WITH_INVALIDATE;
+			with_inv = 1;
+		} else
+			bth->OpCode = IB_OPCODE_RC_SEND_MIDDLE;
+		goto send_or_rdma_write;
+
 	case IB_WR_RDMA_WRITE:
 		if (send_wqe->processing.all_packets == 1) {
 			bth->OpCode = IB_OPCODE_RC_RDMA_WRITE_ONLY;
@@ -217,7 +242,8 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 		goto send_or_rdma_write;
 
 	send_or_rdma_write:
-		status = process_SEND_or_RDMA_WRITE_request(dev, qp, send_wqe, lrh, grh, bth, buffer, with_reth, with_imm);
+		status = process_SEND_or_RDMA_WRITE_request(dev, qp, send_wqe, lrh, grh, bth, buffer,
+							    with_reth, with_imm, with_inv);
 		break;
 
 	case IB_WR_RDMA_READ:
@@ -261,6 +287,7 @@ int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 		}
 	}
 
+skip_to_send_packet:
 	send_wqe->processing.list_type = PIB_SWQE_WAITING;
 
 	/* Calucate the next time in jififes to resend this request by local ACK timer */
@@ -277,7 +304,7 @@ completion_error:
 
 
 static enum ib_wc_status
-process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int with_reth, int with_imm)
+process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int with_reth, int with_imm, int with_inv)
 {
 	struct pib_pd *pd;
 	u64 mr_offset;
@@ -300,7 +327,12 @@ process_SEND_or_RDMA_WRITE_request(struct pib_dev *dev, struct pib_qp *qp, struc
 	}
 
 	if (with_imm) {
-		*(__be32*)buffer = send_wqe->imm_data;
+		*(__be32*)buffer = send_wqe->ex.imm_data;
+		buffer += 4;
+	}
+
+	if (with_inv) {
+		*(__be32*)buffer = cpu_to_be32(send_wqe->ex.invalidate_rkey);
 		buffer += 4;
 	}
 
@@ -426,6 +458,78 @@ process_Atomic_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_w
 }
 
 
+int
+pib_process_local_only_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe)
+{
+	enum ib_wc_status status;
+
+	if (send_wqe->processing.done) {
+		status = send_wqe->processing.status;
+		goto done;
+	}
+
+	/* IB_WR_LOCAL_INV and IB_WR_FAST_REG_MR doesn't send any packets */
+	switch (send_wqe->opcode) {
+
+	case IB_WR_LOCAL_INV:
+		status = process_LOCAL_INVALIDATE_request(dev, qp, send_wqe);
+		break;
+			
+	case IB_WR_FAST_REG_MR:
+		status = process_FAST_REGISTER_PMR_request(dev, qp, send_wqe);
+		break;
+
+	default:
+		BUG();
+	}
+
+	send_wqe->processing.status = status;
+	send_wqe->processing.done = 1;
+
+done:
+	return (status == IB_WC_SUCCESS) ? 0 : -1;
+}
+
+static enum ib_wc_status
+process_LOCAL_INVALIDATE_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe)
+{
+	struct pib_pd *pd;
+	unsigned long flags;
+	enum ib_wc_status satus;
+
+	pd = to_ppd(qp->ib_qp.pd);
+
+	spin_lock_irqsave(&pd->lock, flags);
+	satus = pib_util_mr_invalidate(pd, send_wqe->ex.invalidate_rkey);
+	spin_unlock_irqrestore(&pd->lock, flags);
+
+	return satus;
+}
+
+
+static enum ib_wc_status
+process_FAST_REGISTER_PMR_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe)
+{
+	struct pib_pd *pd;
+	unsigned long flags;
+	enum ib_wc_status status;
+
+	pd = to_ppd(qp->ib_qp.pd);
+
+	spin_lock_irqsave(&pd->lock, flags);
+	status = pib_util_mr_fast_reg_pmr(pd, send_wqe->wr.fast_reg.rkey,
+					  send_wqe->wr.fast_reg.iova_start,
+					  send_wqe->wr.fast_reg.page_list,
+					  send_wqe->wr.fast_reg.page_shift,
+					  send_wqe->wr.fast_reg.page_list_len,
+					  send_wqe->wr.fast_reg.length,
+					  send_wqe->wr.fast_reg.access_flags);
+	spin_unlock_irqrestore(&pd->lock, flags);
+
+	return status;
+}
+
+
 /******************************************************************************/
 /* Receiving Any Packets As Responder or Requester                            */
 /******************************************************************************/
@@ -541,6 +645,8 @@ receive_request(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_
 	case IB_OPCODE_RC_SEND_ONLY:
 	case IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE:
 	case IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE:
+	case IB_OPCODE_RC_SEND_LAST_WITH_INVALIDATE:
+	case IB_OPCODE_RC_SEND_ONLY_WITH_INVALIDATE:
 		ret = receive_SEND_request(dev, port_num, psn, OpCode, qp, lrh, grh, bth, buffer, size);
 		break;
 
@@ -582,13 +688,16 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 	int init = 0;
 	int finit = 0;
 	int with_imm = 0;
+	int with_inv = 0;
 	int pmtu, min, max;
 	__be32 imm_data = 0;
+	u32 invalidate_rkey = 0;
 	struct pib_recv_wqe *recv_wqe = NULL;
 	struct pib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
 	enum pib_syndrome syndrome;
 	unsigned long flags;
+	int remote_invalidate_error = 0;
 
 	pmtu = (128U << qp->ib_qp_attr.path_mtu);
 
@@ -596,7 +705,13 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 
 	case IB_OPCODE_RC_SEND_ONLY_WITH_IMMEDIATE:
 		with_imm = 1;
-		/* pass through */
+		goto ib_opcode_rc_send_only;
+
+	case IB_OPCODE_RC_SEND_ONLY_WITH_INVALIDATE:
+		with_inv = 1;
+		goto ib_opcode_rc_send_only;
+
+	ib_opcode_rc_send_only:
 
 	case IB_OPCODE_RC_SEND_ONLY:
 		init  = 1;
@@ -613,7 +728,13 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 
 	case IB_OPCODE_RC_SEND_LAST_WITH_IMMEDIATE:
 		with_imm = 1;
-		/* pass through */
+		goto ib_opcode_rc_send_last;
+
+	case IB_OPCODE_RC_SEND_LAST_WITH_INVALIDATE:
+		with_inv = 1;
+		goto ib_opcode_rc_send_last;
+
+	ib_opcode_rc_send_last:
 
 	case IB_OPCODE_RC_SEND_LAST:
 		finit = 1;
@@ -657,6 +778,18 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 		size   -= 4;
 	}
 
+	if (with_inv) {
+		if (size < 4)
+			goto nak_invalid_request;
+
+		invalidate_rkey = be32_to_cpu(*(__be32*)buffer);
+
+		/* @todo */
+
+		buffer += 4;
+		size   -= 4;
+	}
+
 	if ((size < min) || (max < size))
 		goto nak_invalid_request;
 
@@ -671,6 +804,17 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 				       buffer, qp->responder.offset, size,
 				       IB_ACCESS_LOCAL_WRITE,
 				       PIB_MR_COPY_TO);
+
+	if (with_inv && status == IB_WC_SUCCESS)
+	{
+		status = pib_util_mr_invalidate(pd, invalidate_rkey);
+		if (status != IB_WC_SUCCESS)
+		{
+			remote_invalidate_error = 1;
+			goto completion_error;
+		}
+	}
+
 	spin_unlock_irqrestore(&pd->lock, flags);
 
 	switch (status) {
@@ -696,11 +840,19 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 			.opcode      = IB_WC_RECV,
 			.byte_len    = qp->responder.offset,
 			.qp          = &qp->ib_qp,
-			.ex.imm_data = imm_data,
 			.src_qp      = 0,
 			.slid        = be16_to_cpu(lrh->slid),
-			.wc_flags    = with_imm ? IB_WC_WITH_IMM : 0,
 		};
+
+		if (with_imm) {
+			wc.ex.imm_data = imm_data;
+			wc.wc_flags |= IB_WC_WITH_IMM;
+		}
+
+		if (with_inv) {
+			wc.ex.invalidate_rkey = invalidate_rkey;
+			wc.wc_flags |= IB_WC_WITH_INVALIDATE;
+		}
 
 		ret = pib_util_insert_wc_success(qp->recv_cq, &wc, pib_packet_bth_get_padcnt(bth));
 
@@ -739,7 +891,8 @@ completion_error:
 	qp->responder.nr_recv_wqe--;
 	pib_util_free_recv_wqe(qp, recv_wqe);
 
-	push_acknowledge(qp, psn, syndrome);
+	if (!remote_invalidate_error)
+		push_acknowledge(qp, psn, syndrome);
 
 	qp->state = IB_QPS_ERR;
 	pib_util_flush_qp(qp, 0);

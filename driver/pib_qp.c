@@ -1,7 +1,7 @@
 /*
  * pib_qp.c - Queue Pair(QP) functions
  *
- * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -18,6 +18,7 @@ static bool qp_cap_is_ok(const struct pib_dev *dev, const struct ib_qp_cap *cap,
 static void dealloc_free_wqe(struct pib_qp *qp);
 static bool modify_qp_is_ok(const struct pib_dev *dev, const struct pib_qp *qp, enum ib_qp_state cur_state, const struct ib_qp_attr *attr, int attr_mask);
 static void get_ready_to_send(struct pib_dev *dev, struct pib_qp *qp);
+static void flush_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe);
 static int reset_qp(struct pib_qp *qp);
 static void reset_qp_attr(struct pib_qp *qp);
 static int copy_inline_data(struct pib_qp *qp, struct pib_send_wqe *send_wqe, u64 total_length);
@@ -89,29 +90,20 @@ void pib_util_flush_qp(struct pib_qp *qp, int send_only)
 	BUG_ON(!spin_is_locked(&qp->lock));
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
-		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
-					 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
-		list_del_init(&send_wqe->list);
-		pib_util_free_send_wqe(qp, send_wqe);
+		flush_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_waiting_swqe = 0;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.sending_swqe_head, list) {
-		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
-					 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
-		list_del_init(&send_wqe->list);
-		pib_util_free_send_wqe(qp, send_wqe);
+		flush_send_wqe(qp, send_wqe);
 	}
 	qp->requester.nr_sending_swqe = 0;
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.submitted_swqe_head, list) {
-		pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
-					 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
-		list_del_init(&send_wqe->list);
-		pib_util_free_send_wqe(qp, send_wqe);
+		flush_send_wqe(qp, send_wqe);
 	}
-	qp->requester.nr_submitted_swqe = 0;
 
+	qp->requester.nr_submitted_swqe = 0;
 	qp->requester.nr_rd_atomic = 0;
 
 	if (send_only)
@@ -142,6 +134,26 @@ void pib_util_flush_qp(struct pib_qp *qp, int send_only)
 	qp->requester.nr_contig_requests = 0;
 	qp->requester.nr_contig_read_acks = 0;
 	qp->responder.nr_contig_read_acks = 0;
+}
+
+
+static void
+flush_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe)
+{
+#if 0
+	switch (send_wqe->opcode)
+	{
+	case IB_WR_LOCAL_INV:
+	case IB_WR_FAST_REG_MR:
+		break;
+	default:
+		break;
+	}
+#endif
+	pib_util_insert_wc_error(qp->send_cq, qp, send_wqe->wr_id,
+				 IB_WC_WR_FLUSH_ERR, send_wqe->opcode);
+	list_del_init(&send_wqe->list);
+	pib_util_free_send_wqe(qp, send_wqe);
 }
 
 
@@ -981,7 +993,7 @@ next_wr:
 	send_wqe->opcode     = ibwr->opcode;
 	send_wqe->send_flags = ibwr->send_flags;
 	send_wqe->num_sge    = ibwr->num_sge;
-	send_wqe->imm_data   = imm_data;
+	send_wqe->ex.imm_data= imm_data;
 	memset(&send_wqe->processing, 0, sizeof(send_wqe->processing));
 	memset(&send_wqe->wr, 0, sizeof(send_wqe->wr));
 
@@ -1035,6 +1047,27 @@ next_wr:
 			send_wqe->wr.atomic.swap        = ibwr->wr.atomic.swap;
 			send_wqe->wr.atomic.rkey        = ibwr->wr.atomic.rkey;
 			break;
+
+		case IB_WR_SEND_WITH_INV:
+			send_wqe->ex.invalidate_rkey	= ibwr->ex.invalidate_rkey;
+			break;
+
+		case IB_WR_LOCAL_INV:
+			send_wqe->local_only_request	= 1;
+			send_wqe->ex.invalidate_rkey	= ibwr->ex.invalidate_rkey;
+			break;
+
+		case IB_WR_FAST_REG_MR:
+			send_wqe->local_only_request	= 1;
+			send_wqe->wr.fast_reg.iova_start= ibwr->wr.fast_reg.iova_start;
+			send_wqe->wr.fast_reg.page_list	= ibwr->wr.fast_reg.page_list;
+			send_wqe->wr.fast_reg.page_shift= ibwr->wr.fast_reg.page_shift;
+			send_wqe->wr.fast_reg.page_list_len = ibwr->wr.fast_reg.page_list_len;
+			send_wqe->wr.fast_reg.length	= ibwr->wr.fast_reg.length;
+			send_wqe->wr.fast_reg.access_flags = ibwr->wr.fast_reg.access_flags;
+			send_wqe->wr.fast_reg.rkey	= ibwr->wr.fast_reg.rkey;
+			break;
+
 		default:
 			break;
 		}		
@@ -1104,6 +1137,7 @@ static int copy_inline_data(struct pib_qp *qp, struct pib_send_wqe *send_wqe, u6
 	switch (send_wqe->opcode) {
 	case IB_WR_SEND:
 	case IB_WR_SEND_WITH_IMM:
+	case IB_WR_SEND_WITH_INV:
 	case IB_WR_RDMA_WRITE:
 	case IB_WR_RDMA_WRITE_WITH_IMM:
 		break;

@@ -153,8 +153,9 @@
 
 #define PIB_DEVICE_CAP_FLAGS		(IB_DEVICE_CHANGE_PHY_PORT |\
 					 IB_DEVICE_SYS_IMAGE_GUID  |\
-					 IB_DEVICE_RC_RNR_NAK_GEN)
-
+					 IB_DEVICE_RC_RNR_NAK_GEN  |\
+					 IB_DEVICE_MEM_MGT_EXTENSIONS)
+	
 #define PIB_PORT_CAP_FLAGS		(IB_PORT_TRAP_SUP |\
 					 IB_PORT_SYS_IMAGE_GUID_SUP |\
 					 IB_PORT_CM_SUP |\
@@ -221,6 +222,8 @@ enum pib_behavior {
 	 */
 	PIB_BEHAVIOR_QPN_REALLOCATION			  =  5,
 
+	PIB_BEHAVIOR_RELAXED_INVALIDATION_ORDERING	  =  6,
+
 	/*
 	 *  If the length of a scatter/gather list is zero in bytes,
 	 *  it consider as 2^31 in bytes.
@@ -279,6 +282,12 @@ enum pib_thread_flag {
 	PIB_THREAD_QP_SCHEDULE
 };
 
+
+enum pib_mr_state {
+	PIB_MR_INVALID,
+	PIB_MR_FREE,
+	PIB_MR_VALID
+};
 
 enum pib_mr_direction {
 	PIB_MR_COPY_FROM,
@@ -613,7 +622,6 @@ struct pib_ah {
 	struct timespec		creation_time;
 };
 
-
 struct pib_mr {
 	struct ib_mr            ib_mr;
 	struct ib_umem         *ib_umem;
@@ -622,11 +630,20 @@ struct pib_mr {
 	u32			mr_num;
 	struct timespec		creation_time;
 
-	int                     is_dma;
+	enum pib_mr_state	state;
+	bool			is_fast_reg_mr;
+
+	int			is_dma;
 	u64                     start;
 	u64                     length;
 	u64                     virt_addr;
 	int                     access_flags;
+	
+	int			max_page_list_len;
+	
+	int			page_list_len;
+	void		      **page_list;
+	unsigned int		page_shift;
 };
 
 
@@ -839,7 +856,10 @@ struct pib_swqe_processing {
 	unsigned long           local_ack_time;
 
 	int                     retry_cnt;
-	int                     rnr_retry; 
+
+	int                     rnr_retry;
+
+	int			done; /* request execution is done  when Local Invalidate or Fast Reg PMR */
 
 	/* Responder Side */
 };
@@ -850,6 +870,7 @@ struct pib_send_wqe {
 	enum ib_wr_opcode	opcode;
 	u32			trace_id; /* for execution trace */
 
+	int			local_only_request; /* when Local Invalidate or Fast Register PMR */
 	int			send_flags;
 
 	int			num_sge;
@@ -860,7 +881,11 @@ struct pib_send_wqe {
 
 	struct pib_swqe_processing processing;
 
-	__be32		        imm_data;
+	union {
+		__be32		imm_data;
+		u32		invalidate_rkey;
+	} ex;
+
 	void		       *inline_data_buffer;
 
 	union {
@@ -883,6 +908,16 @@ struct pib_send_wqe {
 			u16	pkey_index; /* valid for GSI only */
 			u8	port_num;   /* valid for DR SMPs on switch only */
 		} ud;
+
+		struct {
+			u64	iova_start;
+			struct ib_fast_reg_page_list *page_list;
+			unsigned int page_shift;
+			unsigned int page_list_len;
+			u32	length;
+			int	access_flags;
+			u32	rkey;
+		} fast_reg;
 	} wr;	
 };
 
@@ -1033,10 +1068,12 @@ extern struct ib_mr *pib_alloc_fast_reg_mr(struct ib_pd *pd,
 extern struct ib_fast_reg_page_list *pib_alloc_fast_reg_page_list(struct ib_device *ibdev,
 								  int page_list_len);
 extern void pib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
-enum ib_wc_status pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction);
-enum ib_wc_status pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
-enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
-enum ib_wc_status pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
+extern enum ib_wc_status pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction);
+extern enum ib_wc_status pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
+extern enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
+extern enum ib_wc_status pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
+extern enum ib_wc_status pib_util_mr_invalidate(struct pib_pd *pd, u32 rkey);
+extern enum ib_wc_status pib_util_mr_fast_reg_pmr(struct pib_pd *pd, u32 rkey, u64 iova_start, struct ib_fast_reg_page_list *page_list, unsigned int page_shift, unsigned int page_list_len, u32 length, int access_flags);
 
 /*
  *  in pib_cq.c
@@ -1113,6 +1150,7 @@ extern void pib_receive_ud_qp_incoming_message(struct pib_dev *dev, u8 port_num,
  *  in pib_rc.c
  */
 extern int pib_process_rc_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
+extern int pib_process_local_only_request(struct pib_dev *dev, struct pib_qp *qp, struct pib_send_wqe *send_wqe);
 extern void pib_receive_rc_qp_incoming_message(struct pib_dev *dev, u8 port_num, struct pib_qp *qp, struct pib_packet_lrh *lrh, struct ib_grh *grh, struct pib_packet_bth *bth, void *buffer, int size);
 extern int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp);
 

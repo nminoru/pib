@@ -137,6 +137,9 @@ static const char *str_uverbs_cmd[] = {
 	[PIB_USER_VERBS_CMD_MODIFY_DEVICE] = "modify_device",
 	[PIB_USER_VERBS_CMD_MODIFY_PORT] = "modify_port",
 	[PIB_USER_VERBS_CMD_MODIFY_CQ]	= "modify_cq",
+	[PIB_USER_VERBS_CMD_ALLOC_FAST_REG_MR] = "alloc_fast_reg_mr",
+	[PIB_USER_VERBS_CMD_ALLOC_FAST_REG_PAGE_LIST] = "alloc_fast_reg_page_list",
+	[PIB_USER_VERBS_CMD_FREE_FAST_REG_PAGE_LIST] = "free_fast_reg_page_list",
 };
 
 
@@ -145,8 +148,10 @@ static const char *str_trans_op[] = {
 	[IB_OPCODE_SEND_MIDDLE]			= "SEND_MID",
 	[IB_OPCODE_SEND_LAST]			= "SEND_LAST",
 	[IB_OPCODE_SEND_LAST_WITH_IMMEDIATE]	= "SEND_LAST_IMM",
+	[IB_OPCODE_SEND_ONLY_WITH_INVALIDATE]	= "SEND_LAST_INV",
 	[IB_OPCODE_SEND_ONLY]			= "SEND_ONLY",
 	[IB_OPCODE_SEND_ONLY_WITH_IMMEDIATE]	= "SEND_ONLY_IMM",
+	[IB_OPCODE_SEND_ONLY_WITH_INVALIDATE]	= "SEND_ONLY_INV",
 	[IB_OPCODE_RDMA_WRITE_FIRST]		= "WRITE_FIRST",
 	[IB_OPCODE_RDMA_WRITE_MIDDLE]		= "WRITE_MID",
 	[IB_OPCODE_RDMA_WRITE_LAST]		= "WRITE_LAST",
@@ -417,29 +422,29 @@ enum ib_wc_opcode pib_convert_wr_opcode_to_wc_opcode(enum ib_wr_opcode opcode)
 		return IB_WC_RDMA_WRITE;
 	case IB_WR_SEND:
 	case IB_WR_SEND_WITH_IMM:
+	case IB_WR_SEND_WITH_INV:
 		return IB_WC_SEND;
 	case IB_WR_RDMA_READ:
+	case IB_WR_RDMA_READ_WITH_INV:
 		return IB_WC_RDMA_READ;
 	case IB_WR_ATOMIC_CMP_AND_SWP:
 		return IB_WC_COMP_SWAP;
 	case IB_WR_ATOMIC_FETCH_AND_ADD:
 		return IB_WC_FETCH_ADD;
-	case IB_WR_LOCAL_INV:
-		return IB_WC_LOCAL_INV;
 	case IB_WR_LSO:
 		return IB_WC_LSO;
+	case IB_WR_LOCAL_INV:
+		return IB_WC_LOCAL_INV;
 	case IB_WR_FAST_REG_MR:
 		return IB_WC_FAST_REG_MR;
 	case IB_WR_MASKED_ATOMIC_CMP_AND_SWP:
 		return IB_WC_MASKED_COMP_SWAP;
 	case IB_WR_MASKED_ATOMIC_FETCH_AND_ADD:
 		return IB_WC_MASKED_FETCH_ADD;
-#if 0
 	case IB_WR_BIND_MW:
 		return IB_WC_BIND_MW;
-
-	case IB_WR_SEND_WITH_INV,
-	case IB_WR_RDMA_READ_WITH_INV:
+#if 0
+	case IB_WR_REG_SIG_MR:
 #endif
 	default:
 		BUG();

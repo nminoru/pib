@@ -152,7 +152,7 @@ int pib_process_ud_qp_request(struct pib_dev *dev, struct pib_qp *qp, struct pib
 	deth->srcQP = cpu_to_be32(qp->ib_qp.qp_num);
 
 	if (with_imm) {
-		*(__be32*)buffer = send_wqe->imm_data;
+		*(__be32*)buffer = send_wqe->ex.imm_data;
 		buffer += 4;
 	}
 

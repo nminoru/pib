@@ -498,6 +498,8 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	dev->ib_dev.get_dma_mr		= pib_get_dma_mr;
 	dev->ib_dev.reg_user_mr		= pib_reg_user_mr;
 	dev->ib_dev.dereg_mr		= pib_dereg_mr;
+	/* dev->ib_dev.destroy_mr */
+	/* dev->ib_dev.create_mr */
 	dev->ib_dev.alloc_fast_reg_mr 	= pib_alloc_fast_reg_mr;
 	dev->ib_dev.alloc_fast_reg_page_list = pib_alloc_fast_reg_page_list;
 	dev->ib_dev.free_fast_reg_page_list  = pib_free_fast_reg_page_list;
