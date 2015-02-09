@@ -729,9 +729,9 @@ static void pib_dev_remove(struct pib_dev *dev)
 
 	pr_info("pib: remove HCA (dev_id=%d)\n", dev->dev_id);
 
-	pib_stop_delayed_queue(dev);
-
 	ib_unregister_device(&dev->ib_dev);
+
+	pib_stop_delayed_queue(dev);
 
 	pib_release_kthread(dev);
 
