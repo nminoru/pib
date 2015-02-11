@@ -9,6 +9,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_trace.h"
 
 
@@ -58,12 +59,12 @@ struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 
 	cq->state	= PIB_STATE_OK;
 	cq->notify_flag = 0;
-	cq->notified	= 1; /* assume CQ has been notified when initial */
+	cq->has_notified= 1; /* assume CQ has been notified when initial */
 
 	cq->ib_cq.cqe	= entries;
 	cq->nr_cqe	= 0;
 
-	spin_lock_init(&cq->lock);
+	pib_spin_lock_init(&cq->lock);
 
 	INIT_LIST_HEAD(&cq->cqe_head);
 	INIT_LIST_HEAD(&cq->free_cqe_head);
@@ -120,7 +121,7 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_DESTROY_CQ, cq->cq_num);
 
-	spin_lock_irqsave(&cq->lock, flags);
+	pib_spin_lock_irqsave(&cq->lock, flags);
 	list_for_each_entry_safe(cqe, cqe_next, &cq->cqe_head, list) {
 		list_del_init(&cqe->list);
 		kmem_cache_free(pib_cqe_cachep, cqe);
@@ -130,7 +131,7 @@ int pib_destroy_cq(struct ib_cq *ibcq)
 		kmem_cache_free(pib_cqe_cachep, cqe);
 	}
 	cq->nr_cqe = 0;
-	spin_unlock_irqrestore(&cq->lock, flags);
+	pib_spin_unlock_irqrestore(&cq->lock, flags);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	list_del(&cq->list);
@@ -199,7 +200,7 @@ int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_POLL_CQ, cq->cq_num);
 
-	spin_lock_irqsave(&cq->lock, flags);
+	pib_spin_lock_irqsave(&cq->lock, flags);
 
 	if (cq->state != PIB_STATE_OK) {
 		ret = -EACCES;
@@ -220,7 +221,7 @@ int pib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *ibwc)
 	}
 
 done:
-	spin_unlock_irqrestore(&cq->lock, flags);
+	pib_spin_unlock_irqrestore(&cq->lock, flags);
 
 	return ret;
 }
@@ -241,7 +242,7 @@ int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags notify_flags)
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_REQ_NOTIFY_CQ, cq->cq_num);
 
-	spin_lock_irqsave(&cq->lock, flags);
+	pib_spin_lock_irqsave(&cq->lock, flags);
 
 	if (cq->state != PIB_STATE_OK)
 		ret = -1;
@@ -256,10 +257,10 @@ int pib_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags notify_flags)
 			ret = 1;
 
 		/* @note CQE が溜まっている時に req_notify_cq を呼び出したらどうなるかは実装依存 */
-		cq->notified = 0;
+		cq->has_notified = 0;
 	}
 
-	spin_unlock_irqrestore(&cq->lock, flags);
+	pib_spin_unlock_irqrestore(&cq->lock, flags);
 
 	return ret;
 }
@@ -277,7 +278,7 @@ int pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp)
 
 	BUG_ON(qp == NULL);
 
-	spin_lock_irqsave(&cq->lock, flags);
+	pib_spin_lock_irqsave(&cq->lock, flags);
 	list_for_each_entry_safe(cqe, cqe_next, &cq->cqe_head, list) {
 		if (cqe->ib_wc.qp == &qp->ib_qp) {
 			cq->nr_cqe--;
@@ -286,7 +287,7 @@ int pib_util_remove_cq(struct pib_cq *cq, struct pib_qp *qp)
 			count++;
 		}
 	}
-	spin_unlock_irqrestore(&cq->lock, flags);
+	pib_spin_unlock_irqrestore(&cq->lock, flags);
 
 	return count;
 }
@@ -330,7 +331,7 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited)
 
 	pib_trace_comp(to_pdev(cq->ib_cq.device), cq, wc);
 
-	spin_lock_irqsave(&cq->lock, flags);
+	pib_spin_lock_irqsave(&cq->lock, flags);
 
 	if (cq->state != PIB_STATE_OK) {
 		ret = -EACCES;
@@ -361,16 +362,20 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited)
 	/* tell completion channel */
 	if ((cq->notify_flag == IB_CQ_NEXT_COMP) ||
 	    ((cq->notify_flag == IB_CQ_SOLICITED) && solicited)) {
-		if (!cq->notified) {
+		if (!cq->has_notified) {
+			/*
+			 * The cq->has_notified must be set to 1 before calling completion handler. 
+			 * Because pib_req_notify_cq() may be called via cq completion handler.
+			 */
+			cq->has_notified = 1;
 			cq->ib_cq.comp_handler(&cq->ib_cq, cq->ib_cq.cq_context);
-			cq->notified = 1;
 		}
 	}
 
 	ret = 0;
 
 done:
-	spin_unlock_irqrestore(&cq->lock, flags);
+	pib_spin_unlock_irqrestore(&cq->lock, flags);
 
 	return ret;
 }
@@ -382,31 +387,26 @@ void pib_util_insert_async_cq_error(struct pib_dev *dev, struct pib_cq *cq)
 	struct pib_qp *qp;
 	unsigned long flags;
 
-	BUG_ON(spin_is_locked(&cq->lock));
-
 	pib_trace_async(dev, IB_EVENT_CQ_ERR, cq->cq_num);
 
-	spin_lock_irqsave(&cq->lock, flags);
-
+	pib_spin_lock_irqsave(&cq->lock, flags);
 	cq->state     = PIB_STATE_ERR;
-
 	ev.event      = IB_EVENT_CQ_ERR;
 	ev.device     = cq->ib_cq.device;
 	ev.element.cq = &cq->ib_cq;
 	cq->ib_cq.event_handler(&ev, cq->ib_cq.cq_context);
-
-	spin_unlock_irqrestore(&cq->lock, flags);
+	pib_spin_unlock_irqrestore(&cq->lock, flags);
 
 	/* ここでは cq はロックしない */
 
 	list_for_each_entry(qp, &dev->qp_head, list) {
-		spin_lock(&qp->lock);
+		pib_spin_lock(&qp->lock);
 		if ((cq == qp->send_cq) || (cq == qp->recv_cq)) {
 			qp->state = IB_QPS_ERR;
 			pib_util_flush_qp(qp, 0);
 			pib_util_insert_async_qp_error(qp, IB_EVENT_QP_FATAL);
 		}
-		spin_unlock(&qp->lock);
+		pib_spin_unlock(&qp->lock);
 	}
 }
 

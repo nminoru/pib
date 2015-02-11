@@ -9,6 +9,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_trace.h"
 
 
@@ -71,7 +72,7 @@ struct ib_srq *pib_create_srq(struct ib_pd *ibpd,
 	srq->ib_srq_attr = init_attr->attr;
 	srq->ib_srq_attr.srq_limit = 0; /* srq_limit isn't set when ibv_craete_srq */
 
-	spin_lock_init(&srq->lock);
+	pib_spin_lock_init(&srq->lock);
 	INIT_LIST_HEAD(&srq->recv_wqe_head);
 	INIT_LIST_HEAD(&srq->free_recv_wqe_head);
 	PIB_INIT_WORK(&srq->work, dev, srq, srq_error_handler);
@@ -127,7 +128,7 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_DESTROY_SRQ, srq->srq_num);
 
-	spin_lock_irqsave(&srq->lock, flags);
+	pib_spin_lock_irqsave(&srq->lock, flags);
 	list_for_each_entry_safe(recv_wqe, next, &srq->recv_wqe_head, list) {
 		list_del_init(&recv_wqe->list);
 		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
@@ -137,7 +138,7 @@ int pib_destroy_srq(struct ib_srq *ibsrq)
 		kmem_cache_free(pib_recv_wqe_cachep, recv_wqe);
 	}
 	srq->nr_recv_wqe = 0;
-	spin_unlock_irqrestore(&srq->lock, flags);
+	pib_spin_unlock_irqrestore(&srq->lock, flags);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	list_del(&srq->list);
@@ -167,7 +168,7 @@ int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_MODIFY_SRQ, srq->srq_num);
 
-	spin_lock_irqsave(&srq->lock, flags);
+	pib_spin_lock_irqsave(&srq->lock, flags);
 
 	if (srq->state != PIB_STATE_OK) {
 		ret = -EACCES; 
@@ -205,7 +206,7 @@ int pib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 	ret = 0;
 
 done:
-	spin_unlock_irqrestore(&srq->lock, flags);
+	pib_spin_unlock_irqrestore(&srq->lock, flags);
 
 	return ret;
 }
@@ -226,7 +227,7 @@ int pib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_QUERY_SRQ, srq->srq_num);
 
-	spin_lock_irqsave(&srq->lock, flags);
+	pib_spin_lock_irqsave(&srq->lock, flags);
 
 	if (srq->state != PIB_STATE_OK) {
 		ret = -EACCES; 
@@ -238,7 +239,7 @@ int pib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 	ret = 0;
 
 done:
-	spin_unlock_irqrestore(&srq->lock, flags);
+	pib_spin_unlock_irqrestore(&srq->lock, flags);
 
 	return ret;
 }
@@ -262,7 +263,7 @@ int pib_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *ibwr,
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_POST_SRQ_RECV, srq->srq_num);
 
-	spin_lock_irqsave(&srq->lock, flags);
+	pib_spin_lock_irqsave(&srq->lock, flags);
 
 	/*
 	 *  No state checking
@@ -315,7 +316,7 @@ next_wr:
 		goto next_wr;
 
 err:
-	spin_unlock_irqrestore(&srq->lock, flags);
+	pib_spin_unlock_irqrestore(&srq->lock, flags);
 
 	if (ret && bad_wr)
 		*bad_wr = ibwr;	
@@ -330,7 +331,7 @@ pib_util_get_srq(struct pib_srq *srq)
 	unsigned long flags;
 	struct pib_recv_wqe *recv_wqe = NULL;
 
-	spin_lock_irqsave(&srq->lock, flags);
+	pib_spin_lock_irqsave(&srq->lock, flags);
 
 	if (srq->state != PIB_STATE_OK)
 		goto skip;
@@ -357,7 +358,7 @@ pib_util_get_srq(struct pib_srq *srq)
 	}
 
 skip:
-	spin_unlock_irqrestore(&srq->lock, flags);
+	pib_spin_unlock_irqrestore(&srq->lock, flags);
 
 	return recv_wqe;
 }
@@ -369,11 +370,9 @@ void pib_util_insert_async_srq_error(struct pib_dev *dev, struct pib_srq *srq)
 	struct pib_qp *qp;
 	unsigned long flags;
 
-	BUG_ON(spin_is_locked(&srq->lock));
-
 	pib_trace_async(dev, IB_EVENT_SRQ_ERR, srq->srq_num);
 
-	spin_lock_irqsave(&srq->lock, flags);
+	pib_spin_lock_irqsave(&srq->lock, flags);
 
 	srq->state     = PIB_STATE_ERR;
 
@@ -382,18 +381,18 @@ void pib_util_insert_async_srq_error(struct pib_dev *dev, struct pib_srq *srq)
 	ev.element.srq = &srq->ib_srq;
 	srq->ib_srq.event_handler(&ev, srq->ib_srq.srq_context);
 
-	spin_unlock_irqrestore(&srq->lock, flags);
+	pib_spin_unlock_irqrestore(&srq->lock, flags);
 
 	/* ここでは srq はロックしない */
 
 	list_for_each_entry(qp, &dev->qp_head, list) {
-		spin_lock(&qp->lock);
+		pib_spin_lock(&qp->lock);
 		if (srq == to_psrq(qp->ib_qp_init_attr.srq)) {
 			qp->state = IB_QPS_ERR;
 			pib_util_flush_qp(qp, 0);
 			pib_util_insert_async_qp_error(qp, IB_EVENT_QP_FATAL);
 		}
-		spin_unlock(&qp->lock);
+		pib_spin_unlock(&qp->lock);
 	}
 }
 

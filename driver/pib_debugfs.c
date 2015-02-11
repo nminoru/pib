@@ -13,6 +13,7 @@
 #include <linux/math64.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_packet.h"
 #include "pib_trace.h"
 
@@ -761,11 +762,11 @@ void pib_inject_err_handler(struct pib_work_struct *work)
 		struct pib_qp *qp;
 		list_for_each_entry(qp, &dev->qp_head, list) {
 			if (qp->ib_qp.qp_num == oid) {
-				spin_lock(&qp->lock);
+				pib_spin_lock(&qp->lock);
 				qp->state = IB_QPS_ERR;
 				pib_util_flush_qp(qp, 0);
 				pib_util_insert_async_qp_error(qp, IB_EVENT_QP_FATAL);
-				spin_unlock(&qp->lock);
+				pib_spin_unlock(&qp->lock);
 				break;
 			}
 		}

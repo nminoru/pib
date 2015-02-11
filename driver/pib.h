@@ -28,6 +28,7 @@
 #include <rdma/ib_smi.h> /* for ib_smp */
 
 
+#include "pib_spinlock.h"
 #include "pib_packet.h"
 
 
@@ -654,11 +655,11 @@ struct pib_cq {
 	u32			cq_num;
 	struct timespec		creation_time;
 	
-	spinlock_t		lock;
+	pib_spinlock_t		lock;
 
 	enum pib_state		state;
 	int			notify_flag;
-	int			notified;
+	int			has_notified;
 
 	int                     nr_cqe;
 	struct list_head        cqe_head;
@@ -676,7 +677,7 @@ struct pib_srq {
 	u32			srq_num;
 	struct timespec		creation_time;
 
-	spinlock_t		lock;
+	pib_spinlock_t		lock;
 
 	enum pib_state		state;
 
@@ -762,7 +763,7 @@ struct pib_qp {
 
 	struct rb_node          rb_node; /* for dev->qp_table */
 
-	spinlock_t		lock;
+	pib_spinlock_t		lock;
 
 	unsigned long           local_ack_timeout; /* in jiffies */
 

@@ -24,6 +24,7 @@
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_packet.h"
 #include "pib_trace.h"
 
@@ -361,7 +362,7 @@ restart:
 	}
 
 	/* @notice ロックの入れ子関係を一部崩している */
-	spin_lock(&qp->lock);
+	pib_spin_lock(&qp->lock);
 	spin_unlock(&dev->lock);
 
 	/* Responder: generating acknowledge packets */
@@ -508,7 +509,7 @@ first_sending_wsqe:
 done:
 	pib_util_reschedule_qp(qp); /* 必要の応じてスケジューラから抜くために呼び出す */
 
-	spin_unlock_irqrestore(&qp->lock, flags);
+	pib_spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (dev->thread.ready_to_send)
 		process_sendmsg(dev);
@@ -968,7 +969,7 @@ static void process_incoming_message_per_qp(struct pib_dev *dev, u8 port_num, u1
 pass_pkey_checking:
 
 	/* @notice ロックの入れ子関係を一部崩している */
-	spin_lock(&qp->lock);
+	pib_spin_lock(&qp->lock);
 	spin_unlock(&dev->lock);
 
 	switch (qp->qp_type) {
@@ -991,7 +992,7 @@ pass_pkey_checking:
 
 	pib_util_reschedule_qp(qp);	
 
-	spin_unlock_irqrestore(&qp->lock, flags);
+	pib_spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (dev->thread.ready_to_send)
 		process_sendmsg(dev);

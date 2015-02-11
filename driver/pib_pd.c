@@ -9,6 +9,7 @@
 #include <linux/init.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_trace.h"
 
 

@@ -10,6 +10,7 @@
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_trace.h"
 
 
@@ -87,7 +88,7 @@ void pib_util_flush_qp(struct pib_qp *qp, int send_only)
 	struct pib_recv_wqe *recv_wqe, *next_recv_wqe;
 	struct pib_ack *ack, *ack_next;
 
-	BUG_ON(!spin_is_locked(&qp->lock));
+	BUG_ON(!pib_spin_is_locked(&qp->lock));
 
 	list_for_each_entry_safe(send_wqe, next_send_wqe, &qp->requester.waiting_swqe_head, list) {
 		flush_send_wqe(qp, send_wqe);
@@ -286,7 +287,7 @@ struct ib_qp *pib_create_qp(struct ib_pd *ibpd,
 	qp->send_cq         = to_pcq(init_attr->send_cq);
 	qp->recv_cq         = to_pcq(init_attr->recv_cq);
 
-	spin_lock_init(&qp->lock);
+	pib_spin_lock_init(&qp->lock);
 
 	INIT_LIST_HEAD(&qp->requester.submitted_swqe_head);
 	INIT_LIST_HEAD(&qp->requester.sending_swqe_head);
@@ -507,12 +508,11 @@ int pib_destroy_qp(struct ib_qp *ibqp)
 	pib_detach_all_mcast(dev, qp);
 
 	spin_lock_irqsave(&dev->lock, flags);
-	spin_lock(&qp->lock);
 
+	pib_spin_lock(&qp->lock);
 	reset_qp(qp);
 	dealloc_free_wqe(qp);
-
-	spin_unlock(&qp->lock);
+	pib_spin_unlock(&qp->lock);
 
 	if (qp->requester.inline_data_buffer)
 		vfree(qp->requester.inline_data_buffer);
@@ -574,7 +574,7 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_MODIFY_QP, qp->ib_qp.qp_num);
 
-	spin_lock_irqsave(&qp->lock, flags);
+	pib_spin_lock_irqsave(&qp->lock, flags);
 
 	cur_state = (attr_mask & IB_QP_CUR_STATE) ? attr->cur_qp_state : qp->state;
 	new_state = (attr_mask & IB_QP_STATE) ? attr->qp_state : cur_state;
@@ -756,7 +756,7 @@ int pib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		get_ready_to_send(dev, qp);
 
 done:
-	spin_unlock_irqrestore(&qp->lock, flags);
+	pib_spin_unlock_irqrestore(&qp->lock, flags);
 
 	return ret;
 }
@@ -888,7 +888,7 @@ int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mas
 		init_attr->sq_sig_type = IB_SIGNAL_ALL_WR;
 #endif
 
-	spin_lock_irqsave(&qp->lock, flags);
+	pib_spin_lock_irqsave(&qp->lock, flags);
 
 	*qp_attr              = qp->ib_qp_attr;
 	*qp_init_attr         = qp->ib_qp_init_attr;
@@ -902,7 +902,7 @@ int pib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mas
 	qp_attr->sq_draining  = !(list_empty(&qp->requester.sending_swqe_head) &&
 				  list_empty(&qp->requester.waiting_swqe_head));
 
-	spin_unlock_irqrestore(&qp->lock, flags);
+	pib_spin_unlock_irqrestore(&qp->lock, flags);
 
 	return 0;
 }
@@ -928,7 +928,7 @@ int pib_post_send(struct ib_qp *ibqp, struct ib_send_wr *ibwr,
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_POST_SEND, qp->ib_qp.qp_num);
 
-	spin_lock_irqsave(&qp->lock, flags);
+	pib_spin_lock_irqsave(&qp->lock, flags);
 
 	if ((qp->state == IB_QPS_RESET) || (qp->state == IB_QPS_INIT)) {
 		ret = -EINVAL;
@@ -1116,7 +1116,7 @@ done:
 	if (pending_send_wr)
 		get_ready_to_send(dev, qp);
 
-	spin_unlock_irqrestore(&qp->lock, flags);
+	pib_spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (ret && bad_wr)
 		*bad_wr = ibwr;
@@ -1180,7 +1180,7 @@ int pib_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *ibwr,
 	if (qp->ib_qp_init_attr.srq)
 		return -EINVAL;
 
-	spin_lock_irqsave(&qp->lock, flags);
+	pib_spin_lock_irqsave(&qp->lock, flags);
 
 next_wr:
 	/* QP check */
@@ -1248,7 +1248,7 @@ skip:
 		goto next_wr;
 
 err:
-	spin_unlock_irqrestore(&qp->lock, flags);
+	pib_spin_unlock_irqrestore(&qp->lock, flags);
 
 	if (ret && bad_wr)
 		*bad_wr = ibwr;
@@ -1259,7 +1259,7 @@ err:
 
 void pib_util_free_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 {
-	BUG_ON(!spin_is_locked(&qp->lock));
+	BUG_ON(!pib_spin_is_locked(&qp->lock));
 
 	INIT_LIST_HEAD(&send_wqe->list);
 
@@ -1269,17 +1269,18 @@ void pib_util_free_send_wqe(struct pib_qp *qp, struct pib_send_wqe *send_wqe)
 
 void pib_util_free_recv_wqe(struct pib_qp *qp, struct pib_recv_wqe *recv_wqe)
 {
-	BUG_ON(!spin_is_locked(&qp->lock));
+	BUG_ON(!pib_spin_is_locked(&qp->lock));
 
 	memset(recv_wqe, 0, sizeof(*recv_wqe));
 	INIT_LIST_HEAD(&recv_wqe->list);
 
 	if (qp->ib_qp_init_attr.srq) {
 		struct pib_srq *srq = to_psrq(qp->ib_qp_init_attr.srq);
-		spin_lock(&srq->lock);
+
+		pib_spin_lock(&srq->lock);
 		/* @todo SRQ エラーをチェックすべき？ */ 
 		list_add_tail(&recv_wqe->list, &srq->free_recv_wqe_head);
-		spin_unlock(&srq->lock);
+		pib_spin_unlock(&srq->lock);
 	} else {
 		list_add_tail(&recv_wqe->list, &qp->responder.free_rwqe_head);
 	}
@@ -1302,7 +1303,7 @@ void pib_util_insert_async_qp_error(struct pib_qp *qp, enum ib_event_type event)
 {
 	struct ib_event ev;
 
-	BUG_ON(!spin_is_locked(&qp->lock));
+	BUG_ON(!pib_spin_is_locked(&qp->lock));
 
 	if (!qp->ib_qp.event_handler)
 		return;

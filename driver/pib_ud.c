@@ -24,6 +24,7 @@
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_packet.h"
 #include "pib_trace.h"
 

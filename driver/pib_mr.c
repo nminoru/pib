@@ -11,6 +11,7 @@
 
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_trace.h"
 
 
@@ -25,7 +26,7 @@ reg_mr(struct pib_pd *pd, struct pib_mr *mr)
 {
 	int i;
 	unsigned long flags;
-	
+
 	/* find an empty slot in mr_table[] */
 	spin_lock_irqsave(&pd->lock, flags);
 	for (i=0 ; i<PIB_MAX_MR_PER_PD ; i++)

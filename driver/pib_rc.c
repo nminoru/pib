@@ -23,6 +23,7 @@
 #include <rdma/ib_pack.h>
 
 #include "pib.h"
+#include "pib_spinlock.h"
 #include "pib_packet.h"
 #include "pib_trace.h"
 
@@ -695,7 +696,7 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 	struct pib_recv_wqe *recv_wqe = NULL;
 	struct pib_pd *pd;
 	enum ib_wc_status status = IB_WC_SUCCESS;
-	enum pib_syndrome syndrome;
+	enum pib_syndrome syndrome = PIB_SYND_ACK_CODE;
 	unsigned long flags;
 	int remote_invalidate_error = 0;
 
@@ -814,7 +815,6 @@ receive_SEND_request(struct pib_dev *dev, u8 port_num, u32 psn, int OpCode, stru
 			goto completion_error;
 		}
 	}
-
 	spin_unlock_irqrestore(&pd->lock, flags);
 
 	switch (status) {
