@@ -1,5 +1,5 @@
 Name: pib
-Version: 0.4.5
+Version: 0.4.6
 Release: 1%{?dist}
 Summary: Pseudo InfiniBand (pib) HCA Kernel Driver
 Group: System/Kernel
@@ -45,6 +45,9 @@ install -m 644 -D %{SOURCE2} $RPM_BUILD_ROOT/etc/depmod.d/%{name}.conf
 rm -rf $RPM_BUILD_ROOT
 
 %changelog
+* Thu Feb 12 2015 Minoru NAKAMURA <nminoru1975@gmail.com> - 0.4.6
+- Add SEND with Invaildate, Local Invalidate and Fast Register Physical MR operations
+
 * Tue Nov 06 2014 Minoru NAKAMURA <nminoru@nminoru.jp> - 0.4.5
 - Add i686 support
 

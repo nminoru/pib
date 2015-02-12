@@ -1,3 +1,10 @@
+2015-02-12 Minoru NAKAMURA <nminoru1975@gmail.com>
+
+           * pib, pibned: version 0.4.6
+           * pib: Change the  L_Kery/R_Key format according to IBA Spec. Vol.1 10.6.3.3 LOCAL ACCESS KEYS
+           * pib: Add SEND with Invaildate, Local Invalidate and Fast Register Physical MR operations
+           * pibnet: Fix problem that pibnetd fails to reconnect to a node that has been shut down abnormally
+
 2014-10-06 Minoru NAKAMURA <nminoru@nminoru.jp>
 
            * pib: version 0.4.5
