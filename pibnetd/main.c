@@ -513,8 +513,11 @@ static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct
 	case PIB_LINK_CMD_CONNECT:
 		port_num = detect_in_port(sw, port_guid);
 
-		if (port_num != 0)
-			break;
+		if (port_num != 0) {
+			/* Receive once more connect command from the node that never be normally disconnect */
+			free(sw->ports[port_num].sockaddr);
+			goto found_new_port;
+		}
 
 		for (port_num = 1 ; port_num < sw->port_cnt ; port_num++)
 			if (sw->ports[port_num].port_guid == 0)
