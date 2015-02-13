@@ -412,6 +412,10 @@ retry:
 
 	size -= sizeof(*footer);
 
+	/*
+	 * The port GUID field of 8 bytes present in all packets instead of
+	 * Variant CRC of 2 bytes.
+	 */
 	uint64_t port_guid = be64toh(footer->pib.port_guid);
 
 	if (port_guid == 0) {
@@ -474,7 +478,7 @@ retry:
 
 	if (!pib_is_permissive_lid(dlid) &&
 	    (dlid != sw->ports[0].ibv_port_attr.lid)) {
-		/* Switch 宛のパケットではない */
+		/* The packet isn't destined for this switch. */
 		if ((dest_qp_num == PIB_MULTICAST_QPN) || !pib_is_unicast_lid(dlid))
 			relay_multicast_packet(sw, in_port_num, dlid, size);
 		else
@@ -487,13 +491,16 @@ retry:
 		return;
 	}
 
-	/* MAD 以外の easy switch 宛のパケット */
+	/* Don't receive any packets except MAD that are destined to this switch. */
 	pib_report_debug("pibnetd: drop packet: dlid=0x%04x, dest_qp_num=0x%06x",
 			 dlid, dest_qp_num);
 	return;
 }
 
 
+/*
+ * Raw packets between pib.ko and pibnetd are reinterpreted as internal-use signals
+ */
 static void process_raw_packet(struct pib_switch *sw, uint64_t port_guid, struct sockaddr *sockaddr, void *buffer, int size)
 {
 	socklen_t socklen;
@@ -621,8 +628,8 @@ static uint8_t detect_in_port(struct pib_switch *sw, uint64_t port_guid)
 
 
 /**
- *  @retval  0  処理完了
- *  @retval -1  ユニキャスト転送
+ *  @retval  0  done to process itself
+ *  @retval -1  need to relay through other port
  */
 static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct pib_packet_lrh *lrh, struct pib_packet_bth *bth, void *buffer, int size)
 {
@@ -672,7 +679,7 @@ static int process_mad_packet(struct pib_switch *sw, uint8_t in_port_num, struct
 
 	case PIB_MGMT_CLASS_SUBN_LID_ROUTED:
 		if (dlid != sw->ports[0].ibv_port_attr.lid)
-			/* ユニキャスト転送 */
+			/* Need to relay as unicast */
 			return -1;
 
 		ret = pib_process_smp(smp, sw, in_port_num);
@@ -853,15 +860,22 @@ static void relay_multicast_packet(struct pib_switch *sw, uint8_t in_port_num, u
 {
 	uint8_t out_port_num;
 
+	/*
+	 * Replicate to each output port in according with the multicast
+	 * forwarding table.
+	 */
 	for (out_port_num = 1 ; out_port_num < sw->port_cnt ; out_port_num++) {
 		uint16_t pm_block;
 
-		/* マルチキャストグループに属していても入力ポートへは送信しない */
+		/*
+		 * Don't send the packet to the arrival port even if its port
+		 * are participating in the multicast group.
+		 */
 		if (in_port_num == out_port_num)
 			continue;
 
-		/* マルチキャストグループの出力ポートではない */
 		pm_block = sw->mcast_fwd_table[dlid - PIB_MCAST_LID_BASE].pm_blocks[out_port_num / 16];
+
 		if ((pm_block & (1U << (out_port_num % 16))) == 0)
 			continue;
 
@@ -966,6 +980,12 @@ skip_grh:
 }
 
 
+/*
+ * Send trap 128 to the subnet manager in order to report link state of at least
+ * one port of switch has changed.
+ *
+ * IBA Spec. Vol.1 14.3.6 Port State Change
+ */
 static void send_trap_ntc128(struct pib_switch *sw)
 {
 	uint16_t slid, dlid;
