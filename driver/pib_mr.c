@@ -467,6 +467,13 @@ pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compa
 	return IB_WC_SUCCESS;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)
+static inline int ib_umem_offset(struct ib_umem *umem)
+{
+	return umem->offset;
+}
+#endif
+
 static int
 mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction)
 {
@@ -490,7 +497,7 @@ mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u6
 
 	umem = mr->ib_umem;
 
-	offset += umem->offset;
+	offset += ib_umem_offset(umem);
 
 	addr = 0;
 
