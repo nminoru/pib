@@ -1216,7 +1216,7 @@ receive_RDMA_READ_request(struct pib_dev *dev, u8 port_num, u32 psn, struct pib_
 	pd = to_ppd(qp->ib_qp.pd);
 
 	spin_lock_irqsave(&pd->lock, flags);
-	status = pib_util_mr_validate_rkey(pd, rkey, remote_addr, dmalen, IB_ACCESS_REMOTE_READ);
+	status = pib_util_mr_verify_rkey_validation(pd, rkey, remote_addr, dmalen, IB_ACCESS_REMOTE_READ);
 	spin_unlock_irqrestore(&pd->lock, flags);
 
 	if (status != IB_WC_SUCCESS) {

@@ -16,7 +16,7 @@
 
 
 static struct pib_mr *create_mr(struct pib_dev *dev, struct pib_pd *pd, enum pib_mr_state init_state, bool fast_reg_mr, int max_page_list_len);
-static enum ib_wc_status copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only);
+static enum ib_wc_status copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, bool check_only);
 static int mr_copy_data(struct pib_mr *mr, void *buffer, u64 offset, u64 size, u64 swap, u64 compare, enum pib_mr_direction direction);
 static bool mr_copy_data_sub(void *buffer, void *target_vaddr, u64 range, u64 swap, u64 compare, enum pib_mr_direction direction);
 
@@ -379,21 +379,21 @@ pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, 
 
 
 enum ib_wc_status
-pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flags)
+pib_util_mr_verify_rkey_validation(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flags)
 {
-	return copy_data_with_rkey(pd, rkey, NULL, address, size, access_flags, PIB_MR_CHECK, 1);
+	return copy_data_with_rkey(pd, rkey, NULL, address, size, access_flags, PIB_MR_CHECK, true);
 }
 
 
 enum ib_wc_status
 pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction)
 {
-	return copy_data_with_rkey(pd, rkey, buffer, address, size, access_flags, direction, 0);
+	return copy_data_with_rkey(pd, rkey, buffer, address, size, access_flags, direction, false);
 }
 
 
 static enum ib_wc_status
-copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, int check_only)
+copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction, bool check_only)
 {
 	struct pib_mr *mr;
 
@@ -450,11 +450,6 @@ pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compa
 
 	if ((mr->access_flags & IB_ACCESS_REMOTE_ATOMIC) != IB_ACCESS_REMOTE_ATOMIC)
 		return IB_WC_LOC_PROT_ERR;
-
-	if (mr->is_dma) {
-		pr_err("pib: Can't use DMA MR in pib_util_mr_atomic\n"); /* @todo */
-		return IB_WC_LOC_PROT_ERR;
-	}
 
 	if ((address     <  mr->start) || (mr->start + mr->length <= address) ||
 	    (address + 8 <= mr->start) || (mr->start + mr->length <  address + 8))

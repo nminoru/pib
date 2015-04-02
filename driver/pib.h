@@ -1070,7 +1070,7 @@ extern struct ib_fast_reg_page_list *pib_alloc_fast_reg_page_list(struct ib_devi
 								  int page_list_len);
 extern void pib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
 extern enum ib_wc_status pib_util_mr_copy_data(struct pib_pd *pd, struct ib_sge *sge_array, int num_sge, void *buffer, u64 offset, u64 size, int access_flags, enum pib_mr_direction direction);
-extern enum ib_wc_status pib_util_mr_validate_rkey(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
+extern enum ib_wc_status pib_util_mr_verify_rkey_validation(struct pib_pd *pd, u32 rkey, u64 address, u64 size, int access_flag);
 extern enum ib_wc_status pib_util_mr_copy_data_with_rkey(struct pib_pd *pd, u32 rkey, void *buffer, u64 address, u64 size, int access_flags, enum pib_mr_direction direction);
 extern enum ib_wc_status pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compare, u64 *result, enum pib_mr_direction direction);
 extern enum ib_wc_status pib_util_mr_invalidate(struct pib_pd *pd, u32 rkey);
