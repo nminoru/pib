@@ -53,7 +53,7 @@
 #define PIB_NETD_DEFAULT_PORT	(8432)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0) || \
-  (defined(RHEL_MAJOR) && ((RHEL_MAJOR == 6) && (RHEL_MINOR >= 6)))
+	(defined(RHEL_MAJOR) && ((RHEL_MAJOR == 6) && (RHEL_MINOR >= 6)) || ((RHEL_MAJOR == 7) && (RHEL_MINOR >= 1)))
 #define PIB_IB_DMA_MAPPING_VERSION	(1)
 #else
 #define PIB_IB_DMA_MAPPING_VERSION	(0)
