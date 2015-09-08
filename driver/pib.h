@@ -60,10 +60,15 @@
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) || \
-  (defined(RHEL_MAJOR) && (((RHEL_MAJOR == 6) && (RHEL_MINOR >= 6)) || (RHEL_MAJOR == 7)))
+	(defined(RHEL_MAJOR) && (((RHEL_MAJOR == 6) && (RHEL_MINOR >= 6)) || (RHEL_MAJOR == 7)))
 #define PIB_IB_MODIFY_QP_IS_OK_VERSION	(1)
 #else
 #define PIB_IB_MODIFY_QP_IS_OK_VERSION	(0)
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) || \
+	(defined(RHEL_MAJOR) && ((RHEL_MAJOR == 6) && (RHEL_MINOR >= 7)))
+#define PIB_NO_NEED_TO_DEFINE_IB_UMEM_OFFSET
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)

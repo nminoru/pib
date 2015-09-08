@@ -1,3 +1,15 @@
+2015-09-08 Minoru NAKAMURA <nminoru1975@gmail.com>
+
+           * Fix compile errors CentOS 6.7
+
+2015-06-27 Minoru NAKAMURA <nminoru1975@gmail.com>
+
+           * Fix compile errors CentOS 7.1
+
+2015-03-26 NeoCat <neocat@neocat.jp>
+
+           * Update codes for kernel 3.19
+
 2015-02-12 Minoru NAKAMURA <nminoru1975@gmail.com>
 
            * pib, pibned: version 0.4.6

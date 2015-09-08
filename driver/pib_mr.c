@@ -462,7 +462,7 @@ pib_util_mr_atomic(struct pib_pd *pd, u32 rkey, u64 address, u64 swap, u64 compa
 	return IB_WC_SUCCESS;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)
+#ifndef PIB_NO_NEED_TO_DEFINE_IB_UMEM_OFFSET
 static inline int ib_umem_offset(struct ib_umem *umem)
 {
 	return umem->offset;
