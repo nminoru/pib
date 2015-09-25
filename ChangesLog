@@ -1,3 +1,7 @@
+2015-09-25 Minoru NAKAMURA <nminoru1975@gmail.com>
+
+           * Update codes for kernel 4.2
+
 2015-09-08 Minoru NAKAMURA <nminoru1975@gmail.com>
 
            * Fix compile errors CentOS 6.7
