@@ -84,9 +84,9 @@ static struct class *dummy_parent_class; /* /sys/class/pib */
 static struct device *dummy_parent_device;
 static u64 dummy_parent_device_dma_mask = DMA_BIT_MASK(32);
 
-
-static int pib_query_device(struct ib_device *ibdev,
-			    struct ib_device_attr *props)
+static int query_device(struct ib_device *ibdev,
+			struct ib_device_attr *props,
+			struct ib_udata *udata)
 {
 	struct pib_dev *dev;
 	unsigned long flags;
@@ -105,6 +105,20 @@ static int pib_query_device(struct ib_device *ibdev,
 	return 0;
 }
 
+#ifdef PIB_CQ_FLAGS_TIMESTAMP_COMPLETION_SUPPORT
+static int pib_query_device(struct ib_device *ibdev,
+			    struct ib_device_attr *props,
+			    struct ib_udata *udata)
+{
+	return query_device(ibdev, props, udata);
+}
+#else 
+static int pib_query_device(struct ib_device *ibdev,
+			    struct ib_device_attr *props)
+{
+	return query_device(ibdev, props, NULL);
+}
+#endif
 
 static int query_port(struct pib_dev *dev, u8 port_num,
 		      struct ib_port_attr *props)

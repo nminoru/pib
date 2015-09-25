@@ -17,9 +17,10 @@ static int insert_wc(struct pib_cq *cq, const struct ib_wc *wc, int solicited);
 static void cq_overflow_handler(struct pib_work_struct *work);
 
 
-struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
-			    struct ib_ucontext *context,
-			    struct ib_udata *udata)
+static struct ib_cq *
+create_cq(struct ib_device *ibdev, int entries, int vector, int dummy,
+	  struct ib_ucontext *context,
+	  struct ib_udata *udata)
 {
 	int i;
 	struct pib_dev *dev;
@@ -104,6 +105,24 @@ err_alloc_cq_num:
 
 	return ERR_PTR(-ENOMEM);
 }
+
+
+#ifdef PIB_CQ_FLAGS_TIMESTAMP_COMPLETION_SUPPORT
+struct ib_cq *pib_create_cq(struct ib_device *ibdev,
+			    const struct ib_cq_init_attr *attr,
+			    struct ib_ucontext *context,
+			    struct ib_udata *udata)
+{
+	return create_cq(ibdev, attr->cqe, attr->comp_vector, attr->flags, context, udata);
+}
+#else
+struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
+			    struct ib_ucontext *context,
+			    struct ib_udata *udata)
+{
+	return create_cq(ibdev, entries, vector, 0, context, udata);
+}
+#endif
 
 
 int pib_destroy_cq(struct ib_cq *ibcq)

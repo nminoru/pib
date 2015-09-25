@@ -75,6 +75,10 @@
 #define PIB_GET_PORT_IMMUTABLE_SUPPORT
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+#define PIB_CQ_FLAGS_TIMESTAMP_COMPLETION_SUPPORT
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 /*
  *  Linux kernels less than 3.13 have the bug that ib_uverbs_post_send() in
@@ -1088,9 +1092,16 @@ extern enum ib_wc_status pib_util_mr_fast_reg_pmr(struct pib_pd *pd, u32 rkey, u
 /*
  *  in pib_cq.c
  */
+#ifdef PIB_CQ_FLAGS_TIMESTAMP_COMPLETION_SUPPORT
+extern struct ib_cq *pib_create_cq(struct ib_device *ibdev, const struct ib_cq_init_attr *attr,
+				   struct ib_ucontext *context,
+				   struct ib_udata *udata);
+#else
 extern struct ib_cq *pib_create_cq(struct ib_device *ibdev, int entries, int vector,
 				   struct ib_ucontext *context,
 				   struct ib_udata *udata);
+#endif
+
 extern int pib_destroy_cq(struct ib_cq *ibcq);
 extern int pib_modify_cq(struct ib_cq *ibcq, u16 cq_count, u16 cq_period);
 extern int pib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
