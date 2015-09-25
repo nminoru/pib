@@ -1,7 +1,7 @@
 /*
  * pib_ud.c - Unreliable Datagram service processing
  *
- * Copyright (c) 2013,2014 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
