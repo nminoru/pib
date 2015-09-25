@@ -106,11 +106,25 @@ static int pib_query_device(struct ib_device *ibdev,
 }
 
 
+static int query_port(struct pib_dev *dev, u8 port_num,
+		      struct ib_port_attr *props)
+{
+	unsigned long flags;
+
+	if (port_num < 1 || dev->ib_dev.phys_port_cnt < port_num)
+		return -EINVAL;
+
+	spin_lock_irqsave(&dev->lock, flags);
+	*props = dev->ports[port_num - 1].ib_port_attr;
+	spin_unlock_irqrestore(&dev->lock, flags);
+	
+	return 0;	
+}
+
 static int pib_query_port(struct ib_device *ibdev, u8 port_num,
 			  struct ib_port_attr *props)
 {
-	struct pib_dev *dev ;
-	unsigned long flags;
+	struct pib_dev *dev;
 
 	if (!ibdev)
 		return -EINVAL;
@@ -119,16 +133,34 @@ static int pib_query_port(struct ib_device *ibdev, u8 port_num,
 
 	pib_trace_api(dev, IB_USER_VERBS_CMD_QUERY_PORT, port_num);
 
-	if (port_num < 1 || ibdev->phys_port_cnt < port_num)
-		return -EINVAL;
-
-	spin_lock_irqsave(&dev->lock, flags);
-	*props = dev->ports[port_num - 1].ib_port_attr;
-	spin_unlock_irqrestore(&dev->lock, flags);
-	
-	return 0;
+	return query_port(dev, port_num, props);
 }
 
+#ifdef PIB_GET_PORT_IMMUTABLE_SUPPORT
+static int pib_get_port_immutable(struct ib_device *ibdev, u8 port_num,
+				  struct ib_port_immutable *immutable)
+{
+	struct pib_dev *dev;
+	struct ib_port_attr attr;
+	int err;
+
+	if (!ibdev)
+		return -EINVAL;
+
+	dev = to_pdev(ibdev);
+
+	err = query_port(dev, port_num, &attr);
+	if (err)
+		return err;
+
+	immutable->pkey_tbl_len	= attr.pkey_tbl_len;
+	immutable->gid_tbl_len= attr.gid_tbl_len;
+	immutable->core_cap_flags = RDMA_CORE_PORT_IBA_IB;
+	immutable->max_mad_size = IB_MGMT_MAD_SIZE;
+
+	return 0;
+}
+#endif
 
 static void setup_obj_num_bitmap(struct pib_dev *dev);
 static int init_port(struct pib_dev *dev, u8 port_num);
@@ -274,7 +306,6 @@ static int pib_modify_port(struct ib_device *ibdev, u8 port_num, int mask,
 
 	return 0;
 }
-
 
 static int pib_mmap(struct ib_ucontext *context, struct vm_area_struct *vma)
 {
@@ -506,6 +537,10 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	dev->ib_dev.attach_mcast	= pib_attach_mcast;
 	dev->ib_dev.detach_mcast	= pib_detach_mcast;
 	dev->ib_dev.process_mad		= pib_process_mad;
+#ifdef PIB_GET_PORT_IMMUTABLE_SUPPORT 
+	dev->ib_dev.get_port_immutable	= pib_get_port_immutable;
+#endif
+
 	dev->ib_dev.dma_ops		= &pib_dma_mapping_ops;
 
 	spin_lock_init(&dev->lock);

@@ -71,6 +71,10 @@
 #define PIB_NO_NEED_TO_DEFINE_IB_UMEM_OFFSET
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+#define PIB_GET_PORT_IMMUTABLE_SUPPORT
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 /*
  *  Linux kernels less than 3.13 have the bug that ib_uverbs_post_send() in
