@@ -211,7 +211,11 @@ static int create_socket(struct pib_easy_sw *sw)
 	struct sockaddr_in sockaddr_in;
 	struct sockaddr_in *sockaddr_in_p;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+	ret = sock_create_kern(&init_net, AF_INET, SOCK_DGRAM, IPPROTO_UDP, &socket);
+#else
 	ret = sock_create_kern(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &socket);
+#endif
 	if (ret < 0)
 		return ret;
 
