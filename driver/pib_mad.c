@@ -14,9 +14,12 @@
 #include "pib_mad.h"
 
 
+static int process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
+		       const struct ib_wc *in_wc, const struct ib_grh *in_grh,
+		       const struct ib_mad *in_mad, struct ib_mad *out_mad);
 static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
-			struct ib_wc *in_wc, struct ib_grh *in_grh,
-			struct ib_mad *in_mad, struct ib_mad *out_mad);
+			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
+			const struct ib_mad *in_mad, struct ib_mad *out_mad);
 static int process_subn_get_method(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
 static int process_subn_set_method(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
 static int subn_get_nodedescription(struct ib_smp *smp, struct pib_dev *dev, u8 in_port_num);
@@ -54,14 +57,41 @@ static int reply_failure(struct ib_smp *smp)
 	return IB_MAD_RESULT_FAILURE | IB_MAD_RESULT_REPLY;
 }
 
+#ifdef PIB_INTEL_OMNI_PATH_MAD_SUPPORT
 
-int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
+int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+		    const struct ib_wc *in_wc, const struct ib_grh *in_grh,
+		    const struct ib_mad_hdr *in_mad, size_t in_mad_size,
+		    struct ib_mad_hdr *out_mad, size_t *out_mad_size,
+		    u16 *out_mad_pkey_index)
+{
+	BUG_ON(!in_mad || !out_mad);
+	BUG_ON(in_mad_size != sizeof(struct ib_mad) || *out_mad_size != sizeof(struct ib_mad));
+
+	/* ignore out_mad_pkey_index */
+
+	return process_mad(ibdev, mad_flags, port_num, in_wc, in_grh,
+			   (const struct ib_mad *)in_mad, (struct ib_mad *)out_mad);
+}
+
+#else
+
+int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
 		    struct ib_wc *in_wc, struct ib_grh *in_grh,
 		    struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
-	struct pib_dev *dev;
-
 	BUG_ON(!in_mad || !out_mad);
+
+	return process_mad(ibdev, mad_flags, port_num, in_wc, in_grh, in_mad, out_mad);
+}
+
+#endif
+
+static int process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
+		       const struct ib_wc *in_wc, const struct ib_grh *in_grh,
+		       const struct ib_mad *in_mad, struct ib_mad *out_mad)
+{
+	struct pib_dev *dev;
 
 	dev = to_pdev(ibdev);
 
@@ -95,8 +125,8 @@ int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 in_port_num,
 /******************************************************************************/
 
 static int process_subn(struct pib_dev *dev, int mad_flags, u8 in_port_num,
-			struct ib_wc *in_wc, struct ib_grh *in_grh,
-			struct ib_mad *in_mad, struct ib_mad *out_mad)
+			const struct ib_wc *in_wc, const struct ib_grh *in_grh,
+			const struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
 	int ret;
 	struct ib_smp *smp;

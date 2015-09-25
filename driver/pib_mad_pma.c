@@ -100,7 +100,7 @@ static int reply(struct ib_mad_hdr *mad_hdr)
 
 
 int pib_process_pma_mad(struct pib_node *node, u8 port_num,
-			struct ib_mad *in_mad, struct ib_mad *out_mad)
+			const struct ib_mad *in_mad, struct ib_mad *out_mad)
 {
 	int ret;
 	struct ib_pma_mad *pmp = (struct ib_pma_mad *)out_mad;

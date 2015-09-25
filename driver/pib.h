@@ -79,6 +79,10 @@
 #define PIB_CQ_FLAGS_TIMESTAMP_COMPLETION_SUPPORT
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+#define PIB_INTEL_OMNI_PATH_MAD_SUPPORT
+#endif
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
 /*
  *  Linux kernels less than 3.13 have the bug that ib_uverbs_post_send() in
@@ -1178,16 +1182,25 @@ extern int pib_generate_rc_qp_acknowledge(struct pib_dev *dev, struct pib_qp *qp
 /*
  *  in pib_mad.c
  */
+#ifdef PIB_INTEL_OMNI_PATH_MAD_SUPPORT
+extern int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
+			   const struct ib_wc *in_wc, const struct ib_grh *in_grh,
+			   const struct ib_mad_hdr *in_mad, size_t in_mad_size,
+			   struct ib_mad_hdr *out_mad, size_t *out_mad_size,
+			   u16 *out_mad_pkey_index);
+#else
 extern int pib_process_mad(struct ib_device *ibdev, int mad_flags, u8 port_num,
 			   struct ib_wc *in_wc, struct ib_grh *in_grh,
 			   struct ib_mad *in_mad, struct ib_mad *out_mad);
+#endif
+
 extern void pib_subn_get_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type);
 extern void pib_subn_set_portinfo(struct ib_smp *smp, struct pib_port *port, u8 port_num, enum pib_port_type type);
 
 /*
  *  in pib_perfmgt.c
  */
-extern int pib_process_pma_mad(struct pib_node *node, u8 port_num, struct ib_mad *in_mad, struct ib_mad *out_mad);
+extern int pib_process_pma_mad(struct pib_node *node, u8 port_num, const struct ib_mad *in_mad, struct ib_mad *out_mad);
 
 /*
  *  in pib_easy_sw.c
