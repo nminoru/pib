@@ -7,6 +7,7 @@
  */
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/vmalloc.h>
 
 #include "pib.h"
 #include "pib_spinlock.h"

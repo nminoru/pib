@@ -11,6 +11,7 @@
 #include <linux/debugfs.h>
 #include <linux/export.h>
 #include <linux/math64.h>
+#include <linux/vmalloc.h>
 
 #include "pib.h"
 #include "pib_spinlock.h"
