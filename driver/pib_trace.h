@@ -1,7 +1,7 @@
 /*
  * pib_trace.h - Execution trace
  *
- * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2016 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -21,7 +21,9 @@ enum {
 	PIB_USER_VERBS_CMD_MODIFY_DEVICE,
 	PIB_USER_VERBS_CMD_MODIFY_PORT,
 	PIB_USER_VERBS_CMD_MODIFY_CQ,
+#ifdef PIB_FAST_REG_MR_SUPPORT
 	PIB_USER_VERBS_CMD_ALLOC_FAST_REG_MR,
+#endif
 	PIB_USER_VERBS_CMD_ALLOC_FAST_REG_PAGE_LIST,
 	PIB_USER_VERBS_CMD_FREE_FAST_REG_PAGE_LIST
 };

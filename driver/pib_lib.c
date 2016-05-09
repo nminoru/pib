@@ -1,7 +1,7 @@
 /*
  * pib_lib.c - Various utility functions
  *
- * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2016 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -137,7 +137,9 @@ static const char *str_uverbs_cmd[] = {
 	[PIB_USER_VERBS_CMD_MODIFY_DEVICE] = "modify_device",
 	[PIB_USER_VERBS_CMD_MODIFY_PORT] = "modify_port",
 	[PIB_USER_VERBS_CMD_MODIFY_CQ]	= "modify_cq",
+#ifdef PIB_FAST_REG_MR_SUPPORT
 	[PIB_USER_VERBS_CMD_ALLOC_FAST_REG_MR] = "alloc_fast_reg_mr",
+#endif
 	[PIB_USER_VERBS_CMD_ALLOC_FAST_REG_PAGE_LIST] = "alloc_fast_reg_page_list",
 	[PIB_USER_VERBS_CMD_FREE_FAST_REG_PAGE_LIST] = "free_fast_reg_page_list",
 };

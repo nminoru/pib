@@ -239,7 +239,7 @@ pib_dereg_mr(struct ib_mr *ibmr)
 	return ret;
 }
 
-
+#ifdef PIB_FAST_REG_MR_SUPPORT
 struct ib_mr *
 pib_alloc_fast_reg_mr(struct ib_pd *ibpd,
 		      int max_page_list_len)
@@ -267,7 +267,7 @@ pib_alloc_fast_reg_mr(struct ib_pd *ibpd,
 
 	return &mr->ib_mr;
 }
-
+#endif /* PIB_FAST_REG_MR_SUPPORT */
 
 struct ib_fast_reg_page_list *
 pib_alloc_fast_reg_page_list(struct ib_device *ibdev,

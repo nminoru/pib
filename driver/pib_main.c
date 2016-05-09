@@ -1,7 +1,7 @@
 /*
  * pib_main.c - Initialize & finalize routines
  *
- * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2016 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -545,7 +545,9 @@ static struct pib_dev *pib_dev_add(struct device *dma_device, int dev_id)
 	dev->ib_dev.dereg_mr		= pib_dereg_mr;
 	/* dev->ib_dev.destroy_mr */
 	/* dev->ib_dev.create_mr */
+#ifdef PIB_FAST_REG_MR_SUPPORT
 	dev->ib_dev.alloc_fast_reg_mr 	= pib_alloc_fast_reg_mr;
+#endif
 	dev->ib_dev.alloc_fast_reg_page_list = pib_alloc_fast_reg_page_list;
 	dev->ib_dev.free_fast_reg_page_list  = pib_free_fast_reg_page_list;
 	dev->ib_dev.attach_mcast	= pib_attach_mcast;

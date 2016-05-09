@@ -101,6 +101,12 @@
 #define PIB_INTEL_OMNI_PATH_MAD_SUPPORT
 #endif
 
+#if RDMA_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
+/* Drop ib_alloc_fast_reg_mr support */
+#else
+#define PIB_FAST_REG_MR_SUPPORT
+#endif
+
 /*
  *  ib_ipoib.ko has the bug that leaks AH objects when IB device is unregistered.
  *
@@ -1086,8 +1092,10 @@ extern struct ib_mr *pib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 				     u64 virt_addr, int access_flags,
 				     struct ib_udata *udata);
 extern int pib_dereg_mr(struct ib_mr *mr);
+#ifdef PIB_FAST_REG_MR_SUPPORT
 extern struct ib_mr *pib_alloc_fast_reg_mr(struct ib_pd *pd,
 					   int max_page_list_len);
+#endif
 extern struct ib_fast_reg_page_list *pib_alloc_fast_reg_page_list(struct ib_device *ibdev,
 								  int page_list_len);
 extern void pib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
