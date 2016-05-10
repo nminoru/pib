@@ -1,7 +1,7 @@
 /*
  * pib.h - General definitions for pib
  *
- * Copyright (c) 2013-2015 Minoru NAKAMURA <nminoru@nminoru.jp>
+ * Copyright (c) 2013-2016 Minoru NAKAMURA <nminoru@nminoru.jp>
  *
  * This code is licenced under the GPL version 2 or BSD license.
  */
@@ -52,35 +52,18 @@
 
 #define PIB_NETD_DEFAULT_PORT	(8432)
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0) || \
-	(defined(RHEL_MAJOR) && ((RHEL_MAJOR == 6) && (RHEL_MINOR >= 6)) || ((RHEL_MAJOR == 7) && (RHEL_MINOR >= 1)))
-#define PIB_IB_DMA_MAPPING_VERSION	(1)
+#if   defined(RHEL_MAJOR) && ((RHEL_MAJOR == 6) && (RHEL_MINOR >= 7))
+#define RDMA_VERSION_CODE	KERNEL_VERSION(3, 19, 0)
+#elif defined(RHEL_MAJOR) && ((RHEL_MAJOR == 6) && (RHEL_MINOR == 6))
+#define RDMA_VERSION_CODE	KERNEL_VERSION(3, 15, 0)
+#elif defined(RHEL_MAJOR) && ((RHEL_MAJOR == 7) && (RHEL_MINOR >= 2))
+#define RDMA_VERSION_CODE	KERNEL_VERSION(4, 2, 0)
+#elif defined(RHEL_MAJOR) && ((RHEL_MAJOR == 7) && (RHEL_MINOR == 1))
+#define RDMA_VERSION_CODE	KERNEL_VERSION(3, 15, 0)
+#elif defined(RHEL_MAJOR) && (RHEL_MAJOR == 7)
+#define RDMA_VERSION_CODE	KERNEL_VERSION(3, 14, 0)
 #else
-#define PIB_IB_DMA_MAPPING_VERSION	(0)
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) || \
-	(defined(RHEL_MAJOR) && (((RHEL_MAJOR == 6) && (RHEL_MINOR >= 6)) || (RHEL_MAJOR == 7)))
-#define PIB_IB_MODIFY_QP_IS_OK_VERSION	(1)
-#else
-#define PIB_IB_MODIFY_QP_IS_OK_VERSION	(0)
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) || \
-	(defined(RHEL_MAJOR) && ((RHEL_MAJOR == 6) && (RHEL_MINOR >= 7)))
-#define PIB_NO_NEED_TO_DEFINE_IB_UMEM_OFFSET
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
-#define PIB_GET_PORT_IMMUTABLE_SUPPORT
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
-#define PIB_CQ_FLAGS_TIMESTAMP_COMPLETION_SUPPORT
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
-#define PIB_INTEL_OMNI_PATH_MAD_SUPPORT
+#define RDMA_VERSION_CODE	LINUX_VERSION_CODE
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
@@ -94,6 +77,28 @@
  *  through /sys/class/infiniband/pib_%d/imm_data_lkey for libpib-rdmav2.so.
  */
 #define PIB_HACK_IMM_DATA_LKEY
+#endif
+
+#if RDMA_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
+#define PIB_IB_MODIFY_QP_IS_OK_VERSION	(1)
+#else
+#define PIB_IB_MODIFY_QP_IS_OK_VERSION	(0)
+#endif
+
+#if RDMA_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+#define PIB_IB_DMA_MAPPING_VERSION	(1)
+#else
+#define PIB_IB_DMA_MAPPING_VERSION	(0)
+#endif
+
+#if RDMA_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
+#define PIB_NO_NEED_TO_DEFINE_IB_UMEM_OFFSET
+#endif
+
+#if RDMA_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+#define PIB_GET_PORT_IMMUTABLE_SUPPORT
+#define PIB_CQ_FLAGS_TIMESTAMP_COMPLETION_SUPPORT
+#define PIB_INTEL_OMNI_PATH_MAD_SUPPORT
 #endif
 
 /*
